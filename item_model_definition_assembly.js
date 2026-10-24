@@ -1130,7 +1130,7 @@ Plugin.register('item_model_definition_assembly', {
 	author: 'Blockbench',
 	icon: 'account_tree',
 	description: '新增“物品模型映射装配”模型格式：每个分组对应一个 composite/range_dispatch/condition/model 子项，分组变换写入 transformation，可引用 Java 版模型作为子项，并导出完整资源包。',
-	version: '1.0.0',
+	version: '1.5.0',
 	variant: 'both',
 	min_version: '5.0.0',
 	tags: ['Minecraft: Java Edition'],
