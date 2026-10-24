@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.8.5';
+const VERSION = '0.8.6';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -396,7 +396,13 @@ class Exporter {
 
 	parseTints(value) {
 		if (!value) return null;
-		try {
+
+		// 数字简写：填 0 等价于 custom_model_data 染色源 index 0
+		const text = String(value).trim();
+		if (/^-?\d+$/.test(text)) {
+			const index = Number(text);
+			return [{ type: 'custom_model_data', index, default: index }];
+		}		try {
 			const parsed = typeof value === 'string' ? JSON.parse(value) : value;
 			if (Array.isArray(parsed) && parsed.length) return parsed;
 		} catch (e) { this.warn('分组 tints 不是合法 JSON，已忽略。'); }
