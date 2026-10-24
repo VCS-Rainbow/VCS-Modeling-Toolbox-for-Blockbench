@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.63.6', api.VERSION, '0.63.6');
+eq('版本是 0.63.7', api.VERSION, '0.63.7');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -629,6 +629,27 @@ global.Outliner.selected.length = 0; global.Outliner.selected.push(gizmoGroup);
 api.guardBoxSelection();
 eq('分组优先选择时不改写选择', gizmoCube.selected !== true, true);
 global.Group.selected = []; global.Outliner.selected.length = 0;
+
+/* ---------- 多分支向上选组 ---------- */
+console.log('\n[多分支向上选组]');
+const multiRoot = new global.Group({ name: 'multiRoot' });
+const branchParents = [];
+const branchCubes = [];
+for (let i = 0; i < 3; i++) {
+  const p = new global.Group({ name: 'p' + i });
+  const g = new global.Group({ name: 'g' + i });
+  const c = new global.Cube({ from: [0, 0, 0], to: [1, 1, 1], origin: [0, 0, 0], rotation: [0, 0, 0] });
+  c.parent = g; g.children.push(c); g.parent = p; p.children.push(g); p.parent = multiRoot; multiRoot.children.push(p);
+  branchParents.push(p); branchCubes.push(c);
+}
+const savedMultiRoot = global.Outliner.root.splice(0, global.Outliner.root.length, multiRoot);
+global.Outliner.selected.length = 0;
+for (const c of branchCubes) { c.selected = true; global.Outliner.selected.push(c); }
+api.guardBoxSelection();
+eq('所有分支的父组都向上选中', branchParents.every(p => p.selected === true), true);
+eq('共同根节点也选中', multiRoot.selected === true, true);
+global.Outliner.root.splice(0, global.Outliner.root.length, ...savedMultiRoot);
+global.Outliner.selected.length = 0;
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));

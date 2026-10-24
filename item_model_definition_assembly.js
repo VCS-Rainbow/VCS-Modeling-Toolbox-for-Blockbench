@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.63.6';
+const VERSION = '0.63.7';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2497,13 +2497,22 @@ function guardBoxSelection() {
 			if (parent.selected && isSelected(parent) && (parent.children || []).every(isSelected)) continue;
 			selectWholeGroup(parent);
 		}
-		// 继续向上：祖先的所有子项都选中时也选中它
-		let node = parents[0] ? parents[0].parent : null;
-		while (isGroup(node)) {
+		// 继续向上：对所有父组的祖先分别判断（不能只走 parents[0] 一条链）
+		const ancestors = [];
+		for (const parent of parents) {
+			let node = parent.parent;
+			while (isGroup(node)) {
+				if (ancestors.indexOf(node) < 0) ancestors.push(node);
+				node = node.parent;
+			}
+		}
+		const depthOf = (node) => { let depth = 0, cursor = node; while (isGroup(cursor)) { depth++; cursor = cursor.parent; } return depth; };
+		ancestors.sort((a, b) => depthOf(b) - depthOf(a));
+		for (const node of ancestors) {
 			const children = (node.children || []);
 			if (children.length && children.every(isSelected)) selectWholeGroup(node);
-			node = node.parent;
 		}
+		
 		if (changed) { try { if (typeof updateSelection === 'function') updateSelection(); } catch (e) { /* ignore */ } }
 	} finally { guardingBox = false; }
 }
