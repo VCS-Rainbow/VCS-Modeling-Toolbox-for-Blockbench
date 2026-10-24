@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.56.0';
+const VERSION = '0.56.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -342,6 +342,9 @@ class Exporter {
 			el.to = el.to.map((v, a) => clean(v - shift[a]));
 			if (el.rotation) el.rotation.origin = el.rotation.origin.map((v, a) => clean(v - shift[a]));
 		}
+
+		const outside = elements.filter(el => el.from.concat(el.to).some(v => v < -16 - 1e-6 || v > 32 + 1e-6));
+		if (outside.length) this.warn('模型 “' + (hint || 'part') + '” 有 ' + outside.length + ' 个元素居中后仍超出 -16~32；请检查该分组的枢轴/旋转（源数据可能已被异常变换）');
 
 		const textures = {};
 		let particle = null;
