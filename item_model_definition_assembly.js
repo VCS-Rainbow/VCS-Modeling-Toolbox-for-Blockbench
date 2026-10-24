@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.10.5';
+const VERSION = '0.10.6';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -918,6 +918,51 @@ Plugin.register('item_model_definition_assembly', {
 			model_identifier: true,
 			parent_model_id: true,
 			java_face_properties: true,
+			// 以下对齐 Java Block/Item 格式的软件内渲染参数
+			render_sides: 'front',
+			cullfaces: true,
+			uv_rotation: true,
+			java_cube_shading_properties: true,
+			vertex_color_ambient_occlusion: true,
+			cube_size_limiter: {
+				coordinate_limits: [-16, 32],
+				test(cube, options) {
+					const opt = options || {};
+					const from = opt.from || cube.from;
+					const to = opt.to || cube.to;
+					const inflate = opt.inflate == null ? cube.inflate : opt.inflate;
+					return from.find((value, axis) => to[axis] + inflate > 32 || to[axis] + inflate < -16 || from[axis] - inflate > 32 || from[axis] - inflate < -16) !== undefined;
+				},
+				move(cube, options) {
+					const opt = options || {};
+					const from = opt.from || cube.from;
+					const to = opt.to || cube.to;
+					const inflate = opt.inflate == null ? cube.inflate : opt.inflate;
+					[0, 1, 2].forEach(axis => {
+						const over = to[axis] + inflate - 32;
+						if (over > 0) {
+							from[axis] -= over; to[axis] -= over;
+							if (16 + from[axis] - inflate < 0) from[axis] = -16 + inflate;
+						} else {
+							const under = from[axis] - inflate + 16;
+							if (under < 0) {
+								from[axis] -= under; to[axis] -= under;
+								if (to[axis] + inflate > 32) to[axis] = 32 - inflate;
+							}
+						}
+					});
+				},
+				clamp(cube, options) {
+					const opt = options || {};
+					const from = opt.from || cube.from;
+					const to = opt.to || cube.to;
+					const inflate = opt.inflate == null ? cube.inflate : opt.inflate;
+					[0, 1, 2].forEach(axis => {
+						from[axis] = Math.min(32 - inflate, Math.max(-16 + inflate, from[axis]));
+						to[axis] = Math.min(32 - inflate, Math.max(-16 + inflate, to[axis]));
+					});
+				},
+			},
 			block_size: 16,
 			forward_direction: '-z',
 		});
