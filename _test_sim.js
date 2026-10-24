@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.59.0', api.VERSION, '0.59.0');
+eq('版本是 0.60.0', api.VERSION, '0.60.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -511,6 +511,24 @@ const pathExporter = api.createExporter();
 eq('纹理引用使用实际命名空间和目录', pathExporter.textureRef(pathTexture), 'sqsp:item/inker/jet_rifle/sac.full');
 eq('纹理输出路径保留原目录', pathExporter.textures[0].path, 'item/inker/jet_rifle/sac.full');
 eq('纹理输出命名空间用 sqsp', pathExporter.textures[0].namespace, 'sqsp');
+
+/* ---------- 框选改选分组 ---------- */
+console.log('\n[框选改选分组]');
+const boxGroup = new global.Group({ name: 'boxGroup' });
+const boxCube1 = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
+const boxCube2 = new global.Cube({ from: [3, 0, 0], to: [5, 2, 2], origin: [4, 1, 1], rotation: [0, 0, 0] });
+const detachBox = function () { this.selected = false; const at = global.Outliner.selected.indexOf(this); if (at >= 0) global.Outliner.selected.splice(at, 1); };
+boxCube1.parent = boxGroup; boxCube2.parent = boxGroup; boxCube1.unselect = detachBox; boxCube2.unselect = detachBox;
+boxGroup.markAsSelected = function () { this.selected = true; if (global.Outliner.selected.indexOf(this) < 0) global.Outliner.selected.push(this); };
+api.setBoxSelectGroups(true);
+global.Outliner.selected.push(boxCube1, boxCube2);
+api.guardBoxSelection();
+eq('多选方块时改为选中父分组', global.Outliner.selected.indexOf(boxGroup) >= 0, true);
+eq('多选方块时方块被取消', global.Outliner.selected.indexOf(boxCube1) < 0 && global.Outliner.selected.indexOf(boxCube2) < 0, true);
+global.Outliner.selected.length = 0; boxCube1.selected = true; global.Outliner.selected.push(boxCube1);
+api.guardBoxSelection();
+eq('只选一个方块时不处理', global.Outliner.selected.indexOf(boxCube1) >= 0, true);
+api.setBoxSelectGroups(false); global.Outliner.selected.length = 0;
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));

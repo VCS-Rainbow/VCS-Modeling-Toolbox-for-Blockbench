@@ -2,6 +2,10 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.60.0
+- **新增可选开关「框选/多选方块时自动改选所属分组」**（默认关）：一次选中 2 个及以上方块时，自动取消方块、改为选中它们各自的父分组；单选 1 个方块不处理。
+- 开关位置：`Settings → 编辑`，或 `Tools → 开关：框选方块时改选所属分组`；与锁定/批量选择守卫共用 `update_selection` 机制。
+
 ## 0.59.0
 - **纹理引用/导出路径按贴图真实位置解析**：从 `assets/<ns>/textures/<path>.png` 推出引用 `<ns>:<path>`，导出写回 `assets/<ns>/textures/<path>.png`；不再强制 `<项目命名空间>:item/<贴图名>`。
 - 例：`.../assets/sqsp/textures/item/inker/jet_rifle/sac.full.png` → `"0": "sqsp:item/inker/jet_rifle/sac.full"`，输出路径 `assets/sqsp/textures/item/inker/jet_rifle/sac.full.png`。
