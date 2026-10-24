@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.21.2';
+const VERSION = '0.21.3';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1249,7 +1249,7 @@ function resolveJavaModel(pathmod, fsmod, root, reference) {
 		if (seen[current]) break;
 		seen[current] = true;
 		const json = readJSONFile(pathmod, fsmod, modelPathOf(pathmod, root, current));
-		if (!json) return { error: '找不到模型文件：' + current };
+		if (!json) return { error: '找不到模型文件：' + current + '\n完整路径：' + modelPathOf(pathmod, root, current) + '\n资源包工程：' + root };
 		if (!elements && Array.isArray(json.elements)) elements = json.elements;
 		for (const key of Object.keys(json.textures || {})) {
 			if (!(key in textureRefs)) textureRefs[key] = json.textures[key];
@@ -1272,7 +1272,8 @@ function importModelReference(group) {
 	}
 	const pathmod = getPath();
 	const fsmod = getScopedFs(root);
-	if (!pathmod || !fsmod) { Blockbench.showMessageBox({ title: '不支持读取', message: '需要桌面版 Blockbench。', icon: 'warning' }); return false; }
+	console.log('[装配] root=', root, '| fs ok=', !!fsmod, '| path ok=', !!pathmod);
+	if (!pathmod || !fsmod) { Blockbench.showMessageBox({ title: '无法读取资源包', message: '需要桌面版 Blockbench，且需要授予该目录的读取权限。\n资源包工程：' + root, icon: 'warning' }); console.warn('[装配] fs 模块不可用，root=', root); return false; }
 	console.log('[装配] 导入开始', reference, '->', modelPathOf(pathmod, root, reference));
 	const resolved = resolveJavaModel(pathmod, fsmod, root, reference);
 	console.log('[装配] 解析结果', resolved.error ? ('ERR: ' + resolved.error) : (resolved.elements.length + ' 个 element'));
