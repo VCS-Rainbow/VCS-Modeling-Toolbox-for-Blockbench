@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.12.1';
+const VERSION = '0.12.2';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -770,6 +770,25 @@ function runMerge(root) {
 
 /* 把分支编号 / 条件写进子分组名最前方（幂等：先剥掉旧前缀） */
 /* 按分支编号/条件重排父分组的子分组（range_dispatch 按阈值升序，condition 按 on_true < on_false） */
+/* 新建/拖入/选择变化后，自动重排并编号（防抖，且在输入框聚焦时不打扰） */
+let branchSyncTimer = null;
+function scheduleBranchSync(target) {
+	if (branchSyncTimer) clearTimeout(branchSyncTimer);
+	branchSyncTimer = setTimeout(() => {
+		branchSyncTimer = null;
+		try {
+			const active = (typeof document !== 'undefined') ? document.activeElement : null;
+			if (active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName || '')) return;
+			const group = target || pickTargetGroup();
+			if (!group) return;
+			const parent = group.parent || null;
+			let changed = sortBranchChildren(group) + syncBranchLabels(group);
+			if (parent) changed += sortBranchChildren(parent) + syncBranchLabels(parent);
+			if (changed) { try { Project.saved = false; Canvas.updateAll(); } catch (e) { /* ignore */ } }
+		} catch (error) { /* ignore */ }
+	}, 250);
+}
+
 function sortBranchChildren(parent) {
 	if (!parent || !Array.isArray(parent.children)) return 0;
 	const type = String(parent.imm_type || '').replace(/^minecraft:/, '');
@@ -1096,6 +1115,9 @@ Plugin.register('item_model_definition_assembly', {
 		MenuBar.addAction(actions.check, 'tools');
 		MenuBar.addAction(actions.props, 'tools');
 		attachGroupMenu();
+		for (const event of ['add_group', 'remove_group', 'update_selection']) {
+			try { Blockbench.on(event, (data) => scheduleBranchSync(data && data.object)); } catch (e) { /* ignore */ }
+		}
 		for (const event of ['select_project', 'finished_loading_project', 'update_selection']) {
 			try { Blockbench.on(event, attachGroupMenu); } catch (e) { /* ignore */ }
 		}
