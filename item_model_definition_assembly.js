@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.8.0';
+const VERSION = '0.8.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -124,27 +124,37 @@ const formatMapping = (mapping) => '{\n\t"model": ' + formatNode(mapping.model, 
 
 /* ============================== 旋转 ============================== */
 
+/**
+ * 读取节点旋转（四元数）：以数据 rotation（度）+ 欧拉顺序为准，mesh.quaternion 仅作兜底。
+ * 深层分组的 mesh 可能仍是单位四元数（未同步/未渲染），不能依赖它。
+ */
 function readQuaternion(node) {
+	const rotation = (node && node.rotation) || [0, 0, 0];
+	const hasData = [0, 1, 2].some(a => Math.abs(num(rotation[a])) > 1e-9);
 	const mesh = node ? node.mesh : null;
-	if (typeof THREE !== 'undefined' && THREE && THREE.Quaternion) {
+	const order = (mesh && mesh.rotation && mesh.rotation.order)
+		|| (typeof Format !== 'undefined' && Format && Format.euler_order)
+		|| 'ZYX';
+	if (!hasData) {
 		const q = mesh && mesh.quaternion;
 		if (q && isFinite(q.x) && (q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w) > 1e-12) {
 			return { x: q.x, y: q.y, z: q.z, w: q.w };
 		}
-		const r = (node && node.rotation) || [0, 0, 0];
-		if (r[0] || r[1] || r[2]) {
-			const order = (mesh && mesh.rotation && mesh.rotation.order) || 'ZYX';
-			const e = new THREE.Euler(num(r[0]) * Math.PI / 180, num(r[1]) * Math.PI / 180, num(r[2]) * Math.PI / 180, order);
-			const q2 = new THREE.Quaternion().setFromEuler(e);
-			return { x: q2.x, y: q2.y, z: q2.z, w: q2.w };
-		}
 		return { x: 0, y: 0, z: 0, w: 1 };
 	}
-	const r = (node && node.rotation) || [0, 0, 0];
-	const active = [0, 1, 2].filter(a => Math.abs(num(r[a])) > 1e-9);
-	if (!active.length) return { x: 0, y: 0, z: 0, w: 1 };
+	if (typeof THREE !== 'undefined' && THREE && THREE.Quaternion && THREE.Euler) {
+		const e = new THREE.Euler(
+			num(rotation[0]) * Math.PI / 180,
+			num(rotation[1]) * Math.PI / 180,
+			num(rotation[2]) * Math.PI / 180,
+			order
+		);
+		const q = new THREE.Quaternion().setFromEuler(e);
+		return { x: q.x, y: q.y, z: q.z, w: q.w };
+	}
+	const active = [0, 1, 2].filter(a => Math.abs(num(rotation[a])) > 1e-9);
 	if (active.length > 1) return null;
-	const half = num(r[active[0]]) * Math.PI / 360, s = Math.sin(half);
+	const half = num(rotation[active[0]]) * Math.PI / 360, s = Math.sin(half);
 	return { x: active[0] === 0 ? s : 0, y: active[0] === 1 ? s : 0, z: active[0] === 2 ? s : 0, w: Math.cos(half) };
 }
 
