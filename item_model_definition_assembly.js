@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.10.6';
+const VERSION = '0.11.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -389,6 +389,24 @@ class Exporter {
 		};
 	}
 
+	/** 分支阈值格式：i / i*2 / 10+i*5 / 0,1,3 */
+	evalThreshold(format, index) {
+		const text = String(format == null ? '' : format).replace(/\s+/g, '');
+		if (!text) return null;
+		if (text.indexOf(',') >= 0) {
+			const list = text.split(',').map(v => Number(v)).filter(v => isFinite(v));
+			if (!list.length) return null;
+			return index < list.length ? list[index] : list[list.length - 1] + (index - list.length + 1);
+		}
+		const parts = text.split('i');
+		const head = parts[0].replace(/[+*]/g, '');
+		const tail = (parts[1] || '').replace(/[+*]/g, '');
+		const base = head ? Number(head) : 0;
+		const step = tail ? Number(tail) : (head ? 0 : 1);
+		if (!isFinite(base) || !isFinite(step)) return null;
+		return base + index * step;
+	}
+
 	normalizeType(value) {
 		const t = String(value || 'composite').toLowerCase().replace(/^minecraft:/, '');
 		return MAPPING_TYPES.indexOf(t) >= 0 ? t : 'composite';
@@ -474,9 +492,14 @@ class Exporter {
 			if (scale && scale !== 1) node.scale = clean(scale);
 			if (String(group.imm_index || '').length) node.index = clean(group.imm_index);
 			node.entries = [];
+			let branch_index = 0;
 			for (const child of childGroups) {
 				const childNode = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'), own_shift);
-				if (childNode) node.entries.push({ threshold: clean(num(child.imm_threshold)), model: childNode });
+				if (!childNode) continue;
+				const manual = num(child.imm_threshold);
+				const formatted = this.evalThreshold(group.imm_threshold_format, branch_index);
+				node.entries.push({ threshold: clean(formatted !== null ? formatted : (manual !== 0 ? manual : branch_index)), model: childNode });
+				branch_index++;
 			}
 			const fallback = built ? { type: 'minecraft:model', model: built.reference } : (extras[0] || null);
 			if (fallback) node.fallback = fallback;
@@ -502,8 +525,8 @@ class Exporter {
 
 		if (type === 'condition') {
 			node.property = String(group.imm_property || 'minecraft:selected');
-			node.on_true = models[0];
-			node.on_false = models[1] || { type: 'minecraft:empty' };
+			node.on_true = models[built ? 1 : 0] || { type: 'minecraft:empty' };
+			node.on_false = models[built ? 2 : 1] || { type: 'minecraft:empty' };
 			if (models.length > 2) this.warn('condition 分组只使用前两个子项。');
 			return node;
 		}
@@ -752,6 +775,7 @@ function editGroupProps() {
 			imm_model: { label: '引用模型（model）', description: '语法：{"type": "minecraft:model", "model": "<命名空间>:item/<路径>"}\n作用：本节点直接引用一个 Java 版模型；\n留空则由本层方块生成模型文件。', type: 'text', value: String(group.imm_model || ''), condition: (r) => r.imm_type !== 'empty' },
 			imm_property: { label: '取值来源（property）', description: '语法："property": "minecraft:custom_model_data"\n作用：range_dispatch / condition 从这里取值做分派。\n例：minecraft:custom_model_data、minecraft:selected', type: 'text', value: String(group.imm_property || ''), condition: (r) => r.imm_type === 'range_dispatch' || r.imm_type === 'condition' },
 			imm_index: { label: '分派下标（index）', description: '语法："index": 0\n作用：仅 range_dispatch，指定从 property 的哪个下标取值。', type: 'number', value: num(group.imm_index), condition: (r) => r.imm_type === 'range_dispatch' },
+			imm_threshold_format: { label: '分支编号格式（entries[].threshold）', type: 'text', value: String(group.imm_threshold_format || ''), description: '语法：i → 0,1,2；i*2 → 0,2,4；10+i*5 → 10,15,20；0,1,3 → 字面列表，超出末尾顺延。\n作用：range_dispatch 的子分组按顺序取这些阈值；留空为 0,1,2…', condition: (r) => r.imm_type === 'range_dispatch' },
 			imm_threshold: { label: '阈值（entries[].threshold）', description: '语法："entries": [{"threshold": 0, "model": { ... }}]\n作用：仅当父分组是 range_dispatch 时生效，\n本分组作为该阈值对应的模型。', type: 'number', value: num(group.imm_threshold), condition: (r) => r.imm_type === 'range_dispatch' },
 			imm_scale: { label: '数值缩放（scale）', description: '语法："scale": 1.0\n作用：仅 range_dispatch，property 数值乘以该倍数后再查阈值。', type: 'number', value: num(group.imm_scale) || 1, condition: (r) => r.imm_type === 'range_dispatch' },
 						imm_tint_type: { label: '纹理着色类型（tints[].type）', description: '语法："tints": [{"type": "<类型>"}]\n作用：染色来源类型（默认 custom_model_data）。\n可选：custom_model_data / constant / dye / potion / grass / team\n仅“纹理着色索引”非空时生效。', type: 'select', value: String(group.imm_tint_type || 'custom_model_data'), options: { '': '（不生成 tints）', custom_model_data: 'custom_model_data', constant: 'constant', dye: 'dye', potion: 'potion', grass: 'grass', team: 'team' }, description: '纹理着色来源类型；保存为键 imm_tint_type', condition: (r) => r.imm_type === 'model' || r.imm_type === 'composite' },
@@ -766,6 +790,7 @@ function editGroupProps() {
 				if (result.imm_property !== undefined) group.imm_property = result.imm_property;
 				if (result.imm_index !== undefined) group.imm_index = num(result.imm_index);
 				if (result.imm_threshold !== undefined) group.imm_threshold = num(result.imm_threshold);
+				if (result.imm_threshold_format !== undefined) group.imm_threshold_format = result.imm_threshold_format;
 				if (result.imm_scale !== undefined) group.imm_scale = num(result.imm_scale) || 1;
 				if (result.imm_tints !== undefined) group.imm_tints = result.imm_tints;
 				if (result.imm_tint_type !== undefined) group.imm_tint_type = result.imm_tint_type;
@@ -859,6 +884,7 @@ function registerProperties() {
 	P(Group, 'string', 'imm_model', { label: '引用模型（imm_model）', default: '' });
 	P(Group, 'string', 'imm_property', { label: '取值来源（property）', default: '' });
 	P(Group, 'number', 'imm_index', { label: 'index（仅 range_dispatch：custom_model_data 下标）', default: 0 });
+	P(Group, 'string', 'imm_threshold_format', { label: '分支编号格式', description: 'i / i*2 / 10+i*5 / 0,1,3', default: '' });
 	P(Group, 'number', 'imm_threshold', { label: '阈值（entries[].threshold）', default: 0 });
 	P(Group, 'number', 'imm_scale', { label: '数值缩放（scale）', default: 1 });
 	P(Group, 'string', 'imm_tint_type', { label: 'tints 来源类型', default: '', enum_values: ['', 'custom_model_data', 'constant', 'dye', 'potion', 'grass', 'team'] });
