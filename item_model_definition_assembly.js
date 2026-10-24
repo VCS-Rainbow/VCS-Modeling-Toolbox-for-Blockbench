@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.8.2';
+const VERSION = '0.8.3';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -304,30 +304,20 @@ class Exporter {
 		return element;
 	}
 
-	/** 全局居中量：整套模型所有方块的包围盒中点 − (8,8,8)，只居中一次 */
-	globalShift() {
-		if (this.globalShiftValue) return this.globalShiftValue;
+	/** 居中平移量：只用 from/to 的包围盒（不按元素自转取 AABB，避免枢轴很远时把坐标放大） */
+	centerShift(elements) {
 		const min = [Infinity, Infinity, Infinity];
 		const max = [-Infinity, -Infinity, -Infinity];
-		const scan = (nodes) => {
-			for (const node of nodes) {
-				if (!node || node.export === false) continue;
-				if (isCube(node)) {
-					const inflate = typeof node.inflate === 'number' ? node.inflate : 0;
-					for (let a = 0; a < 3; a++) {
-						const lo = Math.min(num(node.from[a]), num(node.to[a])) - inflate;
-						const hi = Math.max(num(node.from[a]), num(node.to[a])) + inflate;
-						if (lo < min[a]) min[a] = lo;
-						if (hi > max[a]) max[a] = hi;
-					}
-				} else if (isGroup(node)) {
-					scan(node.children || []);
-				}
+		for (const el of elements) {
+			for (let a = 0; a < 3; a++) {
+				const lo = Math.min(el.from[a], el.to[a]);
+				const hi = Math.max(el.from[a], el.to[a]);
+				if (lo < min[a]) min[a] = lo;
+				if (hi > max[a]) max[a] = hi;
 			}
-		};
-		scan((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []);
-		this.globalShiftValue = isFinite(min[0]) ? [0, 1, 2].map(a => (min[a] + max[a]) / 2 - CENTER) : [0, 0, 0];
-		return this.globalShiftValue;
+		}
+		if (!isFinite(min[0])) return [0, 0, 0];
+		return [0, 1, 2].map(a => (min[a] + max[a]) / 2 - CENTER);
 	}
 
 	addModel(cubes, hint) {
@@ -339,7 +329,7 @@ class Exporter {
 		}
 		if (!elements.length) return null;
 
-		const shift = this.globalShift();
+		const shift = this.centerShift(elements);
 		for (const el of elements) {
 			el.from = el.from.map((v, a) => clean(v - shift[a]));
 			el.to = el.to.map((v, a) => clean(v - shift[a]));
@@ -369,7 +359,7 @@ class Exporter {
 	 *   p′ → R·(p′ + d − O) + O = R·p′ + [R·d + O − R·O]
 	 * translation = 常数项 / 16（单位：格）；枢轴 = O（原点模式）或 O − (8,8,8)（中心模式）
 	 */
-	buildTransformation(node, shift) {
+	buildTransformation(node, shift, parent_shift) {
 		const q = readQuaternion(node);
 		if (!q) return null;
 		const len = Math.hypot(q.x, q.y, q.z, q.w);
@@ -380,8 +370,9 @@ class Exporter {
 		}
 		if (flip) { q.x = -q.x; q.y = -q.y; q.z = -q.z; q.w = -q.w; }
 
-		const d = [0, 0, 0];
-		const hasShift = false;
+		const d = Array.isArray(shift) ? shift : [0, 0, 0];
+		const dp = Array.isArray(parent_shift) ? parent_shift : [0, 0, 0];
+		const hasShift = Math.abs(d[0]) + Math.abs(d[1]) + Math.abs(d[2]) > 1e-6;
 		if (Math.abs(q.w) > 1 - 1e-7 && !hasShift) return null;
 
 		const m = quatMatrix(q);
@@ -391,7 +382,7 @@ class Exporter {
 		const rp = rotVec(m, pivot);
 		const rd = rotVec(m, d);
 		return {
-			translation: cleanAll([0, 1, 2].map(a => (rd[a] + pivot[a] - rp[a]) / UNIT)),
+			translation: cleanAll([0, 1, 2].map(a => (rd[a] + pivot[a] - rp[a] - dp[a]) / UNIT)),
 			left_rotation: cleanAll([q.x, q.y, q.z, q.w]),
 			scale: [1, 1, 1],
 			right_rotation: [0, 0, 0, 1],
@@ -412,16 +403,16 @@ class Exporter {
 		return null;
 	}
 
-	buildCubeNode(cube, hint) {
+	buildCubeNode(cube, hint, parent_shift) {
 		const built = this.addModel([cube], hint + '_' + sanitizePath(labelOf(cube), 'cube'));
 		if (!built) return null;
 		const node = { type: 'minecraft:model', model: built.reference };
-		const transformation = this.buildTransformation(cube, built.shift);
+		const transformation = this.buildTransformation(cube, built.shift, parent_shift);
 		if (transformation) node.transformation = transformation;
 		return node;
 	}
 
-	buildNode(group, hint) {
+	buildNode(group, hint, parent_shift) {
 		const children = (group.children || []).filter(c => c && c.export !== false);
 		const childGroups = children.filter(isGroup);
 		const cubes = children.filter(isCube);
@@ -436,10 +427,11 @@ class Exporter {
 		else if (inlineCubes.length) built = this.addModel(inlineCubes, hint);
 
 		const node = { type: 'minecraft:' + type };
-		const transformation = this.buildTransformation(group, built ? built.shift : [0, 0, 0]);
+		const own_shift = built ? built.shift : [0, 0, 0];
+		const transformation = this.buildTransformation(group, own_shift, parent_shift);
 		if (transformation) node.transformation = transformation;
 
-		const extras = ownCubes.map(cube => this.buildCubeNode(cube, hint)).filter(Boolean);
+		const extras = ownCubes.map(cube => this.buildCubeNode(cube, hint, parent_shift)).filter(Boolean);
 
 		if (type === 'empty') return node;
 
@@ -459,7 +451,7 @@ class Exporter {
 			if (String(group.imm_index || '').length) node.index = clean(group.imm_index);
 			node.entries = [];
 			for (const child of childGroups) {
-				const childNode = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'));
+				const childNode = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'), own_shift);
 				if (childNode) node.entries.push({ threshold: clean(num(child.imm_threshold)), model: childNode });
 			}
 			const fallback = built ? { type: 'minecraft:model', model: built.reference } : (extras[0] || null);
@@ -472,7 +464,7 @@ class Exporter {
 		if (built) models.push({ type: 'minecraft:model', model: built.reference });
 		for (const extra of extras) models.push(extra);
 		for (const child of childGroups) {
-			const childNode = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'));
+			const childNode = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'), own_shift);
 			if (childNode) models.push(childNode);
 		}
 		if (!models.length) { this.warn('分组 “' + labelOf(group) + '” 没有可导出内容，已跳过。'); return null; }
@@ -496,7 +488,7 @@ class Exporter {
 		for (const node of root) {
 			if (!node || node.export === false) continue;
 			if (isGroup(node)) {
-				const built = this.buildNode(node, sanitizePath(labelOf(node), 'group'));
+				const built = this.buildNode(node, sanitizePath(labelOf(node), 'group'), [0, 0, 0]);
 				if (built) models.push(built);
 			} else if (isCube(node)) loose.push(node);
 		}
@@ -506,25 +498,23 @@ class Exporter {
 			if (inlineCubes.length) {
 				const built = this.addModel(inlineCubes, 'root');
 				if (built) {
-					models.push({ type: 'minecraft:model', model: built.reference });
+					const node = { type: 'minecraft:model', model: built.reference };
+					if (built.shift.some(v => Math.abs(v) > 1e-6)) {
+						node.transformation = {
+							translation: cleanAll(built.shift.map(v => v / UNIT)),
+							left_rotation: [0, 0, 0, 1], scale: [1, 1, 1], right_rotation: [0, 0, 0, 1],
+						};
+					}
+					models.push(node);
 				}
 			}
 			for (const cube of ownCubes) {
-				const node = this.buildCubeNode(cube, 'root');
+				const node = this.buildCubeNode(cube, 'root', [0, 0, 0]);
 				if (node) models.push(node);
 			}
 		}
 		if (!models.length) throw new Error('当前项目没有可导出的分组或方块。');
-		const shift = this.globalShift();
-		const model = { type: 'minecraft:composite' };
-		if (Math.abs(shift[0]) + Math.abs(shift[1]) + Math.abs(shift[2]) > 1e-6) {
-			model.transformation = {
-				translation: cleanAll(shift.map(v => v / UNIT)),
-				left_rotation: [0, 0, 0, 1], scale: [1, 1, 1], right_rotation: [0, 0, 0, 1],
-			};
-		}
-		model.models = models;
-		return { model };
+		return { model: { type: 'minecraft:composite', models } };
 	}
 
 	buildNotes() {
