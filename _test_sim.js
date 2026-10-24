@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.52.0', api.VERSION, '0.52.0');
+eq('版本是 0.52.1', api.VERSION, '0.52.1');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -426,6 +426,7 @@ simState2.inputs.colors.length = 0;
 api.simApplyTints();
 eq('清空 colors 后恢复原材质', tintCube.mesh.material === tintOriginal, true);
 const colorsRow = simUi.rows.colors;
+eq('默认预设色为 16 个染料色', colorsRow.slots[0].presets.length, 16);
 colorsRow.slots[0].els.presets.value = '0xFFFF0000, 0xFF00FF00';
 colorsRow.slots[0].els.presets.fire('change');
 eq('colors 预设色解析为数字', colorsRow.slots[0].presets.length === 2 && colorsRow.slots[0].presets[0] === 0xFFFF0000, true);

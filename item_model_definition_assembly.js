@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.52.0';
+const VERSION = '0.52.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1873,7 +1873,12 @@ let sim_panel = null;
 let sim_ui = null;
 
 /* 模拟状态：0.30.1 重构面板时和 simEvaluate 一起被误删，0.39.0 恢复 */
-const SIM_COLOR_PRESETS = ['0xFFFFFFFF', '0xFFFF5555', '0xFF55FF55', '0xFF5555FF'];
+const SIM_COLOR_PRESETS = [
+	'0xFFF9FFFE', '0xFFF9801D', '0xFFC74EBD', '0xFF3AB3DA',
+	'0xFFFED83D', '0xFF80C71F', '0xFFF38BAA', '0xFF474F52',
+	'0xFF9D9D97', '0xFF169C9C', '0xFF8932B8', '0xFF3C44AA',
+	'0xFF835432', '0xFF5E7C16', '0xFF1D1D21', '0xFFB02E26',
+];
 const sim = {
 	timer: null,
 	dir: 1,
