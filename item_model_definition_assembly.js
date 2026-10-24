@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.19.1';
+const VERSION = '0.19.2';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -873,6 +873,53 @@ function sortBranchChildren(parent) {
 	const others = parent.children.filter(child => !isGroup(child));
 	parent.children = sorted.concat(others);
 	return sorted.length;
+}
+
+/* 切换类型时清掉不属于该类型的字段 */
+function resetTypeSpecificProps(group, newType) {
+	const type = String(newType || '').replace(/^minecraft:/, '');
+	const branchTypes = ['condition', 'range_dispatch', 'select'];
+	if (type !== 'condition' && type !== 'select') group.imm_condition = '';
+	if (type !== 'select') group.imm_case_when = '';
+	if (type !== 'range_dispatch') { group.imm_threshold_format = ''; group.imm_threshold = 0; }
+	if (type === 'composite' || type === 'model' || type === 'empty') {
+		group.imm_property = '';
+		group.imm_component = '';
+		group.imm_ignore_default = false;
+		group.imm_predicate = '';
+		group.imm_value = '';
+		group.imm_keybind = '';
+		group.imm_range_target = '';
+		group.imm_range_source = '';
+		group.imm_range_period = 1;
+		group.imm_range_wobble = true;
+		group.imm_range_normalize = true;
+		group.imm_range_remaining = false;
+	}
+	if (type === 'condition') {
+		group.imm_range_target = '';
+		group.imm_range_source = '';
+		group.imm_range_period = 1;
+	}
+	if (type === 'range_dispatch' || type === 'select') {
+		group.imm_component = '';
+		group.imm_ignore_default = false;
+		group.imm_predicate = '';
+		group.imm_value = '';
+		group.imm_keybind = '';
+	}
+	return type;
+}
+
+/* 剥掉所有子分组的 [..] / ⚠ 前缀（父分组不再是分支容器时用） */
+function stripChildPrefixes(group) {
+	let changed = 0;
+	for (const child of (group.children || []).filter(isGroup)) {
+		const base = String(child.name || '').replace(/^\[[^\]]*\]\s*/, '').replace(/^\u26a0\s*/, '');
+		if (base !== child.name) { child.name = base; changed++; }
+		if (child.imm_auto_disabled) { child.imm_auto_disabled = false; changed++; }
+	}
+	return changed;
 }
 
 function syncBranchLabels(group) {
