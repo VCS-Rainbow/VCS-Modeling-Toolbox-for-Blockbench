@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.65.1';
+const VERSION = '0.65.2';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -205,6 +205,8 @@ class Exporter {
 		this.negativeCount = 0;
 		this.timelinePoses = null; // uuid → {rotation, origin, position}（逐帧导出时临时覆盖）
 		this.modelCache = new Map(); // 方块集合 → {reference, shift}，时间轴逐帧复用同一模型文件
+		this.cubeIds = new WeakMap();
+		this.cubeIdSeq = 0;
 	}
 
 	warn(msg) { if (msg && this.warnings.indexOf(msg) < 0 && this.warnings.length < 40) this.warnings.push(msg); }
@@ -320,7 +322,7 @@ class Exporter {
 		if (!count) { this.warn('方块 “' + labelOf(cube) + '” 没有带纹理的面，已跳过。'); return null; }
 
 		const element = { from: cleanAll(from), to: cleanAll(to), faces };
-		const rotation = this.elementRotation(cube);
+		const rotation = cube.__imm_omit_rotation ? null : this.elementRotation(cube);
 		if (rotation) element.rotation = rotation;
 		if (cube.shade === false) element.shade = false;
 		return element;
@@ -343,7 +345,8 @@ class Exporter {
 	}
 
 	addModel(cubes, hint) {
-		const __modelKey = cubes.map(cube => (cube && (cube.uuid || cube.name)) || '?').join('|');
+		const cubeKey = (cube) => { if (!cube) return '?'; if (cube.uuid) return cube.uuid; if (cube.name) return cube.name; let id = this.cubeIds.get(cube); if (!id) { id = 'cube-' + (++this.cubeIdSeq); this.cubeIds.set(cube, id); } return id; };
+		const __modelKey = cubes.map(cubeKey).join('|');
 		if (this.modelCache.has(__modelKey)) return this.modelCache.get(__modelKey);
 		const order = new Map();
 		const elements = [];
@@ -512,7 +515,9 @@ class Exporter {
 	}
 
 	buildCubeNode(cube, hint, parent_shift) {
-		const built = this.addModel([cube], hint + '_' + sanitizePath(labelOf(cube), 'cube'));
+		// 节点 transformation 已承载旋转：元素本身不再写 rotation，避免双重旋转
+		const cubeForModel = Object.assign({}, cube, { __imm_omit_rotation: true });
+		const built = this.addModel([cubeForModel], hint + '_' + sanitizePath(labelOf(cube), 'cube'));
 		if (!built) return null;
 		const node = { type: 'minecraft:model', model: built.reference };
 		if (cube && cube.parent && isGroup(cube.parent)) this.groupNodes.set(node, cube.parent);
@@ -543,6 +548,23 @@ class Exporter {
 		const ownCubes = [];
 		for (const cube of cubes) (this.needsOwnNode(cube) ? ownCubes : inlineCubes).push(cube);
 
+		// 跨度过大时拆成逐方块节点：单模型文件放不下，用 transformation 表达位置/旋转
+		if (inlineCubes.length > 1) {
+			const span = [0, 1, 2].map(a => {
+				let lo = Infinity, hi = -Infinity;
+				for (const cube of inlineCubes) {
+					const from = num(cube.from && cube.from[a]), to = num(cube.to && cube.to[a]);
+					lo = Math.min(lo, from, to); hi = Math.max(hi, from, to);
+				}
+				return hi - lo;
+			});
+			if (span.some(v => v > 32)) {
+				for (const cube of inlineCubes) ownCubes.push(cube);
+				inlineCubes.length = 0;
+				this.warn('分组 “' + labelOf(group) + '” 的方块跨度超过 32 格，已拆成逐方块节点以保持 from/to 在范围内。');
+			}
+		}
+		
 		let built = null;
 		if (type === 'model' && group.imm_model) {
 			let shift = [0, 0, 0];

@@ -2,6 +2,12 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.65.2
+- **超宽分组自动拆成逐方块节点**：inline 方块包围盒任一轴跨度 > 32 时，改为每个方块单独模型 + `transformation`；元素不再写 `rotation`（由 transformation 承载），保证 from/to 落在范围内。
+- 模型缓存键支持无 uuid/name 的方块（WeakMap 兜底），避免不同方块错误复用同一模型。
+- 新增回归测试：超宽分组拆分、拆分后 from/to 在 -16~32、元素无 rotation。
+- 单测扩到 **158 项**。
+
 ## 0.65.1
 - **时间轴逐帧导出复用静态模型几何**：`addModel` 增加按方块集合的模型缓存；`buildTimelineNode` 先无姿态构建一次，再逐帧用缓存模型 + 每帧 transformation，不再给每帧重新生成/居中 from/to。
 - 模型文件名不再带 `_fN` 后缀，逐帧只有 transformation 不同。

@@ -194,6 +194,8 @@ Blockbench 5.x 的实现方式有两条，本插件都接上了：
 
 ## 已知限制
 
+- inline 方块包围盒任一轴跨度超过 32 格时，会自动拆成逐方块节点（模型 + transformation），避免 `from/to` 越界；这是正常回退，不是数据损坏。
+
 - **不支持导入**（`parse` 未实现）：本格式的输出是“装配描述”，几何分散在多个模型文件里，回读需要一并解析它们；目前请用 `.bbmodel` 保存工程。
 - 编辑格式本身不限制方块坐标（0.56.0 起移除 -16~32）；导出到 Java 物品模型时仍受原版 element 范围约束，`.notes.txt` 会统计越界元素。
 - `condition` 只取前两个子项作为 `on_true` / `on_false`；`range_dispatch` 的 entries 来自子分组 + 各自 `threshold`。

@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-25 · 当前版本 **0.65.1**（tag `v0.65.1`）
+> 生成时间：2026-10-25 · 当前版本 **0.65.2**（tag `v0.65.2`）
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 
 ---
@@ -169,6 +169,7 @@
 ## 3. 版本历史（近期，git tag）
 
 ```
+0.65.2  超宽分组拆逐方块节点 + transformation（修 from/to 越界）
 0.65.1  时间轴复用静态模型几何，逐帧只改 transformation
 0.65.0  时间轴采样抽成 sampleTimelinePoses 并加单测
 0.64.0  选择优化改为最高级分组 + 模拟单击
@@ -310,13 +311,36 @@
 $node = 'C:\Users\Rainbow_\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 & $node --check 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js'
 & $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_assembly.js'   # 离线冒烟
-& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图/复调用/着色单测（155 项）
+& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图/复调用/着色单测（158 项）
 Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js' `
   'C:\Users\Rainbow_\AppData\Roaming\Blockbench\plugins\item_model_definition_assembly.js' -Force
 ```
 
 ---
 
+### 5.6 顽固问题：from/to 越界 / 分组散架（反复踩坑，务必先读）
+
+**症状**
+- 导出的模型 `elements[].from/to` 超出 `-16~32`（例如 timeline 帧模型、sac2/sac4 等）；
+- 编辑器里带旋转的分组/方块“动一下粉身碎骨”，或框选后各组移动方向不一致。
+
+**根因（按出现频率）**
+1. 源方块的 `from/to` 本身跨度就超过 48 格（组变换/绝对枢轴被反复搬动、边界测试后未撤销）；单个模型文件最多容纳 48 格，居中救不了。
+2. 历史 bug：`centerShift` 曾用“旋转后的 AABB”，枢轴离几何很远时 shift 被放大；现在只用 `from/to` 包围盒。
+3. 时间轴逐帧重建模型会重新居中/生成新 from/to；现在先按无姿态构建一次并缓存模型，逐帧只改 `transformation`。
+4. 多个分组被同时选中时，Blockbench 全局 gizmo 用第一个元素的父级旋转做换算；选择守卫必须把“最顶层分组”排到 `Outliner.selected[0]`，并模拟单击而不是手动拼子项选择。
+
+**当前修复**
+- `centerShift()` 只用 `from/to` 包围盒；
+- `addModel()` 按方块集合缓存模型（uuid/name/WeakMap 兜底），时间轴帧间复用；
+- inline 方块跨度 > 32 格 → 自动拆成**逐方块节点**：模型只放单块几何，位置/旋转全部进 `transformation`，元素不再写 `rotation`，from/to 自然落在范围内；
+- 选择优化：选择守卫只挂 `mouseup`，算最高级分组后清空选择并模拟单击；
+- 回归测试：`_test_sim.js` 的「超宽分组拆分」与「时间轴 range_dispatch」；
+- 导出的 `range_dispatch(timeline)` 帧模型现在与静态模型共用几何，不再每帧生成 `_fN` 文件。
+
+**以后改这里之前先确认**
+- 不要再把大位移/旋转烘进 `from/to`；一律走 `transformation`。
+- 改动 `centerShift` / `buildTransformation` / `buildNode` 后，先跑 `_test_sim.js` 的超宽拆分测试与真实 `assembly.bbmodel` 导出检查。
 ## 6. 新会话开场建议
 
 1. 读本文档 + `CHANGELOG.md` 最后 10 条；

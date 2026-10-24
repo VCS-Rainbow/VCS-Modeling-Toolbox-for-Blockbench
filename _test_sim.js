@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.65.1', api.VERSION, '0.65.1');
+eq('版本是 0.65.2', api.VERSION, '0.65.2');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -664,6 +664,27 @@ eq('rotation = 基础 + 关键帧增量', sampled.poses[0]['sample-group'].rotat
 eq('position 被采样', sampled.poses[0]['sample-group'].position, [0, 1, 0]);
 eq('采样后恢复动画时间', fakeAnimation.time, 0.5);
 global.Group.all = savedGroupAll;
+
+/* ---------- 超宽分组逐方块拆分 ---------- */
+console.log('\n[超宽分组拆分]');
+const spreadGroup = new global.Group({ name: 'spreadGroup', imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
+const spreadTexture = new global.Texture({ name: 'spreadTex', uuid: 'tex-spread', uv_width: 16, uv_height: 16 });
+global.Texture.all.push(spreadTexture);
+const makeSpreadCube = (from, to, rotation) => {
+  const cube = new global.Cube({ from, to, origin: [0, 0, 0], rotation: rotation || [0, 0, 0] });
+  cube.faces = { north: { texture: 'tex-spread', uv: [0, 0, 16, 16] } };
+  cube.parent = spreadGroup; spreadGroup.children.push(cube); return cube;
+};
+makeSpreadCube([0, 0, 0], [5, 5, 5]);
+const spreadCubeFar = makeSpreadCube([60, 0, 0], [65, 5, 5], [0, 0, 25]);
+const savedSpreadRoot = global.Outliner.root.splice(0, global.Outliner.root.length, spreadGroup);
+const spreadExporter = api.createExporter();
+spreadExporter.buildMapping();
+const spreadElements = spreadExporter.models.flatMap(model => model.data.elements || []);
+eq('超宽分组拆成多个模型', spreadExporter.models.length >= 2, true);
+eq('拆分后 from/to 都在 -16~32', spreadElements.every(el => el.from.concat(el.to).every(v => v >= -16.001 && v <= 32.001)), true);
+eq('节点承载旋转，元素不再写 rotation', spreadElements.every(el => !el.rotation), true);
+global.Outliner.root.splice(0, global.Outliner.root.length, ...savedSpreadRoot);
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
