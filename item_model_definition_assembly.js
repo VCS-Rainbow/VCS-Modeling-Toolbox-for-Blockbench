@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.21.1';
+const VERSION = '0.21.2';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1101,6 +1101,7 @@ function editGroupProps() {
 			imm_range_normalize: { label: 'normalize（归一化）', type: 'checkbox', value: group.imm_range_normalize !== false, description: '默认 true：返回 0~1 进度而非原始值（count / damage）。', condition: (r) => r.imm_property === 'count' || r.imm_property === 'damage' },
 			imm_range_period: { label: 'period（周期）', type: 'number', value: num(group.imm_range_period) || 1, description: '语法："period": 10.0\n作用：use_cycle 的取模周期（>0）。', condition: (r) => r.imm_property === 'use_cycle' },
 			imm_range_remaining: { label: 'remaining（用剩余时间）', type: 'checkbox', value: group.imm_range_remaining === true, description: '默认 false；true 时使用剩余使用时间。', condition: (r) => r.imm_property === 'use_duration' },
+			imm_align_center: { label: '导入时自动对齐到模型中点', type: 'checkbox', value: group.imm_align_center === true, description: '勾选后导入引用模型时，把模型包围盒中点移到 (8,8,8)，偏移写入本层 translation。', condition: (r) => r.imm_type === 'model' },
 			imm_tint_index: { label: '纹理着色索引（tints[].index）', description: '语法："tints": [{"type": "custom_model_data", "index": 0, "default": 0}]\n作用：custom_model_data 的下标。\n留空：不输出 tints，模型不染色。', type: 'text', value: String(group.imm_tint_index == null ? '' : group.imm_tint_index), condition: (r) => (r.imm_type === 'model' || r.imm_type === 'composite') && r.imm_tint_type === 'custom_model_data' },
 			imm_tint_value: { label: '纹理着色值（tints[].value / .default）', description: '语法：{"type": "constant", "value": -1} 或 {"type": "dye", "default": -1}\n作用：constant 填 ARGB 整数；\ndye / potion / team 可填默认颜色。', type: 'text', value: String(group.imm_tint_value == null ? '' : group.imm_tint_value), condition: (r) => (r.imm_type === 'model' || r.imm_type === 'composite') && ['constant', 'dye', 'potion', 'team'].indexOf(r.imm_tint_type) >= 0 },
 		},
@@ -1140,6 +1141,7 @@ function editGroupProps() {
 				if (result.imm_condition !== undefined) group.imm_condition = result.imm_condition;
 				if (result.imm_scale !== undefined) group.imm_scale = num(result.imm_scale) || 1;
 				if (result.imm_tints !== undefined) group.imm_tints = result.imm_tints;
+				if (result.imm_align_center !== undefined) group.imm_align_center = !!result.imm_align_center;
 				if (result.imm_tint_type !== undefined) group.imm_tint_type = result.imm_tint_type;
 				if (result.imm_tint_index !== undefined) group.imm_tint_index = num(result.imm_tint_index);
 				if (result.imm_tint_value !== undefined) group.imm_tint_value = result.imm_tint_value;
@@ -1311,7 +1313,7 @@ function importModelReference(group) {
 		created.push(cube);
 	});
 		// 自动对齐：把模型包围盒中点移到 (8,8,8)，偏移写进本层 translation
-		if (projectValue('imm_align_center', false) === true && created.length) {
+		if (group.imm_align_center === true && created.length) {
 			const min = [Infinity, Infinity, Infinity];
 			const max = [-Infinity, -Infinity, -Infinity];
 			for (const cube of created) {
@@ -1572,6 +1574,7 @@ function registerProperties() {
 	P(Group, 'number', 'imm_range_period', { label: 'period', default: 1 });
 	P(Group, 'boolean', 'imm_range_remaining', { label: 'remaining', default: false });
 	P(Group, 'string', 'imm_component', { label: 'component', default: '' });
+	P(Group, 'boolean', 'imm_align_center', { label: '引用模型导入时自动对齐到模型中点', default: false });
 	P(Group, 'boolean', 'imm_ignore_default', { label: 'ignore_default', default: false });
 	P(Group, 'string', 'imm_predicate', { label: 'predicate', default: '' });
 	P(Group, 'string', 'imm_value', { label: 'value', default: '' });
