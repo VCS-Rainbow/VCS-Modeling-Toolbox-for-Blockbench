@@ -2,6 +2,14 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.45.0
+- **修「半透明变成完全消失」**：Blockbench 的贴图材质是**自定义 `ShaderMaterial`**，片元 alpha 直接取纹理（`gl_FragColor = vec4(..., color.a)`），`material.opacity` 完全不参与；克隆后设 `opacity` 不会变半透明（还会因为 `transparent`/`depthWrite` 改动出怪）。
+  - 幽灵材质改为 **`THREE.MeshBasicMaterial`**，复用原材质的贴图（`uniforms.map.value` 或 `material.map`），设 `transparent + opacity 0.28 + depthWrite false + alphaTest 0`；
+  - 没有贴图时用灰色兜底；数组材质逐个替换；
+  - 恢复时仍还原原材质并释放幽灵材质。
+- 诊断弹窗增加**材质类型**（如 `ShaderMaterial（uniforms: map, SHADE, …）`），方便确认走的是哪条分支。
+- 单测仍为 **94 项**（测试 mock 没有 `MeshBasicMaterial`，走克隆兜底路径）。
+
 ## 0.44.0
 - **修视图联动只匹配到 1 个分组**（诊断里 `映射节点→分组 20`、`匹配到分组 1`）：`simEvaluate` 返回的多是 composite 内部的临时 `model` 节点，它们没有登记到 `groupNodes`。现在这些节点也登记到所属分组：
   - composite 自己几何生成的 `model_node`；

@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.44.0';
+const VERSION = '0.45.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1256,6 +1256,8 @@ function diagnoseSimView() {
 		const withMesh = cubes.filter(cube => cube.mesh);
 		const withMaterial = withMesh.filter(cube => cube.mesh.material);
 		lines.push('', '· ' + labelOf(entry.group) + '：mesh=' + !!entry.group.mesh + '，方块 ' + cubes.length + '（有 mesh ' + withMesh.length + '，有材质 ' + withMaterial.length + '）');
+		const firstMaterial = withMaterial.length ? (Array.isArray(withMaterial[0].mesh.material) ? withMaterial[0].mesh.material[0] : withMaterial[0].mesh.material) : null;
+		if (firstMaterial) lines.push('  材质：' + (firstMaterial.type || '未知') + (firstMaterial.uniforms ? '（uniforms: ' + Object.keys(firstMaterial.uniforms).join(', ') + '）' : ''));
 	}
 	Blockbench.showMessageBox({ title: '模拟视图联动诊断', message: lines.join('\n'), icon: 'info' });
 	console.log('[装配] view diag', { mode: sim.viewMode, groupNodes: sim.groupNodes ? sim.groupNodes.size : 0, items: items.length, entries: entries.length, inactive: inactive.length });
@@ -1786,12 +1788,28 @@ function simGhostCube(cube, on) {
 			delete mesh.__immGhost;
 		}
 		const original = mesh.material;
+		// Blockbench 的贴图材质是自定义 ShaderMaterial（alpha 直接取纹理），material.opacity 不生效；
+		// 幽灵材质改用同贴图的 MeshBasicMaterial，opacity 才能真正半透明。
 		const tint = (material) => {
+			if (!material) return material;
+			const map = (material.uniforms && material.uniforms.map && material.uniforms.map.value) || material.map || null;
+			try {
+				if (typeof THREE !== 'undefined' && THREE && THREE.MeshBasicMaterial) {
+					const options = { map, transparent: true, opacity: 0.28, depthWrite: false };
+					if (typeof material.side === 'number') options.side = material.side;
+					const ghost = new THREE.MeshBasicMaterial(options);
+					ghost.alphaTest = 0;
+					ghost.toneMapped = false;
+					if (!map && ghost.color && ghost.color.set) ghost.color.set(0x9aa4ad);
+					return ghost;
+				}
+			} catch (e) { /* fall through */ }
 			try {
 				const clone = material.clone();
 				clone.transparent = true;
 				clone.opacity = 0.28;
 				clone.depthWrite = false;
+				clone.alphaTest = 0;
 				clone.needsUpdate = true;
 				return clone;
 			} catch (e) { return material; }
