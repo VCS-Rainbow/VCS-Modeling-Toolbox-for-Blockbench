@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.20.2';
+const VERSION = '0.20.3';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -772,13 +772,30 @@ function createPackProject(root) {
 	}
 }
 
+async function pickPackPath() {
+	const picked = await pickPack();
+	if (!picked) return;
+	try { Project.imm_pack_path = picked; Project.saved = false; } catch (e) { /* ignore */ }
+	const pathmod = getPath();
+	const fsmod = getScopedFs(picked);
+	if (pathmod && fsmod && !readPackMcmeta(fsmod, pathmod, picked)) {
+		Blockbench.showMessageBox({
+			title: '不是资源包工程',
+			message: '该目录下没有 pack.mcmeta：\n' + picked + '\n\n可以直接为它创建一个。',
+			buttons: ['好', '创建 pack.mcmeta'], confirm: 1, cancel: 0,
+		}, (button) => { if (button === 1) createPackProject(picked); });
+	} else {
+		Blockbench.showQuickMessage('资源包工程路径：' + picked, 4000);
+	}
+}
+
 function chooseOrCreatePack() {
 	Blockbench.showMessageBox({
 		title: '资源包工程路径',
 		message: '尚未设置「资源包工程路径」。\n请选择一个已有的资源包目录，或创建一个新的。',
 		buttons: ['取消', '选择…', '创建…'], confirm: 2, cancel: 0,
 	}, (button) => {
-		if (button === 1) pickPack().then(picked => { if (picked) { Project.imm_pack_path = picked; runMerge(picked); } });
+		if (button === 1) pickPack().then(picked => { if (picked) pickPackPath(); });
 		else if (button === 2) pickPack().then(picked => { if (picked && createPackProject(picked)) runMerge(picked); });
 	});
 }
@@ -1532,11 +1549,13 @@ Plugin.register('item_model_definition_assembly', {
 		actions.zip = new Action('imm_export_zip', { name: '导出装配资源包 (zip)', description: 'items + models + textures', icon: 'archive', category: 'file', condition, click: exportZip });
 		actions.merge = new Action('imm_merge_pack', { name: '合并到资源包…', description: '直接写入资源包并覆盖旧文件', icon: 'folder_open', category: 'file', condition, click: mergeToPack });
 		actions.check = new Action('imm_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
+		actions.pack = new Action('imm_pick_pack', { name: '选择资源包工程路径…', description: '打开系统文件夹选择框，设为资源包工程目录', icon: 'folder_open', category: 'file', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: pickPackPath });
 		actions.sim = new Action('imm_simulate', { name: '模拟输入…', description: '按 custom_model_data / selected 预览分支命中', icon: 'play_circle', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const panel = buildSimPanel(false); if (panel) { panel.show(); return; } openSimulator(); } });
 		actions.props = new Action('imm_group_props', { name: '编辑分组映射属性…', description: '映射类型 / 引用模型 / property 等', icon: 'tune', category: 'tools', condition, click: editGroupProps });
 
 		MenuBar.addAction(actions.zip, 'file.export');
 		MenuBar.addAction(actions.merge, 'file.export');
+		MenuBar.addAction(actions.pack, 'file.export');
 		MenuBar.addAction(actions.check, 'tools');
 		MenuBar.addAction(actions.props, 'tools');
 		try { buildSimPanel(false); } catch (e) { /* ignore */ }
