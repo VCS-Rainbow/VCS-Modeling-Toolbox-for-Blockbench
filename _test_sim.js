@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.61.5', api.VERSION, '0.61.5');
+eq('版本是 0.62.0', api.VERSION, '0.62.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -515,6 +515,8 @@ eq('纹理输出命名空间用 sqsp', pathExporter.textures[0].namespace, 'sqsp
 /* ---------- 框选改选分组 ---------- */
 console.log('\n[框选改选分组]');
 const boxGroup = new global.Group({ name: 'boxGroup' });
+global.Outliner.root.push(boxGroup);
+
 const boxCube1 = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
 const boxCube2 = new global.Cube({ from: [3, 0, 0], to: [5, 2, 2], origin: [4, 1, 1], rotation: [0, 0, 0] });
 const detachBox = function () { this.selected = false; const at = global.Outliner.selected.indexOf(this); if (at >= 0) global.Outliner.selected.splice(at, 1); };
@@ -552,6 +554,7 @@ global.Outliner.selected.push(boxInlineCube1, boxInlineCube2);
 api.guardBoxSelection();
 eq('只选内建模型元素时保持原样', global.Outliner.selected.indexOf(boxInlineCube1) >= 0 && global.Outliner.selected.indexOf(boxInlineGroup) < 0, true);
 const refGroup = new global.Group({ name: 'refGroup', imm_type: 'model', imm_model: 'ns:item/ref' });
+global.Outliner.root.push(refGroup);
 const refCube1 = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
 const refCube2 = new global.Cube({ from: [3, 0, 0], to: [5, 2, 2], origin: [4, 1, 1], rotation: [0, 0, 0] });
 refCube1.parent = refGroup; refCube2.parent = refGroup; refGroup.children.push(refCube1, refCube2); refCube1.unselect = detachBox; refCube2.unselect = detachBox;
@@ -568,12 +571,31 @@ api.guardBoxSelection();
 eq('其它格式默认关闭', global.Outliner.selected.indexOf(boxCube1) >= 0 && global.Outliner.selected.indexOf(boxGroup) < 0, true);
 global.Format.id = savedFormatId; global.Outliner.selected.length = 0;
 
-/* ---------- 分组已选中但子项未选中的展开 ---------- */
-console.log('\n[分组展开]');
-boxGroup.selected = true; boxCube1.selected = false; boxCube2.selected = false;
-global.Outliner.selected.length = 0; global.Outliner.selected.push(boxCube1, boxCube2);
+/* ---------- 部分选中 / 向上递归 ---------- */
+console.log('\n[分组向上递归]');
+const partialGroup = new global.Group({ name: 'partialGroup' });
+global.Outliner.root.push(partialGroup);
+const pc1 = new global.Cube({ from: [0, 0, 0], to: [1, 1, 1], origin: [0, 0, 0], rotation: [0, 0, 0] });
+const pc2 = new global.Cube({ from: [2, 0, 0], to: [3, 1, 1], origin: [2, 0, 0], rotation: [0, 0, 0] });
+const pc3 = new global.Cube({ from: [4, 0, 0], to: [5, 1, 1], origin: [4, 0, 0], rotation: [0, 0, 0] });
+pc1.parent = partialGroup; pc2.parent = partialGroup; pc3.parent = partialGroup;
+partialGroup.children.push(pc1, pc2, pc3);
+global.Outliner.selected.length = 0; pc1.selected = true; pc2.selected = true; pc3.selected = false; pc1.parent.selected = false;
+global.Outliner.selected.push(pc1, pc2);
 api.guardBoxSelection();
-eq('分组已选中但子项未选时仍展开子项', global.Outliner.selected.indexOf(boxCube1) >= 0 && global.Outliner.selected.indexOf(boxCube2) >= 0, true);
+eq('部分子项选中时不选中分组', !!partialGroup.selected, false);
+const childGroup = new global.Group({ name: 'childGroup' });
+const parentGroup = new global.Group({ name: 'parentGroup' });
+global.Outliner.root.push(parentGroup);
+const gc1 = new global.Cube({ from: [0, 0, 0], to: [1, 1, 1], origin: [0, 0, 0], rotation: [0, 0, 0] });
+const gp1 = new global.Cube({ from: [2, 0, 0], to: [3, 1, 1], origin: [2, 0, 0], rotation: [0, 0, 0] });
+gc1.parent = childGroup; childGroup.children.push(gc1);
+gp1.parent = parentGroup; parentGroup.children.push(childGroup, gp1);
+global.Outliner.selected.length = 0; gc1.selected = true; gp1.selected = true; childGroup.selected = false; parentGroup.selected = false;
+global.Outliner.selected.push(gc1, gp1);
+api.guardBoxSelection();
+eq('子组全部子项选中后选中子组', !!childGroup.selected, true);
+eq('继续向上选中父组', !!parentGroup.selected, true);
 global.Outliner.selected.length = 0;
 
 /* ---------- 汇总 ---------- */

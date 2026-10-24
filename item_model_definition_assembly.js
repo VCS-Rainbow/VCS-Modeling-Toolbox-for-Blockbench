@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.61.5';
+const VERSION = '0.62.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2308,29 +2308,37 @@ function isBuiltInModelGroup(group) {
 function guardBoxSelection() {
 	if (guardingBox || !boxGroupsEnabled()) return;
 	if (typeof Outliner === 'undefined' || !Outliner || !Array.isArray(Outliner.selected)) return;
-	const cubes = Outliner.selected.filter(isCube);
-	if (cubes.length < 2) return;
-	const groups = [];
-	for (const cube of cubes) {
+	const selectedCubes = Outliner.selected.filter(isCube);
+	if (selectedCubes.length < 2) return;
+	const parents = [];
+	for (const cube of selectedCubes) {
 		const parent = cube && cube.parent;
-		if (isGroup(parent) && groups.indexOf(parent) < 0) groups.push(parent);
+		if (isGroup(parent) && parents.indexOf(parent) < 0) parents.push(parent);
 	}
-	if (!groups.length) return;
+	if (!parents.length) return;
 	// 只选了内建模型里的元素：保持原样，便于直接编辑引用模型内部
-	if (groups.every(isBuiltInModelGroup)) return;
-	// 分组及其全部子项都已选中（上一次转换已经完成）→ 不再处理
-	if (groups.every(group => group.selected && (group.children || []).every(child => child.selected))) return;
-	// 父分组已经处于选中状态：说明这是“单击分组”的结果，不要再把子元素取消
+	if (parents.every(isBuiltInModelGroup)) return;
 	guardingBox = true;
+	let changed = false;
 	try {
-		for (const group of groups) {
+		// 后序遍历：子分组先判断；某组的所有子项（分组/元素）都选中时，选中该组并继续往上传
+		const visit = (group) => {
+			for (const child of (group.children || [])) if (isGroup(child)) visit(child);
+			const children = (group.children || []);
+			if (!children.length || group.selected) return;
+			const isSelected = (child) => !!(child && (child.selected || (Array.isArray(Outliner.selected) && Outliner.selected.indexOf(child) >= 0)));
+			if (!children.every(isSelected)) return;
 			try {
-				if (typeof group.select === 'function') group.select({ ctrlOrCmd: true }, true);
-				else if (typeof group.markAsSelected === 'function') group.markAsSelected();
-				else group.selected = true;
+				if (typeof group.multiSelect === 'function') group.multiSelect();
+				else {
+					group.selected = true;
+					if (typeof Outliner !== 'undefined' && Outliner && Array.isArray(Outliner.selected) && Outliner.selected.indexOf(group) < 0) Outliner.selected.push(group);
+				}
+				changed = true;
 			} catch (e) { /* ignore */ }
-		}
-		try { if (typeof updateSelection === 'function') updateSelection(); } catch (e) { /* ignore */ }
+		};
+		for (const root of (Outliner.root || [])) if (isGroup(root)) visit(root);
+		if (changed) { try { if (typeof updateSelection === 'function') updateSelection(); } catch (e) { /* ignore */ } }
 	} finally { guardingBox = false; }
 }
 
