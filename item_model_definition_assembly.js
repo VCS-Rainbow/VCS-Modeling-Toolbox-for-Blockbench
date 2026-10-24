@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.11.3';
+const VERSION = '0.12.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -769,6 +769,29 @@ function runMerge(root) {
 }
 
 /* 把分支编号 / 条件写进子分组名最前方（幂等：先剥掉旧前缀） */
+/* 按分支编号/条件重排父分组的子分组（range_dispatch 按阈值升序，condition 按 on_true < on_false） */
+function sortBranchChildren(parent) {
+	if (!parent || !Array.isArray(parent.children)) return 0;
+	const type = String(parent.imm_type || '').replace(/^minecraft:/, '');
+	if (type !== 'range_dispatch' && type !== 'condition') return 0;
+	const groups = parent.children.filter(isGroup);
+	if (groups.length < 2) return 0;
+	const keyOf = (child) => {
+		if (type === 'condition') {
+			const label = String(child.imm_condition || '').toLowerCase();
+			if (label === 'on_true' || label === 'on_false') return label === 'on_true' ? 0 : 1;
+			return groups.indexOf(child);
+		}
+		return Number(child.imm_threshold) || 0;
+	};
+	const sorted = groups.slice().sort((a, b) => keyOf(a) - keyOf(b));
+	const unchanged = sorted.every((child, index) => child === groups[index]);
+	if (unchanged) return 0;
+	const others = parent.children.filter(child => !isGroup(child));
+	parent.children = sorted.concat(others);
+	return sorted.length;
+}
+
 function syncBranchLabels(group) {
 	const type = String((group && group.imm_type) || '').replace(/^minecraft:/, '');
 	if (type !== 'range_dispatch' && type !== 'condition') return 0;
@@ -805,6 +828,8 @@ function pickTargetGroup() {
 
 function editGroupProps() {
 	const group = pickTargetGroup();
+	const parent = (group && group.parent) || null;
+	const parent_type = String((parent && parent.imm_type) || '').replace(/^minecraft:/, '');
 	if (!group) {
 		Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里点选一个分组。', icon: 'info' });
 		return;
@@ -822,7 +847,8 @@ function editGroupProps() {
 			imm_property: { label: '取值来源（property）', description: '语法："property": "minecraft:custom_model_data"\n作用：range_dispatch / condition 从这里取值做分派。\n例：minecraft:custom_model_data、minecraft:selected', type: 'text', value: String(group.imm_property || ''), condition: (r) => r.imm_type === 'range_dispatch' || r.imm_type === 'condition' },
 			imm_index: { label: '分派下标（index）', description: '语法："index": 0\n作用：仅 range_dispatch，指定从 property 的哪个下标取值。', type: 'number', value: num(group.imm_index), condition: (r) => r.imm_type === 'range_dispatch' },
 			imm_threshold_format: { label: '分支编号格式（entries[].threshold）', type: 'text', value: String(group.imm_threshold_format || ''), description: '语法：i → 0,1,2；2i 或 i*2 → 0,2,4；10+2i → 10,12,14；0,1,3 → 字面列表；2:2i → 每个值重复 2 次、索引从 1 起（2,2,4,4,6,6…）。\n作用：range_dispatch 的子分组按顺序取这些阈值；留空为 0,1,2…', condition: (r) => r.imm_type === 'range_dispatch' },
-			imm_threshold: { label: '阈值（entries[].threshold）', description: '语法："entries": [{"threshold": 0, "model": { ... }}]\n作用：仅当父分组是 range_dispatch 时生效，\n本分组作为该阈值对应的模型。', type: 'number', value: num(group.imm_threshold), condition: (r) => r.imm_type === 'range_dispatch' },
+			imm_threshold: { label: '分支编号 / 阈值（entries[].threshold）', type: 'number', value: num(group.imm_threshold), description: '语法：{"threshold": 0}\n作用：父分组为 range_dispatch 时，本分组的阈值；修改后自动按阈值重排。', condition: (r) => r.imm_type === 'range_dispatch' || parent_type === 'range_dispatch' },
+			imm_condition: { label: '分支条件（on_true / on_false）', type: 'select', value: String(group.imm_condition || ''), options: { '': '（按位置）', on_true: 'on_true', on_false: 'on_false' }, description: '语法："on_true" / "on_false"\n作用：父分组为 condition 时决定本分支走哪一支；修改后自动重排。', condition: (r) => parent_type === 'condition' },
 			imm_scale: { label: '数值缩放（scale）', description: '语法："scale": 1.0\n作用：仅 range_dispatch，property 数值乘以该倍数后再查阈值。', type: 'number', value: num(group.imm_scale) || 1, condition: (r) => r.imm_type === 'range_dispatch' },
 						imm_tint_type: { label: '纹理着色类型（tints[].type）', description: '语法："tints": [{"type": "<类型>"}]\n作用：染色来源类型（默认 custom_model_data）。\n可选：custom_model_data / constant / dye / potion / grass / team\n仅“纹理着色索引”非空时生效。', type: 'select', value: String(group.imm_tint_type || 'custom_model_data'), options: { '': '（不生成 tints）', custom_model_data: 'custom_model_data', constant: 'constant', dye: 'dye', potion: 'potion', grass: 'grass', team: 'team' }, description: '纹理着色来源类型；保存为键 imm_tint_type', condition: (r) => r.imm_type === 'model' || r.imm_type === 'composite' },
 			imm_tint_index: { label: '纹理着色索引（tints[].index）', description: '语法："tints": [{"type": "custom_model_data", "index": 0, "default": 0}]\n作用：custom_model_data 的下标。\n留空：不输出 tints，模型不染色。', type: 'text', value: String(group.imm_tint_index == null ? '' : group.imm_tint_index), condition: (r) => (r.imm_type === 'model' || r.imm_type === 'composite') && r.imm_tint_type === 'custom_model_data' },
@@ -837,6 +863,7 @@ function editGroupProps() {
 				if (result.imm_index !== undefined) group.imm_index = num(result.imm_index);
 				if (result.imm_threshold !== undefined) group.imm_threshold = num(result.imm_threshold);
 				if (result.imm_threshold_format !== undefined) group.imm_threshold_format = result.imm_threshold_format;
+				if (result.imm_condition !== undefined) group.imm_condition = result.imm_condition;
 				if (result.imm_scale !== undefined) group.imm_scale = num(result.imm_scale) || 1;
 				if (result.imm_tints !== undefined) group.imm_tints = result.imm_tints;
 				if (result.imm_tint_type !== undefined) group.imm_tint_type = result.imm_tint_type;
@@ -871,14 +898,15 @@ function editGroupProps() {
 					}
 				};
 				walkTint(group, root_index);
-				const relabeled = syncBranchLabels(group);
+				const sortedCount = parent ? sortBranchChildren(parent) : 0;
+				const relabeled = syncBranchLabels(parent || group);
 				if (tinted) {
 					Project.saved = false;
 					try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 					try { if (typeof UVEditor !== 'undefined' && UVEditor.updateView) UVEditor.updateView(); } catch (e) { /* ignore */ }
 				}
 Undo.finishEdit('修改分组映射属性');
-				Blockbench.showQuickMessage('已更新 “' + labelOf(group) + '”' + (tinted ? ('，为 ' + tinted + ' 个方块自动勾选着色') : '') + (relabeled ? ('，更新 ' + relabeled + ' 个分支名') : ''), 2500);
+				Blockbench.showQuickMessage('已更新 “' + labelOf(group) + '”' + (tinted ? ('，为 ' + tinted + ' 个方块自动勾选着色') : '') + (sortedCount ? ('，重排 ' + sortedCount + ' 个分支') : '') + (relabeled ? ('，更新 ' + relabeled + ' 个分支名') : ''), 2500);
 			} catch (error) {
 				console.error(error);
 				Blockbench.showMessageBox({ title: '修改失败', message: String((error && error.message) || error), icon: 'error' });
@@ -931,8 +959,9 @@ function registerProperties() {
 	P(Group, 'string', 'imm_model', { label: '引用模型（imm_model）', default: '' });
 	P(Group, 'string', 'imm_property', { label: '取值来源（property）', default: '' });
 	P(Group, 'number', 'imm_index', { label: 'index（仅 range_dispatch：custom_model_data 下标）', default: 0 });
+	P(Group, 'string', 'imm_condition', { label: '分支条件（on_true/on_false）', default: '' });
 	P(Group, 'string', 'imm_threshold_format', { label: '分支编号格式', description: 'i / i*2 / 10+i*5 / 0,1,3', default: '' });
-	P(Group, 'number', 'imm_threshold', { label: '阈值（entries[].threshold）', default: 0 });
+	P(Group, 'number', 'imm_threshold', { label: '分支编号 / 阈值（entries[].threshold）', default: 0 });
 	P(Group, 'number', 'imm_scale', { label: '数值缩放（scale）', default: 1 });
 	P(Group, 'string', 'imm_tint_type', { label: 'tints 来源类型', default: '', enum_values: ['', 'custom_model_data', 'constant', 'dye', 'potion', 'grass', 'team'] });
 	P(Group, 'number', 'imm_tint_index', { label: 'tints 来源 index（custom_model_data）', default: 0 });
