@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.9.1';
+const VERSION = '0.9.2';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -291,7 +291,7 @@ class Exporter {
 			];
 			const entry = { uv, texture: '#' + order.get(texture) };
 			if (face.rotation) entry.rotation = clean(face.rotation);
-			if (typeof face.tint === 'number') entry.tintindex = face.tint;
+			if (typeof face.tint === 'number' && face.tint >= 0) entry.tintindex = face.tint;
 			faces[dir] = entry;
 			count++;
 		}
@@ -771,7 +771,7 @@ function editGroupProps() {
 						if (!isCube(child)) continue;
 						const faces = Object.values(child.faces || {});
 						if (!faces.length) continue;
-						if (faces.some(f => typeof f.tint === 'number')) continue;
+						if (faces.some(f => typeof f.tint === 'number' && f.tint >= 0)) continue;
 						if (effective === undefined) continue;
 						for (const f of faces) f.tint = effective;
 						tinted++;
@@ -829,6 +829,9 @@ function registerProperties() {
 	P(ModelProject, 'boolean', 'imm_center_pivot', { label: '旋转枢轴用 (0.5,0.5,0.5)（= 像素 8,8,8）', default: false });
 	P(ModelProject, 'boolean', 'imm_block_display', { label: '模型附带方块 display 变换', default: true });
 	P(ModelProject, 'string', 'imm_pack_path', { label: '合并目标资源包路径', default: '' });
+
+	// 面着色：Blockbench 的 UV 编辑器“着色”开关绑定 Face.properties.tint（默认 -1 表示未着色）
+	P(Face, 'number', 'tint', { label: '着色 index', default: -1 });
 
 	P(Group, 'string', 'imm_type', { label: '映射类型', default: 'composite', enum_values: MAPPING_TYPES });
 	P(Group, 'string', 'imm_model', { label: '引用模型（Java 模型 id）', default: '' });
