@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.51.0', api.VERSION, '0.51.0');
+eq('版本是 0.52.0', api.VERSION, '0.52.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -437,6 +437,15 @@ eq('不生成 tints 时 buildTints 为 null', tintExporter.buildTints({ imm_tint
 eq('none 时 buildTints 为 null', tintExporter.buildTints({ imm_tint_type: 'none', imm_tint_index: 0 }), null);
 eq('custom_model_data 时 buildTints 有值', Array.isArray(tintExporter.buildTints({ imm_tint_type: 'custom_model_data', imm_tint_index: 2 })), true);
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRoot4);
+
+/* ---------- 批量分组属性 ---------- */
+console.log('\n[批量分组属性]');
+const batchA = new global.Group({ name: 'batchA' });
+const batchB = new global.Group({ name: 'batchB' });
+const batchResult = { imm_type: 'inline', imm_tint_type: '', imm_tint_index: 0 };
+api.assignGroupMapProps(batchA, batchResult);
+api.assignGroupMapProps(batchB, batchResult);
+eq('同一结果应用到多个分组', batchA.imm_type === 'inline' && batchB.imm_type === 'inline' && batchA.imm_tint_type === 'none' && batchB.imm_tint_type === 'none', true);
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));

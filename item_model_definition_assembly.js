@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.51.0';
+const VERSION = '0.52.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1409,6 +1409,37 @@ function pickTargetGroup() {
 	return found[0] || null;
 }
 
+/** 把对话框结果写进一个分组（批量编辑复用） */
+function assignGroupMapProps(group, result) {
+	group.imm_type = result.imm_type;
+	resetTypeSpecificProps(group, result.imm_type);
+	const type = String(group.imm_type || '').replace(/^minecraft:/, '');
+	if (type !== 'range_dispatch' && type !== 'condition' && type !== 'select') stripChildPrefixes(group);
+	if (result.imm_model !== undefined) group.imm_model = result.imm_model;
+	if (result.imm_property !== undefined) group.imm_property = result.imm_property;
+	if (result.imm_component !== undefined) group.imm_component = result.imm_component;
+	if (result.imm_ignore_default !== undefined) group.imm_ignore_default = !!result.imm_ignore_default;
+	if (result.imm_predicate !== undefined) group.imm_predicate = result.imm_predicate;
+	if (result.imm_value !== undefined) group.imm_value = result.imm_value;
+	if (result.imm_keybind !== undefined) group.imm_keybind = result.imm_keybind;
+	if (result.imm_range_target !== undefined) group.imm_range_target = result.imm_range_target;
+	if (result.imm_range_source !== undefined) group.imm_range_source = result.imm_range_source;
+	if (result.imm_range_wobble !== undefined) group.imm_range_wobble = !!result.imm_range_wobble;
+	if (result.imm_range_normalize !== undefined) group.imm_range_normalize = !!result.imm_range_normalize;
+	if (result.imm_range_period !== undefined) group.imm_range_period = num(result.imm_range_period);
+	if (result.imm_range_remaining !== undefined) group.imm_range_remaining = !!result.imm_range_remaining;
+	if (result.imm_index !== undefined) group.imm_index = num(result.imm_index);
+	if (result.imm_threshold !== undefined) group.imm_threshold = num(result.imm_threshold);
+	if (result.imm_threshold_format !== undefined) group.imm_threshold_format = result.imm_threshold_format;
+	if (result.imm_condition !== undefined) group.imm_condition = result.imm_condition;
+	if (result.imm_scale !== undefined) group.imm_scale = num(result.imm_scale) || 1;
+	if (result.imm_tints !== undefined) group.imm_tints = result.imm_tints;
+	if (result.imm_align_center !== undefined) group.imm_align_center = !!result.imm_align_center;
+	if (result.imm_tint_type !== undefined) group.imm_tint_type = (result.imm_tint_type === '' ? 'none' : result.imm_tint_type);
+	if (result.imm_tint_index !== undefined) group.imm_tint_index = num(result.imm_tint_index);
+	if (result.imm_tint_value !== undefined) group.imm_tint_value = result.imm_tint_value;
+}
+
 function editGroupProps() {
 	const group = pickTargetGroup();
 	const parent = (group && group.parent) || null;
@@ -1419,7 +1450,7 @@ function editGroupProps() {
 	}
 	new Dialog({
 		id: 'imm_group_props',
-		title: '分组映射属性 — ' + labelOf(group),
+		title: '分组映射属性 — ' + labelOf(group) + (selectedGroups().length > 1 ? ('（共 ' + selectedGroups().length + ' 个）') : ''),
 		width: 660,
 		form: {
 			imm_type: {
@@ -1450,40 +1481,11 @@ function editGroupProps() {
 		},
 		onConfirm(result) {
 			try {
-				Undo.initEdit({ groups: [group] });
-				group.imm_type = result.imm_type;
-				const new_type = resetTypeSpecificProps(group, result.imm_type);
-				if (new_type !== 'range_dispatch' && new_type !== 'condition' && new_type !== 'select') stripChildPrefixes(group);
-				const previous_model = String(group.imm_model || '').trim();
-				if (result.imm_model !== undefined) group.imm_model = result.imm_model;
-				const next_model = String(result.imm_model || '').trim();
-				if (next_model && next_model !== previous_model) {
-					Blockbench.showQuickMessage('引用模型已更新，请用 Tools → 导入引用模型（当前分组）导入几何', 4000);
-				}
-				if (result.imm_property !== undefined) group.imm_property = result.imm_property;
-				if (result.imm_component !== undefined) group.imm_component = result.imm_component;
-				if (result.imm_ignore_default !== undefined) group.imm_ignore_default = !!result.imm_ignore_default;
-				if (result.imm_predicate !== undefined) group.imm_predicate = result.imm_predicate;
-				if (result.imm_value !== undefined) group.imm_value = result.imm_value;
-				if (result.imm_keybind !== undefined) group.imm_keybind = result.imm_keybind;
-				if (result.imm_range_target !== undefined) group.imm_range_target = result.imm_range_target;
-				if (result.imm_range_source !== undefined) group.imm_range_source = result.imm_range_source;
-				if (result.imm_range_wobble !== undefined) group.imm_range_wobble = !!result.imm_range_wobble;
-				if (result.imm_range_normalize !== undefined) group.imm_range_normalize = !!result.imm_range_normalize;
-				if (result.imm_range_period !== undefined) group.imm_range_period = num(result.imm_range_period);
-				if (result.imm_range_remaining !== undefined) group.imm_range_remaining = !!result.imm_range_remaining;
-				if (result.imm_index !== undefined) group.imm_index = num(result.imm_index);
-				if (result.imm_threshold !== undefined) group.imm_threshold = num(result.imm_threshold);
-				if (result.imm_threshold_format !== undefined) group.imm_threshold_format = result.imm_threshold_format;
-				if (result.imm_condition !== undefined) group.imm_condition = result.imm_condition;
-				if (result.imm_scale !== undefined) group.imm_scale = num(result.imm_scale) || 1;
-				if (result.imm_tints !== undefined) group.imm_tints = result.imm_tints;
-				if (result.imm_align_center !== undefined) group.imm_align_center = !!result.imm_align_center;
-				if (result.imm_tint_type !== undefined) group.imm_tint_type = (result.imm_tint_type === '' ? 'none' : result.imm_tint_type);
-				if (result.imm_tint_index !== undefined) group.imm_tint_index = num(result.imm_tint_index);
-				if (result.imm_tint_value !== undefined) group.imm_tint_value = result.imm_tint_value;
-								// 按 index 自动勾选着色：本层 index 下发给直接子项，子项自己的 index 优先
-				// 生效的 tint index：tints 数字简写 > tints[0].index > imm_index（0 视为未设置）
+				const selected = selectedGroups();
+				let targets = selected.length ? selected.slice() : [group];
+				if (selected.length && selected.indexOf(group) < 0) targets = [group];
+				if (targets.indexOf(group) < 0) targets.unshift(group);
+				Undo.initEdit({ groups: targets });
 				const tintIndexOf = (g) => {
 					const raw = String(g.imm_tints || '').trim();
 					if (/^-?\d+$/.test(raw)) return Number(raw);
@@ -1494,8 +1496,7 @@ function editGroupProps() {
 					const index_text = String(g.imm_tint_index == null ? '' : g.imm_tint_index).trim();
 					return /^-?\d+$/.test(index_text) ? Number(index_text) : undefined;
 				};
-				const root_index = tintIndexOf(group);
-				let tinted = 0;
+				let tinted = 0, sortedCount = 0, relabeled = 0;
 				const walkTint = (node, inherited) => {
 					const own = tintIndexOf(node);
 					const effective = (own !== undefined) ? own : inherited;
@@ -1510,25 +1511,29 @@ function editGroupProps() {
 						tinted++;
 					}
 				};
-				walkTint(group, root_index);
-				// 既处理“本分组是分支容器”（改它的编号格式/子项），也处理“本分组自己是某个分支”（改它的编号）
-				const sortedSelf = sortBranchChildren(group);
-				const relabelSelf = syncBranchLabels(group);
-				const differentParent = parent && parent !== group;
-				const sortedParent = differentParent ? sortBranchChildren(parent) : 0;
-				const relabelParent = differentParent ? syncBranchLabels(parent) : 0;
-				const sortedCount = sortedSelf + sortedParent;
-				const relabeled = relabelSelf + relabelParent;
+				for (const target of targets) {
+					assignGroupMapProps(target, result);
+					walkTint(target, tintIndexOf(target));
+					const targetParent = target.parent || null;
+					const sortedSelf = sortBranchChildren(target);
+					const relabelSelf = syncBranchLabels(target);
+					sortedCount += sortedSelf;
+					relabeled += relabelSelf;
+					if (targetParent && targetParent !== target) {
+						sortedCount += sortBranchChildren(targetParent);
+						relabeled += syncBranchLabels(targetParent);
+					}
+				}
 				if (tinted) {
 					Project.saved = false;
 					try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 					try { if (typeof UVEditor !== 'undefined' && UVEditor.updateView) UVEditor.updateView(); } catch (e) { /* ignore */ }
 				}
-Undo.finishEdit('修改分组映射属性');
+				Undo.finishEdit('修改分组映射属性');
 				simInvalidate();
 				try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 				const modelRef = String(group.imm_model || '').trim();
-				if (modelRef) {
+				if (targets.length === 1 && modelRef) {
 					const existingCubes = (group.children || []).filter(isCube).length;
 					const runImport = () => { try { importModelReference(group); } catch (e) { console.error('[装配] 导入失败', e); } };
 					if (existingCubes > 0) {
@@ -1539,7 +1544,7 @@ Undo.finishEdit('修改分组映射属性');
 						}, (button) => { if (button === 1) runImport(); });
 					} else { runImport(); }
 				}
-				Blockbench.showQuickMessage('已更新 “' + labelOf(group) + '”' + (tinted ? ('，为 ' + tinted + ' 个方块自动勾选着色') : '') + (sortedCount ? ('，重排 ' + sortedCount + ' 个分支') : '') + (relabeled ? ('，更新 ' + relabeled + ' 个分支名') : ''), 2500);
+				Blockbench.showQuickMessage('已更新 ' + targets.length + ' 个分组' + (tinted ? ('，为 ' + tinted + ' 个方块自动勾选着色') : '') + (sortedCount ? ('，重排 ' + sortedCount + ' 个分支') : '') + (relabeled ? ('，更新 ' + relabeled + ' 个分支名') : ''), 2500);
 			} catch (error) {
 				console.error(error);
 				Blockbench.showMessageBox({ title: '修改失败', message: String((error && error.message) || error), icon: 'error' });
@@ -2949,7 +2954,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, createExporter, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
