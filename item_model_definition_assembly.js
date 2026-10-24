@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.35.0';
+const VERSION = '0.35.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1466,7 +1466,8 @@ function buildSimPanel(show_panel) {
 		const enable = mk('input', { type: 'checkbox' });
 		const nameEl = mk('span', { textContent: label }, 'flex:1 1 100%;font-weight:600;opacity:.95');
 		const idx = mk('input', { type: 'number', value: '0' }, 'width:52px;display:' + (kind === 'bool' && (key === 'selected' || key === 'using_item') ? 'none' : 'inline-block'));
-		const val = mk('input', { type: kind === 'text' ? 'text' : (kind === 'bool' ? 'text' : 'number'), value: row.value }, 'width:78px');
+		const multi = (key === 'floats' || key === 'colors');
+		const val = mk('input', { type: (kind === 'text' || kind === 'bool' || multi) ? 'text' : 'number', value: row.value, placeholder: multi ? '0, 0.5, 1 → 连续下标' : '' }, 'width:78px');
 		const enableWrap = mk('label', {}, 'display:flex;align-items:center;gap:4px;font-size:11px');
 		enableWrap.appendChild(enable); enableWrap.appendChild(mk('span', { textContent: label }));
 		head.appendChild(nameEl);
