@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.16.3';
+const VERSION = '0.17.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -94,7 +94,7 @@ function formatNode(node, depth) {
 	const pad = '\t'.repeat(depth);
 	const padIn = pad + '\t';
 	const fields = ['"type": ' + JSON.stringify(node.type)];
-	for (const key of ['model', 'property', 'when', 'index', 'scale', 'tints', 'transformation']) {
+	for (const key of ['model', 'property', 'index', 'scale', 'tints', 'transformation', 'component', 'ignore_default', 'predicate', 'value', 'keybind']) {
 		if (node[key] !== undefined) fields.push(JSON.stringify(key) + ': ' + inline(node[key]));
 	}
 	for (const key of ['on_true', 'on_false', 'fallback']) {
@@ -544,7 +544,19 @@ class Exporter {
 		if (!models.length) { this.warn('分组 “' + labelOf(group) + '” 没有可导出内容，已跳过。'); return null; }
 
 		if (type === 'condition') {
-			node.when = String(group.imm_property || 'minecraft:selected');
+			const pred = String(group.imm_property || 'minecraft:selected').replace(/^minecraft:/, '').trim() || 'selected';
+						node.property = 'minecraft:' + pred;
+						if (pred === 'custom_model_data') node.index = clean(num(group.imm_index));
+						else if (pred === 'has_component') {
+							node.component = String(group.imm_component || '');
+							if (group.imm_ignore_default) node.ignore_default = true;
+						} else if (pred === 'component') {
+							node.predicate = String(group.imm_predicate || '');
+							const raw = String(group.imm_value == null ? '' : group.imm_value).trim();
+							if (raw.length) { try { node.value = JSON.parse(raw); } catch (e) { node.value = raw; } }
+						} else if (pred === 'keybind_down') {
+							node.keybind = String(group.imm_keybind || '');
+						}
 			node.on_true = models[built ? 1 : 0] || { type: 'minecraft:empty' };
 			node.on_false = models[built ? 2 : 1] || { type: 'minecraft:empty' };
 			if (models.length > 2) this.warn('condition 分组只使用前两个子项。');
@@ -877,8 +889,12 @@ function editGroupProps() {
 				options: { composite: 'composite', model: 'model', range_dispatch: 'range_dispatch', condition: 'condition', empty: 'empty' },
 			},
 			imm_model: { label: '引用模型（model）', description: '语法：{"type": "minecraft:model", "model": "<命名空间>:item/<路径>"}\n作用：本节点直接引用一个 Java 版模型；\n留空则由本层方块生成模型文件。', type: 'text', value: String(group.imm_model || ''), condition: (r) => r.imm_type !== 'empty' },
-			imm_property: { label: '取值来源 / 条件（property / when）', description: 'range_dispatch 输出为 "property"（例 minecraft:custom_model_data）；\ncondition 输出为 "when"（例 minecraft:selected、minecraft:has_component）。', type: 'text', value: String(group.imm_property || ''), condition: (r) => r.imm_type === 'range_dispatch' || r.imm_type === 'condition' },
-			imm_index: { label: '分派下标（index）', description: '语法："index": 0\n作用：仅 range_dispatch，指定从 property 的哪个下标取值。', type: 'number', value: num(group.imm_index), condition: (r) => r.imm_type === 'range_dispatch' },
+			imm_property: { label: 'property（谓词 / 属性）', type: 'select', value: String(group.imm_property || ''), options: { '': '（未设置）', selected: 'selected', broken: 'broken', damaged: 'damaged', carried: 'carried', extended_view: 'extended_view', using_item: 'using_item', view_entity: 'view_entity', 'fishing_rod/cast': 'fishing_rod/cast', 'bundle/has_selected_item': 'bundle/has_selected_item', custom_model_data: 'custom_model_data', has_component: 'has_component', component: 'component', keybind_down: 'keybind_down', compass: 'compass（range）', count: 'count（range）', damage: 'damage（range）', time: 'time（range）', use_cycle: 'use_cycle（range）', use_duration: 'use_duration（range）' }, description: 'condition：谓词（selected / broken / custom_model_data / has_component / component / keybind_down …）；\nrange_dispatch：数值属性（custom_model_data / compass / count / damage / time / use_cycle / use_duration）', condition: (r) => r.imm_type === 'range_dispatch' || r.imm_type === 'condition' },
+			imm_component: { label: 'component（has_component 用）', type: 'text', value: String(group.imm_component || ''), description: '语法："component": "minecraft:lodestone_tracker"', condition: (r) => r.imm_property === 'has_component' },
+			imm_ignore_default: { label: 'ignore_default', type: 'checkbox', value: !!group.imm_ignore_default, description: 'has_component：组件值与默认值相同时是否视为不存在', condition: (r) => r.imm_property === 'has_component' },
+			imm_predicate: { label: 'predicate（component 用）', type: 'text', value: String(group.imm_predicate || ''), description: '语法："predicate": "minecraft:stored_enchantments"', condition: (r) => r.imm_property === 'component' },
+			imm_value: { label: 'value（component 用，JSON）', type: 'text', value: String(group.imm_value == null ? '' : group.imm_value), description: '语法："value": [ { ... } ]', condition: (r) => r.imm_property === 'component' },
+			imm_keybind: { label: 'keybind（keybind_down 用）', type: 'text', value: String(group.imm_keybind || ''), description: '语法："keybind": "key.jump"', condition: (r) => r.imm_property === 'keybind_down' },			imm_index: { label: '分派下标（index）', description: '语法："index": 0\n作用：仅 range_dispatch，指定从 property 的哪个下标取值。', type: 'number', value: num(group.imm_index), condition: (r) => r.imm_type === 'range_dispatch' },
 			imm_threshold_format: { label: '分支编号格式（entries[].threshold）', type: 'text', value: String(group.imm_threshold_format || ''), description: '语法：i → 0,1,2；2i 或 i*2 → 0,2,4；10+2i → 10,12,14；0,1,3 → 字面列表；2:2i → 每个值重复 2 次、索引从 1 起（2,2,4,4,6,6…）。\n作用：range_dispatch 的子分组按顺序取这些阈值；留空为 0,1,2…', condition: (r) => r.imm_type === 'range_dispatch' },
 			imm_threshold: { label: '分支编号 / 阈值（entries[].threshold）', type: 'number', value: num(group.imm_threshold), description: '语法：{"threshold": 0}\n作用：父分组为 range_dispatch 时，本分组的阈值；修改后自动按阈值重排。', condition: (r) => r.imm_type === 'range_dispatch' || parent_type === 'range_dispatch' },
 			imm_condition: { label: '分支条件（on_true / on_false）', type: 'select', value: String(group.imm_condition || ''), options: { '': '（按位置）', on_true: 'on_true', on_false: 'on_false' }, description: '语法："on_true" / "on_false"\n作用：父分组为 condition 时决定本分支走哪一支；修改后自动重排。', condition: (r) => parent_type === 'condition' },
@@ -893,6 +909,11 @@ function editGroupProps() {
 				group.imm_type = result.imm_type;
 				if (result.imm_model !== undefined) group.imm_model = result.imm_model;
 				if (result.imm_property !== undefined) group.imm_property = result.imm_property;
+				if (result.imm_component !== undefined) group.imm_component = result.imm_component;
+				if (result.imm_ignore_default !== undefined) group.imm_ignore_default = !!result.imm_ignore_default;
+				if (result.imm_predicate !== undefined) group.imm_predicate = result.imm_predicate;
+				if (result.imm_value !== undefined) group.imm_value = result.imm_value;
+				if (result.imm_keybind !== undefined) group.imm_keybind = result.imm_keybind;
 				if (result.imm_index !== undefined) group.imm_index = num(result.imm_index);
 				if (result.imm_threshold !== undefined) group.imm_threshold = num(result.imm_threshold);
 				if (result.imm_threshold_format !== undefined) group.imm_threshold_format = result.imm_threshold_format;
@@ -1207,6 +1228,11 @@ function registerProperties() {
 	P(Group, 'string', 'imm_model', { label: '引用模型（imm_model）', default: '' });
 	P(Group, 'string', 'imm_property', { label: '取值来源 / 条件（property / when）', default: '' });
 	P(Group, 'number', 'imm_index', { label: 'index（仅 range_dispatch：custom_model_data 下标）', default: 0 });
+	P(Group, 'string', 'imm_component', { label: 'component', default: '' });
+	P(Group, 'boolean', 'imm_ignore_default', { label: 'ignore_default', default: false });
+	P(Group, 'string', 'imm_predicate', { label: 'predicate', default: '' });
+	P(Group, 'string', 'imm_value', { label: 'value', default: '' });
+	P(Group, 'string', 'imm_keybind', { label: 'keybind', default: '' });
 	P(Group, 'string', 'imm_condition', { label: '分支条件（on_true/on_false）', default: '' });
 	P(Group, 'string', 'imm_threshold_format', { label: '分支编号格式', description: 'i / i*2 / 10+i*5 / 0,1,3', default: '' });
 	P(Group, 'number', 'imm_threshold', { label: '分支编号 / 阈值（entries[].threshold）', default: 0 });
