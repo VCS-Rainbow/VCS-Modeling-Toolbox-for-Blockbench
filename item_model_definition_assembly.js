@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.10.2';
+const VERSION = '0.10.3';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -749,14 +749,14 @@ function editGroupProps() {
 				label: '映射类型（imm_type）', type: 'select', value: String(group.imm_type || 'composite'),
 				options: { composite: 'composite', model: 'model', range_dispatch: 'range_dispatch', condition: 'condition', empty: 'empty' },
 			},
-			imm_model: { label: '引用模型（imm_model）', type: 'text', value: String(group.imm_model || ''), description: '所有类型可用：填了就引用该 Java 模型作为本层几何；留空则用本层方块生成模型文件', condition: (r) => r.imm_type !== 'empty' },
-			imm_property: { label: 'property（imm_property）', type: 'text', value: String(group.imm_property || ''), description: '仅 range_dispatch / condition 有效。range_dispatch 例 minecraft:custom_model_data；condition 例 minecraft:selected', condition: (r) => r.imm_type === 'range_dispatch' || r.imm_type === 'condition' },
-			imm_index: { label: 'index（imm_index）', type: 'number', value: num(group.imm_index), description: '仅 range_dispatch 有效：property 为 custom_model_data 时取哪个下标', condition: (r) => r.imm_type === 'range_dispatch' },
-			imm_threshold: { label: 'threshold（imm_threshold）', type: 'number', value: num(group.imm_threshold), description: '仅当父分组类型是 range_dispatch 时生效：本分组作为 entries 的阈值', condition: (r) => r.imm_type === 'range_dispatch' },
-			imm_scale: { label: 'scale（imm_scale）', type: 'number', value: num(group.imm_scale) || 1, description: '仅 range_dispatch 有效：property 数值乘以该倍数后再查阈值', condition: (r) => r.imm_type === 'range_dispatch' },
+			imm_model: { label: '引用模型', description: '键名 imm_model。填 Java 模型 id；留空则用本层方块生成模型文件', type: 'text', value: String(group.imm_model || ''), condition: (r) => r.imm_type !== 'empty' },
+			imm_property: { label: 'property', description: '键名 imm_property。range_dispatch / condition 的取值来源', type: 'text', value: String(group.imm_property || ''), condition: (r) => r.imm_type === 'range_dispatch' || r.imm_type === 'condition' },
+			imm_index: { label: 'index', description: '键名 imm_index。仅 range_dispatch：custom_model_data 的下标', type: 'number', value: num(group.imm_index), condition: (r) => r.imm_type === 'range_dispatch' },
+			imm_threshold: { label: 'threshold', description: '键名 imm_threshold。仅当父分组是 range_dispatch 时生效', type: 'number', value: num(group.imm_threshold), condition: (r) => r.imm_type === 'range_dispatch' },
+			imm_scale: { label: 'scale', description: '键名 imm_scale。仅 range_dispatch：数值缩放', type: 'number', value: num(group.imm_scale) || 1, condition: (r) => r.imm_type === 'range_dispatch' },
 						imm_tint_type: { label: '纹理着色类型（imm_tint_type）', type: 'select', value: String(group.imm_tint_type || 'custom_model_data'), options: { '': '（不生成 tints）', custom_model_data: 'custom_model_data', constant: 'constant', dye: 'dye', potion: 'potion', grass: 'grass', team: 'team' }, description: '纹理着色来源类型；保存为键 imm_tint_type', condition: (r) => r.imm_type === 'model' || r.imm_type === 'composite' },
-			imm_tint_index: { label: '纹理着色索引（imm_tint_index）', type: 'text', value: String(group.imm_tint_index == null ? '' : group.imm_tint_index), description: '仅 custom_model_data 使用', condition: (r) => (r.imm_type === 'model' || r.imm_type === 'composite') && r.imm_tint_type === 'custom_model_data' },
-			imm_tint_value: { label: '纹理着色值（imm_tint_value）', type: 'text', value: String(group.imm_tint_value == null ? '' : group.imm_tint_value), description: 'constant 填 ARGB 整数；dye/potion/team 可填默认颜色', condition: (r) => (r.imm_type === 'model' || r.imm_type === 'composite') && ['constant', 'dye', 'potion', 'team'].indexOf(r.imm_tint_type) >= 0 },
+			imm_tint_index: { label: '纹理着色索引', description: '键名 imm_tint_index。留空表示不输出 tints；填整数才输出（如 0）', type: 'text', value: String(group.imm_tint_index == null ? '' : group.imm_tint_index), condition: (r) => (r.imm_type === 'model' || r.imm_type === 'composite') && r.imm_tint_type === 'custom_model_data' },
+			imm_tint_value: { label: '纹理着色值', description: '键名 imm_tint_value。constant 填 ARGB 整数；dye/potion/team 可填默认颜色', type: 'text', value: String(group.imm_tint_value == null ? '' : group.imm_tint_value), condition: (r) => (r.imm_type === 'model' || r.imm_type === 'composite') && ['constant', 'dye', 'potion', 'team'].indexOf(r.imm_tint_type) >= 0 },
 		},
 		onConfirm(result) {
 			try {
