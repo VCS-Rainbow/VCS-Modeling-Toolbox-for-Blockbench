@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.19.2';
+const VERSION = '0.20.2';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -786,7 +786,7 @@ function chooseOrCreatePack() {
 function mergeToPack() {
 	if (typeof Project === 'undefined' || !Project) { Blockbench.showQuickMessage('请先打开项目', 3000); return; }
 	const root = String(projectValue('imm_pack_path', '') || '').trim();
-	if (!root) { pickPack().then(picked => { if (picked) runMerge(picked); }); return; }
+	if (!root) { chooseOrCreatePack(); return; }
 	const checkPath = getPath();
 	const checkFs = getScopedFs(root);
 	if (checkPath && checkFs && !readPackMcmeta(checkFs, checkPath, root)) {
