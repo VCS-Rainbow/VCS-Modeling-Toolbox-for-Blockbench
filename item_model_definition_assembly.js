@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.15.0';
+const VERSION = '0.16.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -980,6 +980,98 @@ function checkStructure() {
 	Blockbench.showMessageBox({ title: '装配结构 / 变换诊断', message: lines.join('\n') || '（没有分组）', icon: 'info' });
 }
 
+/* ============================== 模拟输入面板 ============================== */
+
+let sim_panel = null;
+let sim_ui = null;
+
+function buildSimPanel() {
+	if (sim_panel) { sim_panel.show(); return sim_panel; }
+	if (typeof Panel === 'undefined') return null;
+	sim_panel = new Panel('imm_sim_panel', {
+		name: '模拟输入',
+		icon: 'play_circle',
+		condition: { formats: [FORMAT_ID] },
+		default_position: { slot: 'right_bar', float: false },
+		resizable: true,
+		growable: true,
+	});
+	const root = document.createElement('div');
+	root.style.cssText = 'padding:8px;display:flex;flex-direction:column;gap:6px;font-size:12px;overflow:auto;height:100%';
+	const mk = (tag, props, style) => { const el = document.createElement(tag); Object.assign(el, props || {}); if (style) el.style.cssText = style; return el; };
+	const row = (label, control) => { const wrap = mk('div', {}, 'display:flex;align-items:center;gap:6px'); wrap.appendChild(mk('span', { textContent: label }, 'width:96px;flex:0 0 auto')); wrap.appendChild(control); return wrap; };
+	const propSel = mk('select', {}); ['custom_model_data', 'selected'].forEach(v => propSel.appendChild(mk('option', { value: v, textContent: v })));
+	const indexInp = mk('input', { type: 'number', value: '0' }, 'width:70px');
+	const valueInp = mk('input', { type: 'number', value: '0', step: '0.5' }, 'width:80px');
+	const autoChk = mk('input', { type: 'checkbox' });
+	const periodInp = mk('input', { type: 'number', value: '800' }, 'width:70px');
+	const stepInp = mk('input', { type: 'number', value: '0.5', step: '0.1' }, 'width:70px');
+	const ruleSel = mk('select', {}); [['pingpong', '往复'], ['wrap', '循环']].forEach(([v, t]) => ruleSel.appendChild(mk('option', { value: v, textContent: t })));
+	const minInp = mk('input', { type: 'number', value: '0' }, 'width:70px');
+	const maxInp = mk('input', { type: 'number', value: '4' }, 'width:70px');
+	const runBtn = mk('button', { textContent: '运行 / 停止' }, 'padding:4px 8px');
+	const out = mk('div', {}, 'white-space:pre-wrap;font-family:monospace;font-size:11px;opacity:.85;flex:1 1 auto;overflow:auto;border-top:1px solid rgba(128,128,128,.3);padding-top:6px');
+	root.appendChild(row('取值来源', propSel));
+	root.appendChild(row('下标 index', indexInp));
+	root.appendChild(row('数值', valueInp));
+	root.appendChild(row('自动变化', autoChk));
+	root.appendChild(row('周期(ms)', periodInp));
+	root.appendChild(row('步长', stepInp));
+	root.appendChild(row('规则', ruleSel));
+	root.appendChild(row('下限', minInp));
+	root.appendChild(row('上限', maxInp));
+	root.appendChild(runBtn);
+	root.appendChild(out);
+	sim_ui = { propSel, indexInp, valueInp, autoChk, periodInp, stepInp, ruleSel, minInp, maxInp, out };
+	runBtn.addEventListener('click', () => toggleSim());
+	sim_panel.nodes = [root];
+	sim_panel.show();
+	return sim_panel;
+}
+
+function simTick() {
+	if (!sim_ui) return;
+	let mapping = null;
+	try { mapping = createExporter().buildMapping(); } catch (error) { sim_ui.out.textContent = '无法生成映射：' + ((error && error.message) || error); return; }
+	const index = Math.max(0, num(sim_ui.indexInp.value));
+	const prop = sim_ui.propSel.value;
+	sim.inputs.floats = sim.inputs.floats || [];
+	if (prop === 'selected') sim.inputs.selected = num(sim_ui.valueInp.value) > 0;
+	else sim.inputs.floats[index] = num(sim_ui.valueInp.value);
+	const items = simEvaluate(mapping.model, sim.inputs);
+	const hits = items.filter(item => item.hit).map(item => item.node.model).filter(Boolean);
+	const lines = [];
+	lines.push(prop === 'selected' ? ('selected = ' + sim.inputs.selected) : ('floats[' + index + '] = ' + sim.inputs.floats[index]));
+	lines.push('命中 ' + hits.length + ' 个模型，总共 ' + items.length + ' 个分支');
+	lines.push('');
+	for (const item of items) {
+		const name = item.node.model || item.node.type;
+		lines.push((item.hit ? '  ✔ ' : '  ✘ ') + name);
+	}
+	sim_ui.out.textContent = lines.join('\n');
+}
+
+function toggleSim() {
+	if (sim.timer) { clearInterval(sim.timer); sim.timer = null; sim_ui.out.textContent += '\n(已停止自动变化)'; return; }
+	simTick();
+	if (!sim_ui.autoChk.checked) return;
+	const period = Math.max(80, num(sim_ui.periodInp.value) || 800);
+	const stepValue = num(sim_ui.stepInp.value) || 0.5;
+	const min = num(sim_ui.minInp.value);
+	const max = num(sim_ui.maxInp.value);
+	let dir = 1;
+	sim.timer = setInterval(() => {
+		try {
+			let value = num(sim_ui.valueInp.value) + stepValue * dir;
+			if (sim_ui.ruleSel.value === 'wrap') { if (value > max) value = min; }
+			else { if (value > max) { value = max; dir = -1; } if (value < min) { value = min; dir = 1; } }
+			sim_ui.valueInp.value = String(value);
+			simTick();
+		} catch (error) { /* ignore */ }
+	}, period);
+}
+
+
 /* ============================== 模拟输入 ============================== */
 
 const sim = { timer: null, value: 0, dir: 1, inputs: { floats: [0, 0, 0, 0, 0, 0, 0, 0], selected: false, damage: 0, use_remainder: false } };
@@ -1236,7 +1328,7 @@ Plugin.register('item_model_definition_assembly', {
 		actions.zip = new Action('imm_export_zip', { name: '导出装配资源包 (zip)', description: 'items + models + textures', icon: 'archive', category: 'file', condition, click: exportZip });
 		actions.merge = new Action('imm_merge_pack', { name: '合并到资源包…', description: '直接写入资源包并覆盖旧文件', icon: 'folder_open', category: 'file', condition, click: mergeToPack });
 		actions.check = new Action('imm_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
-		actions.sim = new Action('imm_simulate', { name: '模拟输入…', description: '按 custom_model_data / selected 预览分支命中', icon: 'play_circle', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: openSimulator });
+		actions.sim = new Action('imm_simulate', { name: '模拟输入…', description: '按 custom_model_data / selected 预览分支命中', icon: 'play_circle', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const panel = buildSimPanel(); if (panel) return; openSimulator(); } });
 		actions.props = new Action('imm_group_props', { name: '编辑分组映射属性…', description: '映射类型 / 引用模型 / property 等', icon: 'tune', category: 'tools', condition, click: editGroupProps });
 
 		MenuBar.addAction(actions.zip, 'file.export');
