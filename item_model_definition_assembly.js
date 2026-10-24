@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.36.0';
+const VERSION = '0.36.2';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1468,6 +1468,27 @@ function buildSimPanel(show_panel) {
 		const idx = mk('input', { type: 'number', value: '0' }, 'width:52px;display:' + (kind === 'bool' && (key === 'selected' || key === 'using_item') ? 'none' : 'inline-block'));
 		const multi = (key === 'floats' || key === 'colors');
 		const val = mk('input', { type: (kind === 'text' || kind === 'bool' || multi) ? 'text' : 'number', value: row.value, placeholder: multi ? '0, 0.5, 1 → 连续下标' : '' }, 'width:78px');
+		// floats / colors：0/1/2 三个下标槽（各有标题）
+		row.pairs = [];
+		if (key === 'floats' || key === 'colors') {
+			idx.style.display = 'none';
+			val.style.display = 'none';
+			const pairsBox = mk('div', {}, 'display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap');
+			for (let k2 = 0; k2 < 3; k2++) {
+				const pi = mk('input', { type: 'number', value: String(k2) }, 'width:44px');
+				const pv = mk('input', { type: 'text', value: '0' }, 'width:70px');
+				const box2 = mk('div', {}, 'display:flex;flex-direction:column;gap:2px;font-size:10px;opacity:.75');
+				box2.appendChild(mk('span', { textContent: '索引 [' + k2 + ']' }));
+				const row2 = mk('div', {}, 'display:flex;gap:3px');
+				row2.appendChild(pi); row2.appendChild(pv);
+				box2.appendChild(row2);
+				pairsBox.appendChild(box2);
+				row.pairs.push({ pi, pv });
+				pv.addEventListener('change', () => { try { simTick(); } catch (e) { /* ignore */ } });
+				pi.addEventListener('change', () => { try { simTick(); } catch (e) { /* ignore */ } });
+			}
+			head.appendChild(pairsBox);
+		}
 		const enableWrap = mk('label', {}, 'display:flex;align-items:center;gap:4px;font-size:11px');
 		enableWrap.appendChild(enable); enableWrap.appendChild(mk('span', { textContent: label }));
 		head.appendChild(nameEl);
