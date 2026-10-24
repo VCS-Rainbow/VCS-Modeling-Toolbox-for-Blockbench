@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.28.1';
+const VERSION = '0.29.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1457,7 +1457,17 @@ function buildSimPanel(show_panel) {
 	root.style.cssText = 'padding:8px;display:flex;flex-direction:column;gap:6px;font-size:12px;overflow:auto;height:100%';
 	const mk = (tag, props, style) => { const el = document.createElement(tag); Object.assign(el, props || {}); if (style) el.style.cssText = style; return el; };
 	const row = (label, control) => { const wrap = mk('div', {}, 'display:flex;align-items:center;gap:6px'); wrap.appendChild(mk('span', { textContent: label }, 'width:96px;flex:0 0 auto')); wrap.appendChild(control); return wrap; };
-	const propSel = mk('select', {}); ['custom_model_data', 'selected'].forEach(v => propSel.appendChild(mk('option', { value: v, textContent: v })));
+	const propSel = mk('select', {}); [
+		['custom_model_data.floats', 'cmdata.floats（浮点）'],
+		['custom_model_data.colors', 'cmdata.colors（颜色）'],
+		['custom_model_data.strings', 'cmdata.strings（字符串）'],
+		['custom_model_data.flags', 'cmdata.flags（布尔）'],
+		['selected', 'selected（是否选中）'],
+		['damage', 'damage（损坏值）'],
+		['count', 'count（数量）'],
+		['time', 'time（时间）'],
+		['using_item', 'using_item（使用中）'],
+	].forEach(([v, t]) => propSel.appendChild(mk('option', { value: v, textContent: t })));
 	const indexInp = mk('input', { type: 'number', value: '0' }, 'width:70px');
 	const valueInp = mk('input', { type: 'number', value: '0', step: '0.5' }, 'width:80px');
 	const autoChk = mk('input', { type: 'checkbox' });
@@ -1496,8 +1506,13 @@ function simTick() {
 	const index = Math.max(0, num(sim_ui.indexInp.value));
 	const prop = sim_ui.propSel.value;
 	sim.inputs.floats = sim.inputs.floats || [];
-	if (prop === 'selected') sim.inputs.selected = num(sim_ui.valueInp.value) > 0;
-	else sim.inputs.floats[index] = num(sim_ui.valueInp.value);
+	const raw = sim_ui.valueInp.value;
+	if (prop === 'custom_model_data.floats') { sim.inputs.floats[index] = num(raw); }
+	else if (prop === 'custom_model_data.colors') { sim.inputs.colors = sim.inputs.colors || []; sim.inputs.colors[index] = num(raw) | 0; }
+	else if (prop === 'custom_model_data.strings') { sim.inputs.strings = sim.inputs.strings || []; sim.inputs.strings[index] = String(raw); }
+	else if (prop === 'custom_model_data.flags') { sim.inputs.flags = sim.inputs.flags || []; sim.inputs.flags[index] = raw === 'true' || raw === '1'; }
+	else if (prop === 'selected' || prop === 'using_item') { sim.inputs[prop] = raw === 'true' || raw === '1' || num(raw) > 0; }
+	else { sim.inputs[prop] = num(raw); }
 	const items = simEvaluate(mapping.model, sim.inputs);
 	const hits = items.filter(item => item.hit).map(item => item.node.model).filter(Boolean);
 	const lines = [];
@@ -1539,6 +1554,7 @@ const sim = { timer: null, value: 0, dir: 1, inputs: { floats: [0, 0, 0, 0, 0, 0
 function simValue(node, inputs) {
 	const type = String((node && node.type) || '').replace(/^minecraft:/, '');
 	const prop = String((node && node.property) || '').replace(/^minecraft:/, '');
+	// 数值来源统一走 floats / 物品属性
 	const index = Number(node && node.index) || 0;
 	let value = 0;
 	if (prop === 'custom_model_data') value = Number((inputs.floats || [])[index] || 0);
