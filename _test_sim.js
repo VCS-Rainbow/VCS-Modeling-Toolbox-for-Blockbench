@@ -67,7 +67,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.39.0', api.VERSION, '0.39.0');
+eq('版本是 0.40.0', api.VERSION, '0.40.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -179,6 +179,7 @@ eq('槽默认折叠（标题行仍可见）', slot0.els.body.style.display, 'non
 slot0.els.toggle.fire('click');
 eq('点箭头后槽展开', slot0.els.body.style.display, 'flex');
 eq('槽内有自动变化参数（周期/步长/规则/下限/上限）', ['自动变化', '周期', '步长', '规则', '下限', '上限'].every(t => containsText(slot0.els.body, t)), true);
+eq('每个槽有独立开关（默认开）', !!slot0.els.enable && slot0.els.enable.checked, true);
 eq('大类标题行没有「自动变化」复选框', containsText(rowHeader, '自动变化'), false);
 eq('行内没有 <details> 包裹输入', insideDetails(slot0.els.val), false);
 
@@ -189,12 +190,32 @@ const rangeGroup = new global.Group({ name: 'range', imm_type: 'range_dispatch',
 rangeGroup.children.push(gModel('low', 'ns:item/low'), gModel('high', 'ns:item/high'));
 global.Outliner.root.push(rangeGroup);
 eq('编辑值会自动启用该大类', (() => { slot0.els.val.value = '1'; slot0.els.val.fire('input'); return floatsRow.enabled && floatsRow.els.enable.checked; })(), true);
+api.simTick();
 eq('值 1 → 命中 high', /✔ ns:item\/high/.test(simUi.out.textContent), true);
 eq('槽角标显示命中数', slot0.els.badge.textContent, '命中 1');
 slot0.els.val.value = '0';
 slot0.els.val.fire('input');
+api.simTick();
 eq('值 0 → 命中 low', /✔ ns:item\/low/.test(simUi.out.textContent), true);
 eq('槽展开后有活跃项/关联分组', /range/.test(slot0.els.usage.innerHTML), true);
+eq('未活跃项用自绘折叠按钮（不是 details）', /data-usage-toggle/.test(slot0.els.usage.innerHTML) && !/<details>/.test(slot0.els.usage.innerHTML), true);
+
+/* ---------- 槽级开关 ---------- */
+console.log('\n[槽级开关]');
+const slot1 = floatsRow.slots[1];
+slot0.els.val.value = '5';
+slot0.els.val.fire('input');
+slot1.els.idx.value = '0';
+slot1.els.idx.fire('input');
+slot1.els.val.value = '0';
+slot1.els.val.fire('input');
+api.simTick();
+eq('两个槽都启用时按顺序写入（后写的 0 生效 → low）', /✔ ns:item\/low/.test(simUi.out.textContent), true);
+slot1.els.enable.checked = false;
+slot1.els.enable.fire('change');
+api.simTick();
+eq('关掉槽 2 后只剩槽 1 的值（5 → high）', /✔ ns:item\/high/.test(simUi.out.textContent), true);
+eq('关掉的槽不再显示命中角标', slot1.els.badge.textContent, '');
 
 /* ---------- 运行状态 ---------- */
 console.log('\n[运行状态]');

@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.39.0';
+const VERSION = '0.40.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1009,7 +1009,7 @@ function scheduleBranchSync(target) {
 			const parent = group.parent || null;
 			let changed = sortBranchChildren(group) + syncBranchLabels(group);
 			if (parent) changed += sortBranchChildren(parent) + syncBranchLabels(parent);
-			if (changed) { try { Project.saved = false; Canvas.updateAll(); } catch (e) { /* ignore */ } }
+			if (changed) { simInvalidate(); try { Project.saved = false; Canvas.updateAll(); } catch (e) { /* ignore */ } }
 		} catch (error) { /* ignore */ }
 	}, 250);
 }
@@ -1251,6 +1251,7 @@ function editGroupProps() {
 					try { if (typeof UVEditor !== 'undefined' && UVEditor.updateView) UVEditor.updateView(); } catch (e) { /* ignore */ }
 				}
 Undo.finishEdit('修改分组映射属性');
+				simInvalidate();
 				try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 				const modelRef = String(group.imm_model || '').trim();
 				if (modelRef) {
@@ -1510,8 +1511,42 @@ let sim_ui = null;
 const sim = {
 	timer: null,
 	dir: 1,
+	dirty: true,          // 结构/属性变了要重建映射
+	mapping: null,        // buildMapping() 缓存（输入变化时不重建）
+	usage: null,          // collectInputUsage() 缓存
+	tickTimer: null,      // 输入防抖
+	usageOpen: {},        // 「未活跃」展开状态，重渲染后保持
 	inputs: { floats: [], colors: [], strings: [], flags: [], selected: false, using_item: false, damage: 0, count: 0, time: 0 },
 };
+
+/** 结构可能变了：下次 simTick 重建映射与关联表 */
+function simInvalidate() {
+	sim.dirty = true;
+	sim.usage = null;
+}
+
+function simGetMapping() {
+	if (!sim.mapping || sim.dirty) {
+		sim.mapping = createExporter().buildMapping();
+		sim.usage = null;
+		sim.dirty = false;
+	}
+	return sim.mapping;
+}
+
+function simGetUsage() {
+	if (!sim.usage) sim.usage = collectInputUsage();
+	return sim.usage;
+}
+
+/** 输入框逐字符触发：合并成一次重算，避免每个键都重建映射 */
+function simScheduleTick() {
+	if (sim.tickTimer) return;
+	sim.tickTimer = setTimeout(() => {
+		sim.tickTimer = null;
+		try { simTick(); } catch (error) { /* ignore */ }
+	}, 40);
+}
 
 function simBlankInputs() {
 	return { floats: [], colors: [], strings: [], flags: [], selected: false, using_item: false, damage: 0, count: 0, time: 0 };
@@ -1559,6 +1594,7 @@ function buildSimPanel(show_panel) {
 		['time', 'time', 'number', ''],
 		['using_item', 'using_item', 'bool', ''],
 	];
+	simInvalidate();
 	sim_ui = { rows: {}, out: null, runBtn: null, status: null };
 	for (const spec of SPECS) {
 		const key = spec[0], label = spec[1], kind = spec[2], hint = spec[3] || '';
@@ -1589,16 +1625,21 @@ function buildSimPanel(show_panel) {
 		rowToggle.addEventListener('click', (event) => { if (event && event.preventDefault) event.preventDefault(); setRowOpen(!row.open); });
 		const slotCount = multi ? 3 : 1;
 		for (let slotIndex = 0; slotIndex < slotCount; slotIndex++) {
-			const slot = { index: slotIndex, value: kind === 'bool' ? 'false' : (kind === 'text' ? '' : '0'), period: 200, step: 0.5, rule: 'pingpong', min: 0, max: 4, dir: 1, lastTick: 0, open: false };
+			const slot = { index: slotIndex, enabled: true, value: kind === 'bool' ? 'false' : (kind === 'text' ? '' : '0'), period: 200, step: 0.5, rule: 'pingpong', min: 0, max: 4, dir: 1, lastTick: 0, open: false };
 			const slotBox = mk('div', {}, 'border:1px solid rgba(128,128,128,.18);border-radius:3px;padding:3px 5px;display:flex;flex-direction:column;gap:3px');
 			const slotHead = mk('div', {}, 'display:flex;align-items:center;gap:6px;flex-wrap:wrap');
 			const slotToggle = mk('button', { textContent: '▸', title: '展开自动变化 / 关联分组' }, 'border:none;background:transparent;cursor:pointer;padding:0;font-size:11px;line-height:1;width:12px;opacity:.7');
+			const slotEnable = mk('input', { type: 'checkbox' });
+			slotEnable.checked = true;
 			const slotName = mk('span', { textContent: multi ? ('槽 ' + (slotIndex + 1)) : '取值' }, 'font-size:10px;opacity:.65;min-width:26px');
 			const idx = mk('input', { type: 'number', value: String(slotIndex) }, 'width:44px');
 			const val = mk('input', { type: (kind === 'text' || kind === 'bool') ? 'text' : 'number', value: slot.value }, 'width:72px');
 			const badge = mk('span', { textContent: '' }, 'font-size:10px;color:#7fd0ff');
 			slotHead.appendChild(slotToggle);
-			slotHead.appendChild(slotName);
+			const slotEnableWrap = mk('label', {}, 'display:flex;align-items:center;gap:4px;cursor:pointer');
+			slotEnableWrap.appendChild(slotEnable);
+			slotEnableWrap.appendChild(slotName);
+			slotHead.appendChild(slotEnableWrap);
 			slotHead.appendChild(cell('索引', idx, '52px'));
 			slotHead.appendChild(cell('值', val, '78px'));
 			slotHead.appendChild(badge);
@@ -1611,6 +1652,19 @@ function buildSimPanel(show_panel) {
 			const maxI = mk('input', { type: 'number', value: '4' }, 'width:100%;min-width:0');
 			const autoTitle = mk('span', { textContent: '自动变化（点上方「运行」生效）' }, 'font-size:10px;opacity:.6;padding-bottom:2px;white-space:nowrap');
 			const usageEl = mk('div', {}, 'font-size:10px;line-height:1.45;white-space:pre-wrap');
+			usageEl.addEventListener('click', (event) => {
+				const target = event && event.target;
+				const btn = (target && target.closest) ? target.closest('[data-usage-toggle]') : null;
+				if (!btn) return;
+				const uid = btn.getAttribute('data-usage-toggle');
+				let body = null;
+				try { body = usageEl.querySelector('[data-usage-body="' + uid + '"]'); } catch (e) { /* ignore */ }
+				if (!body) return;
+				const open = body.style.display === 'none';
+				sim.usageOpen[uid] = open;
+				body.style.display = open ? 'block' : 'none';
+				btn.textContent = (open ? '▾ ' : '▸ ') + '未活跃 ' + btn.getAttribute('data-count') + ' 项';
+			});
 			if (kind === 'number') {
 				const autoRow = mk('div', {}, 'display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap');
 				autoRow.appendChild(autoTitle);
@@ -1628,6 +1682,7 @@ function buildSimPanel(show_panel) {
 			slotBox.appendChild(slotBody);
 			body.appendChild(slotBox);
 			const readSlot = () => {
+				slot.enabled = slotEnable.checked;
 				slot.index = Number(idx.value) || 0;
 				slot.value = val.value;
 				slot.period = Math.max(50, (Number(period.value) || 0.2) * 1000);
@@ -1636,24 +1691,26 @@ function buildSimPanel(show_panel) {
 				slot.min = Number(minI.value) || 0;
 				slot.max = Number(maxI.value) || 4;
 			};
+			const refreshSlotState = () => { slotBox.style.opacity = slot.enabled ? '1' : '.5'; };
 			const setSlotOpen = (open) => {
 				slot.open = open;
 				slotBody.style.display = open ? 'flex' : 'none';
 				slotToggle.textContent = open ? '▾' : '▸';
 			};
 			slotToggle.addEventListener('click', (event) => { if (event && event.preventDefault) event.preventDefault(); setSlotOpen(!slot.open); });
-			// 在未启用的大类里改值，说明就是想用它：自动勾上，避免“改了没反应”的错觉
-			const ensureRowEnabled = () => {
-				if (row.enabled) return;
-				row.enabled = true;
-				enable.checked = true;
-				refreshRowState();
+			// 改值（或索引）说明就是想用这个槽：自动勾上槽和大类，避免“改了没反应”
+			const ensureEnabled = () => {
+				let changed = false;
+				if (!slotEnable.checked) { slotEnable.checked = true; changed = true; }
+				if (!row.enabled) { row.enabled = true; enable.checked = true; refreshRowState(); changed = true; }
+				if (changed) { readSlot(); refreshSlotState(); }
 			};
-			val.addEventListener('input', () => { ensureRowEnabled(); readSlot(); simTick(); });
-			val.addEventListener('change', () => { ensureRowEnabled(); readSlot(); simTick(); });
-			idx.addEventListener('input', () => { ensureRowEnabled(); readSlot(); simTick(); });
-			[period, step, rule, minI, maxI].forEach(el => el.addEventListener('change', () => { readSlot(); simUpdateRunUi(); simTick(); }));
-			slot.els = { toggle: slotToggle, body: slotBody, idx, val, badge, usage: usageEl, period, step, rule, min: minI, max: maxI };
+			val.addEventListener('input', () => { ensureEnabled(); readSlot(); simScheduleTick(); });
+			val.addEventListener('change', () => { ensureEnabled(); readSlot(); simScheduleTick(); });
+			idx.addEventListener('input', () => { ensureEnabled(); readSlot(); simScheduleTick(); });
+			[slotEnable, period, step, rule, minI, maxI].forEach(el => el.addEventListener('change', () => { readSlot(); refreshSlotState(); simUpdateRunUi(); simTick(); }));
+			slot.els = { toggle: slotToggle, body: slotBody, enable: slotEnable, idx, val, badge, usage: usageEl, period, step, rule, min: minI, max: maxI };
+			refreshSlotState();
 			setSlotOpen(false);
 			row.slots.push(slot);
 		}
@@ -1670,12 +1727,15 @@ function buildSimPanel(show_panel) {
 	const runBtn = mk('button', { textContent: '▶ 运行' }, 'padding:4px 10px;');
 	const statusEl = mk('span', { textContent: '已停止' }, 'font-size:10px;opacity:.75');
 	controlRow.appendChild(runBtn);
+	const refreshBtn = mk('button', { textContent: '⟳ 刷新', title: '结构/属性改动没生效时点这里重建映射' }, 'padding:4px 8px;');
+	controlRow.appendChild(refreshBtn);
 	controlRow.appendChild(statusEl);
 	const out = mk('div', {}, 'white-space:pre-wrap;font-family:monospace;font-size:11px;opacity:.85;flex:1 1 auto;overflow:auto;border-top:1px solid rgba(128,128,128,.3);padding-top:6px;margin-top:4px');
 	sim_ui.out = out;
 	sim_ui.runBtn = runBtn;
 	sim_ui.status = statusEl;
 	runBtn.addEventListener('click', () => toggleSim());
+	refreshBtn.addEventListener('click', () => { simInvalidate(); simTick(); });
 	root.appendChild(controlRow); root.appendChild(out);
 	simUpdateRunUi();
 	sim_panel.node.innerHTML = '';
@@ -1720,9 +1780,9 @@ function collectInputUsage() {
 function refreshUsage() {
 	if (!sim_ui || !sim_ui.rows) return;
 	try {
-		const usageMap = collectInputUsage();
+		const usageMap = simGetUsage();
 		const prefixOf = (name) => { const m = String(name || '').match(/^\[(-?\d+(?:\.\d+)?)\]/); return m ? Number(m[1]) : null; };
-		const groupsHtml = (groups, value) => {
+		const groupsHtml = (groups, value, uidPrefix) => {
 			const html = [];
 			groups.forEach((g, gi) => {
 				if (gi > 0) html.push('<hr style="border:none;border-top:1px solid rgba(128,128,128,.25);margin:4px 0">');
@@ -1738,9 +1798,13 @@ function refreshUsage() {
 				for (const c of g.children.filter(isActiveChild)) html.push('<div style="font-weight:700;color:#7fd0ff">' + c + '</div>');
 				const inact = g.children.filter(c => !isActiveChild(c));
 				if (inact.length) {
-					html.push('<details><summary style="cursor:pointer;opacity:.55;font-size:10px">未活跃 ' + inact.length + ' 项（点开查看）</summary>');
-					for (const c of inact) html.push('<div style="opacity:.45;padding-left:6px">· ' + c + '</div>');
-					html.push('</details>');
+					const uid = uidPrefix + ':' + gi;
+					const open = !!sim.usageOpen[uid];
+					html.push('<div style="margin-top:2px">');
+					html.push('<button data-usage-toggle="' + uid + '" data-count="' + inact.length + '" style="border:none;background:transparent;color:inherit;padding:0;cursor:pointer;font-size:10px;opacity:.6">' + (open ? '▾ ' : '▸ ') + '未活跃 ' + inact.length + ' 项</button>');
+					html.push('<div data-usage-body="' + uid + '" style="display:' + (open ? 'block' : 'none') + ';padding-left:10px">');
+					for (const c of inact) html.push('<div style="opacity:.45">· ' + c + '</div>');
+					html.push('</div></div>');
 				}
 			});
 			return html;
@@ -1752,12 +1816,12 @@ function refreshUsage() {
 				if (!usageEl) continue;
 				const groups = usageMap[key + '#' + slot.index] || [];
 				if (!groups.length) { usageEl.innerHTML = '<div style="opacity:.45">关联分组：（无）</div>'; continue; }
-				usageEl.innerHTML = groupsHtml(groups, num(slot.value)).join('');
+				usageEl.innerHTML = groupsHtml(groups, num(slot.value), key + '#' + slot.index).join('');
 			}
 		}
 	} catch (error) { console.error('[装配] refreshUsage error', error); }
 }
-/* ============================== 模拟求值/* ============================== 模拟求值 ============================== */
+/* ============================== 模拟求值/* ============================== 模拟求值/* ============================== 模拟求值 ============================== */
 
 /** range_dispatch 的数值来源：custom_model_data → floats[index]；其余走物品属性 */
 function simValue(node, inputs) {
@@ -1855,7 +1919,7 @@ function simEvaluate(node, inputs) {
 function simTick() {
 	if (!sim_ui || !sim_ui.rows) return;
 	let mapping = null;
-	try { mapping = createExporter().buildMapping(); } catch (error) { if (sim_ui.out) sim_ui.out.textContent = '无法生成映射：' + ((error && error.message) || error); return; }
+	try { mapping = simGetMapping(); } catch (error) { if (sim_ui.out) sim_ui.out.textContent = '无法生成映射：' + ((error && error.message) || error); return; }
 	// 清空后再按启用的行/槽写入（禁用 = 不参与求值）
 	const inputs = sim.inputs;
 	inputs.floats.length = 0;
@@ -1872,6 +1936,7 @@ function simTick() {
 		const row = sim_ui.rows[key];
 		if (!row.enabled) continue;
 		for (const slot of row.slots) {
+			if (!slot.enabled) continue;
 			simApplySlot(inputs, key, slot);
 			lines.push(simSlotLabel(key, slot));
 		}
@@ -1882,7 +1947,7 @@ function simTick() {
 	for (const key of Object.keys(sim_ui.rows)) {
 		const row = sim_ui.rows[key];
 		for (const slot of row.slots) {
-			if (!row.enabled) { if (slot.els) slot.els.badge.textContent = ''; continue; }
+			if (!row.enabled || !slot.enabled) { if (slot.els) slot.els.badge.textContent = ''; continue; }
 			const solo = simBlankInputs();
 			simApplySlot(solo, key, slot);
 			const count = simEvaluate(mapping.model, solo).filter(item => item.hit && item.node.model).length;
@@ -1901,9 +1966,9 @@ function simAutoSlots() {
 	if (!sim_ui || !sim_ui.rows) return list;
 	for (const key of Object.keys(sim_ui.rows)) {
 		const row = sim_ui.rows[key];
-		// 大类复选框就是开关；只有数值类能自动变化（文本/布尔没有“下一个值”）
+		// 大类复选框 + 槽复选框都是开关；只有数值类能自动变化（文本/布尔没有“下一个值”）
 		if (!row.enabled || row.kind !== 'number') continue;
-		for (const slot of row.slots) list.push({ key, slot });
+		for (const slot of row.slots) if (slot.enabled) list.push({ key, slot });
 	}
 	return list;
 }
@@ -2206,17 +2271,17 @@ Plugin.register('item_model_definition_assembly', {
 		// 面板会自动出现在「视图 → 面板」里，不再占用 Tools 菜单
 		attachGroupMenu();
 		for (const event of ['add_group', 'remove_group', 'update_selection']) {
-			try { Blockbench.on(event, (data) => scheduleBranchSync(data && data.object)); } catch (e) { /* ignore */ }
+			try { Blockbench.on(event, (data) => { simInvalidate(); scheduleBranchSync(data && data.object); }); } catch (e) { /* ignore */ }
 		}
 		for (const event of ['select_project', 'finished_loading_project', 'update_selection']) {
-			try { Blockbench.on(event, attachGroupMenu); } catch (e) { /* ignore */ }
+			try { Blockbench.on(event, () => { simInvalidate(); attachGroupMenu(); }); } catch (e) { /* ignore */ }
 		}
 		for (const event of ['select_project', 'finished_loading_project']) {
 			try { Blockbench.on(event, ensurePackVersion); } catch (e) { /* ignore */ }
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
@@ -2225,6 +2290,7 @@ Plugin.register('item_model_definition_assembly', {
 	},
 	onunload() {
 		try { if (sim.timer) { clearInterval(sim.timer); sim.timer = null; } } catch (e) { /* ignore */ }
+		try { if (sim.tickTimer) { clearTimeout(sim.tickTimer); sim.tickTimer = null; } } catch (e) { /* ignore */ }
 		try { if (sim_panel && typeof sim_panel.delete === 'function') sim_panel.delete(); } catch (e) { /* ignore */ }
 		sim_panel = null;
 		sim_ui = null;
