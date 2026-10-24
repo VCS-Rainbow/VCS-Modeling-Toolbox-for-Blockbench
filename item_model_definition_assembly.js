@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.20.11';
+const VERSION = '0.20.12';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1482,6 +1482,8 @@ Plugin.register('item_model_definition_assembly', {
 	tags: ['Minecraft: Java Edition'],
 	contributes: { formats: [FORMAT_ID] },
 	onload() {
+		console.log('[装配] onload 开始，版本 ' + VERSION);
+		try {
 		const addMenu = (action, path) => {
 			try { if (action) MenuBar.addAction(action, path); }
 			catch (error) { console.warn('[装配] 菜单挂载失败：' + path, error); }
@@ -1595,6 +1597,9 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		for (const event of ['select_project', 'finished_loading_project', 'update_selection']) {
 			try { Blockbench.on(event, attachGroupMenu); } catch (e) { /* ignore */ }
+		}
+			} catch (error) {
+			console.error('[装配] onload 失败：', error);
 		}
 	},
 	onunload() {
