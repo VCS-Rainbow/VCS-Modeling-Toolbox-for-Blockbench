@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.34.1';
+const VERSION = '0.34.2';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1580,10 +1580,10 @@ function refreshUsage(hits) {
 				}
 				const isActiveChild = (child) => { const k = prefixOf(child); return k !== null && k === activeIndex; };
 				const anyActive = g.children.some(isActiveChild);
-				html.push('<div style="' + (anyActive ? 'font-weight:700;color:#7fd0ff' : 'opacity:.8') + '">' + (anyActive ? '[!] ' : '· ') + g.parent + '</div>');
+				html.push('<div style="opacity:.8">· ' + g.parent + '</div>');
 				const act = g.children.filter(isActiveChild);
 				const inact = g.children.filter(c => !isActiveChild(c));
-				for (const c of act) html.push('<div style="font-weight:700;color:#7fd0ff">[!] ' + c + '</div>');
+				for (const c of act) html.push('<div style="font-weight:700;color:#7fd0ff">' + c + '</div>');
 				if (inact.length) {
 					html.push('<details><summary style="cursor:pointer;opacity:.55;font-size:10px">未活跃 ' + inact.length + ' 项（点开查看）</summary>');
 					for (const c of inact) html.push('<div style="opacity:.45;padding-left:6px">· ' + c + '</div>');
