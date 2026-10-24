@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-24 · 当前版本 **0.52.2**（tag `v0.52.2`）
+> 生成时间：2026-10-24 · 当前版本 **0.52.1**（tag `v0.52.1`）
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 
 ---
@@ -140,7 +140,6 @@
 ## 3. 版本历史（近期，git tag）
 
 ```
-0.52.2  着色配置向上继承 + 无配置回退 tintindex（修 ghost/hide 下不上色）
 0.52.1  colors 预设色改为 16 个染料色
 0.52.0  批量编辑分组属性（多选时应用到所有选中分组）
 0.51.0  “不生成 tints”用 none 哨兵持久化；导出/预览/关联都尊重
@@ -247,7 +246,7 @@
 $node = 'C:\Users\Rainbow_\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 & $node --check 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js'
 & $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_assembly.js'   # 离线冒烟
-& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图/复调用/着色单测（117 项）
+& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图/复调用/着色单测（111 项）
 Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js' `
   'C:\Users\Rainbow_\AppData\Roaming\Blockbench\plugins\item_model_definition_assembly.js' -Force
 ```

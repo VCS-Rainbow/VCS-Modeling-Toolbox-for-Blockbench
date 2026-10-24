@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.52.2';
+const VERSION = '0.52.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1951,32 +1951,21 @@ function simApplySlot(inputs, key, slot) {
 function simTintColorOf(cube) {
 	const faces = cube && cube.faces;
 	if (!faces) return null;
-	let faceIndex = null;
+	// 分组明确“不生成 tints”时不着色
+	const group = cube.parent;
+	if (!group) return null;
+	if (group.imm_tint_type === '' || group.imm_tint_type === 'none') return null;
+	const type = String(group.imm_tint_type == null ? 'custom_model_data' : group.imm_tint_type).replace(/^minecraft:/, '').trim() || 'custom_model_data';
+	if (type !== 'custom_model_data') return null;
+	const indexText = String(group.imm_tint_index == null ? '' : group.imm_tint_index).trim();
+	if (!/^-?\d+$/.test(indexText)) return null;
+	let hasTintedFace = false;
 	for (const dir of FACE_KEYS) {
 		const face = faces[dir];
-		if (face && typeof face.tint === 'number' && face.tint >= 0) { faceIndex = face.tint; break; }
+		if (face && typeof face.tint === 'number' && face.tint >= 0) { hasTintedFace = true; break; }
 	}
-	if (faceIndex === null) return null;
-	// 向上找最近的显式着色配置；显式“不生成 tints”会阻断
-	let node = cube.parent;
-	let index = null;
-	let blocked = false;
-	while (node && isGroup(node)) {
-		const rawType = node.imm_tint_type;
-		if (rawType === '' || rawType === 'none') { blocked = true; break; }
-		const type = String(rawType == null ? '' : rawType).replace(/^minecraft:/, '').trim();
-		if (type === 'custom_model_data') {
-			const indexText = String(node.imm_tint_index == null ? '' : node.imm_tint_index).trim();
-			if (/^-?\d+$/.test(indexText)) { index = Number(indexText); break; }
-		} else if (type) {
-			blocked = true; // 其它 tints 类型暂不预览
-			break;
-		}
-		node = node.parent;
-	}
-	if (blocked) return null;
-	// 没有配置时回退到面的 tintindex（兼容旧模型）
-	if (index === null) index = faceIndex;
+	if (!hasTintedFace) return null;
+	const index = Number(indexText);
 	const raw = (sim.inputs.colors || [])[index];
 	if (raw == null) return null;
 	const argb = raw >>> 0;
@@ -2415,19 +2404,9 @@ function collectInputUsage() {
 			// colors：按分组 tints 配置（custom_model_data + index）关联；明确“不生成”则不关联
 			const tintIndices = new Set();
 			if (node.imm_tint_type !== '' && node.imm_tint_type !== 'none') {
-				const tintType = String(node.imm_tint_type == null ? '' : node.imm_tint_type).replace(/^minecraft:/, '').trim();
+				const tintType = String(node.imm_tint_type == null ? 'custom_model_data' : node.imm_tint_type).replace(/^minecraft:/, '').trim() || 'custom_model_data';
 				const rawTintIndex = String(node.imm_tint_index == null ? '' : node.imm_tint_index).trim();
 				if (tintType === 'custom_model_data' && /^-?\d+$/.test(rawTintIndex)) tintIndices.add(Number(rawTintIndex));
-				else if (!tintType) {
-					// 没配置时按面的 tintindex 关联（与预览回退一致）
-					for (const child of (node.children || [])) {
-						if (!isCube(child) || !child.faces) continue;
-						for (const dir of FACE_KEYS) {
-							const face = child.faces[dir];
-							if (face && typeof face.tint === 'number' && face.tint >= 0) tintIndices.add(face.tint);
-						}
-					}
-				}
 			}
 			for (const tintIndex of tintIndices) add('colors', tintIndex, name, []);
 			if (type === 'range_dispatch' && prop === 'custom_model_data') add('floats', index, name, branchChildren);
