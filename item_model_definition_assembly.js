@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.26.0';
+const VERSION = '0.26.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1326,6 +1326,7 @@ function importModelReference(group) {
 	console.log('[装配] 解析结果', resolved.error ? ('ERR: ' + resolved.error) : (resolved.elements.length + ' 个 element'));
 	if (resolved.error) { Blockbench.showMessageBox({ title: '导入失败', message: resolved.error, icon: 'error' }); return false; }
 	const elements = resolved.elements;
+	const import_base = Array.isArray(group.origin) ? group.origin : [0, 0, 0];
 	try {
 		try { if (typeof unselectAll === 'function') unselectAll(); } catch (e) { /* ignore */ }
 		Undo.initEdit({ groups: [group], elements: (group.children || []).filter(isCube) });
