@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.62.1', api.VERSION, '0.62.1');
+eq('版本是 0.62.2', api.VERSION, '0.62.2');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -599,6 +599,17 @@ api.guardBoxSelection();
 eq('子组全部子项选中后选中子组', !!childGroup.selected, true);
 eq('继续向上选中父组', !!parentGroup.selected, true);
 global.Outliner.selected.length = 0;
+
+/* ---------- 分组优先选择时守卫让路 ---------- */
+console.log('\n[分组 gizmo 让路]');
+const gizmoGroup = new global.Group({ name: 'gizmoGroup' });
+const gizmoCube = new global.Cube({ from: [0, 0, 0], to: [1, 1, 1], origin: [0, 0, 0], rotation: [0, 0, 0] });
+gizmoCube.parent = gizmoGroup; gizmoGroup.children.push(gizmoCube);
+global.Group.selected = [gizmoGroup];
+global.Outliner.selected.length = 0; global.Outliner.selected.push(gizmoGroup);
+api.guardBoxSelection();
+eq('分组优先选择时不改写选择', gizmoCube.selected !== true, true);
+global.Group.selected = []; global.Outliner.selected.length = 0;
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));

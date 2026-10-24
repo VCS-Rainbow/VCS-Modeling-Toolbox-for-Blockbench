@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.62.1';
+const VERSION = '0.62.2';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2306,6 +2306,9 @@ function isBuiltInModelGroup(group) {
 
 /** 一次选中多个方块时，改为选中它们各自的父分组 */
 function guardBoxSelection() {
+	// 用户点选的是分组（含父分组优先级）：不要重算选择，交给 Blockbench 原生 gizmo 逻辑
+	if (Array.isArray(Outliner.selected) && Outliner.selected.length && isGroup(Outliner.selected[0])) return;
+	if (typeof Group !== 'undefined' && Group && Array.isArray(Group.selected) && Group.selected.length) return;
 	if (guardingBox || !boxGroupsEnabled()) return;
 	if (typeof Outliner === 'undefined' || !Outliner || !Array.isArray(Outliner.selected)) return;
 	const selectedCubes = Outliner.selected.filter(isCube);
