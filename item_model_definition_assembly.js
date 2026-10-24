@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.16.0';
+const VERSION = '0.16.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1024,7 +1024,10 @@ function buildSimPanel() {
 	root.appendChild(out);
 	sim_ui = { propSel, indexInp, valueInp, autoChk, periodInp, stepInp, ruleSel, minInp, maxInp, out };
 	runBtn.addEventListener('click', () => toggleSim());
-	sim_panel.nodes = [root];
+	// Panel 的内容容器是 panel.node（DOM），不是 nodes 数组
+	sim_panel.node.innerHTML = '';
+	sim_panel.node.appendChild(root);
+	try { if (typeof Panels !== 'undefined' && Panels) Panels[sim_panel.id] = sim_panel; } catch (e) { /* ignore */ }
 	sim_panel.show();
 	return sim_panel;
 }
