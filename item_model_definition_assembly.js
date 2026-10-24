@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.18.0';
+const VERSION = '0.19.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -94,7 +94,7 @@ function formatNode(node, depth) {
 	const pad = '\t'.repeat(depth);
 	const padIn = pad + '\t';
 	const fields = ['"type": ' + JSON.stringify(node.type)];
-	for (const key of ['model', 'property', 'index', 'scale', 'tints', 'transformation', 'component', 'ignore_default', 'predicate', 'value', 'keybind']) {
+	for (const key of ['model', 'property', 'index', 'scale', 'tints', 'transformation', 'component', 'ignore_default', 'predicate', 'value', 'keybind', 'target', 'wobble', 'normalize', 'source', 'period', 'remaining']) {
 		if (node[key] !== undefined) fields.push(JSON.stringify(key) + ': ' + inline(node[key]));
 	}
 	for (const key of ['on_true', 'on_false', 'fallback']) {
@@ -545,6 +545,21 @@ class Exporter {
 			node.property = String(group.imm_property || 'minecraft:custom_model_data');
 			// custom_model_data 必须有 index，未填时默认 0
 			if (node.property === 'minecraft:custom_model_data' && node.index === undefined) node.index = 0;
+			const numeric = node.property.replace(/^minecraft:/, '');
+			if (numeric === 'compass') {
+				if (group.imm_range_target) node.target = String(group.imm_range_target);
+				if (group.imm_range_wobble === false) node.wobble = false;
+			} else if (numeric === 'count' || numeric === 'damage') {
+				if (group.imm_range_normalize === false) node.normalize = false;
+			} else if (numeric === 'time') {
+				if (group.imm_range_source) node.source = String(group.imm_range_source);
+				if (group.imm_range_wobble === false) node.wobble = false;
+			} else if (numeric === 'use_cycle') {
+				const period = num(group.imm_range_period);
+				if (period > 0) node.period = clean(period);
+			} else if (numeric === 'use_duration') {
+				if (group.imm_range_remaining === true) node.remaining = true;
+			}
 			const scale = num(group.imm_scale);
 			if (scale && scale !== 1) node.scale = clean(scale);
 			if (String(group.imm_index || '').length) node.index = clean(group.imm_index);
@@ -954,6 +969,12 @@ function editGroupProps() {
 				if (result.imm_predicate !== undefined) group.imm_predicate = result.imm_predicate;
 				if (result.imm_value !== undefined) group.imm_value = result.imm_value;
 				if (result.imm_keybind !== undefined) group.imm_keybind = result.imm_keybind;
+				if (result.imm_range_target !== undefined) group.imm_range_target = result.imm_range_target;
+				if (result.imm_range_source !== undefined) group.imm_range_source = result.imm_range_source;
+				if (result.imm_range_wobble !== undefined) group.imm_range_wobble = !!result.imm_range_wobble;
+				if (result.imm_range_normalize !== undefined) group.imm_range_normalize = !!result.imm_range_normalize;
+				if (result.imm_range_period !== undefined) group.imm_range_period = num(result.imm_range_period);
+				if (result.imm_range_remaining !== undefined) group.imm_range_remaining = !!result.imm_range_remaining;
 				if (result.imm_index !== undefined) group.imm_index = num(result.imm_index);
 				if (result.imm_threshold !== undefined) group.imm_threshold = num(result.imm_threshold);
 				if (result.imm_threshold_format !== undefined) group.imm_threshold_format = result.imm_threshold_format;
@@ -1268,6 +1289,12 @@ function registerProperties() {
 	P(Group, 'string', 'imm_model', { label: '引用模型（imm_model）', default: '' });
 	P(Group, 'string', 'imm_property', { label: '取值来源 / 条件（property / when）', default: '' });
 	P(Group, 'number', 'imm_index', { label: 'index（仅 range_dispatch：custom_model_data 下标）', default: 0 });
+	P(Group, 'string', 'imm_range_target', { label: 'compass target', default: '' });
+	P(Group, 'string', 'imm_range_source', { label: 'time source', default: '' });
+	P(Group, 'boolean', 'imm_range_wobble', { label: 'wobble', default: true });
+	P(Group, 'boolean', 'imm_range_normalize', { label: 'normalize', default: true });
+	P(Group, 'number', 'imm_range_period', { label: 'period', default: 1 });
+	P(Group, 'boolean', 'imm_range_remaining', { label: 'remaining', default: false });
 	P(Group, 'string', 'imm_component', { label: 'component', default: '' });
 	P(Group, 'boolean', 'imm_ignore_default', { label: 'ignore_default', default: false });
 	P(Group, 'string', 'imm_predicate', { label: 'predicate', default: '' });
