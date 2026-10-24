@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.20.8';
+const VERSION = '0.20.9';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -721,6 +721,26 @@ function exportZip() {
 		console.error(error);
 		Blockbench.showMessageBox({ title: '导出失败', message: String((error && error.message) || error), icon: 'error' });
 	}
+}
+
+/* 把动作插到某菜单的指定条目之后（Blockbench 的菜单是有序结构数组，用分隔线分区） */
+function insertMenuAfter(menuId, afterId, action) {
+	try {
+		const menu = (typeof MenuBar !== 'undefined' && MenuBar.menus) ? MenuBar.menus[menuId] : null;
+		if (!menu || !Array.isArray(menu.structure)) return false;
+		const keyOf = (entry) => (typeof entry === 'string') ? entry : (entry && entry.id);
+		let index = -1;
+		menu.structure.forEach((entry, i) => { if (keyOf(entry) === afterId) index = i; });
+		if (index < 0) return false;
+		const isString = typeof menu.structure[index] === 'string';
+		const tail = [];
+		if (isString) tail.push(action.id);
+		else tail.push(action);
+		if (typeof MenuSeparator !== 'undefined') tail.push(new MenuSeparator('imm_sep_pack'));
+		menu.structure.splice(index + 1, 0, ...tail);
+		try { MenuBar.update(); } catch (e) { /* ignore */ }
+		return true;
+	} catch (error) { console.warn('[装配] 菜单插入失败', error); return false; }
 }
 
 function getScopedFs(root) {
@@ -1560,7 +1580,8 @@ Plugin.register('item_model_definition_assembly', {
 
 		addMenu(actions.zip, 'file.export');
 		addMenu(actions.merge, 'file.export');
-		addMenu(actions.pack, 'file');
+		if (!insertMenuAfter('file', 'save_model', actions.pack)) { insertMenuAfter('file', 'export', actions.pack); }
+		if (MenuBar.menus && MenuBar.menus.file && MenuBar.menus.file.structure && MenuBar.menus.file.structure.indexOf(actions.pack.id) < 0) addMenu(actions.pack, 'file');
 		addMenu(actions.check, 'tools');
 		addMenu(actions.props, 'tools');
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
