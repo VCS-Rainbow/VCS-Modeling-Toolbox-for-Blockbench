@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.63.7', api.VERSION, '0.63.7');
+eq('版本是 0.63.8', api.VERSION, '0.63.8');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -648,6 +648,7 @@ for (const c of branchCubes) { c.selected = true; global.Outliner.selected.push(
 api.guardBoxSelection();
 eq('所有分支的父组都向上选中', branchParents.every(p => p.selected === true), true);
 eq('共同根节点也选中', multiRoot.selected === true, true);
+eq('顶层分组排在选择第一位', global.Outliner.selected[0] === multiRoot, true);
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedMultiRoot);
 global.Outliner.selected.length = 0;
 

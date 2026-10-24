@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.63.7';
+const VERSION = '0.63.8';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2514,6 +2514,33 @@ function guardBoxSelection() {
 		}
 		
 		if (changed) { try { if (typeof updateSelection === 'function') updateSelection(); } catch (e) { /* ignore */ } }
+		// 把最顶层选中分组放到选择列表第一位：Blockbench 的全局 gizmo 用第一个元素的父级做方向换算
+		try {
+			const selectedList = Outliner.selected;
+			const hasSelectedAncestor = (node) => {
+				let parent = node && node.parent;
+				while (isGroup(parent)) {
+					if (parent.selected || selectedList.indexOf(parent) >= 0) return true;
+					parent = parent.parent;
+				}
+				return false;
+			};
+			const topGroups = selectedList.filter(node => isGroup(node) && !hasSelectedAncestor(node));
+			if (topGroups.length) {
+				const rest = selectedList.filter(node => topGroups.indexOf(node) < 0);
+				selectedList.length = 0;
+				for (const node of topGroups.concat(rest)) selectedList.push(node);
+				try {
+					if (typeof Group !== 'undefined' && Group && Array.isArray(Group.multi_selected)) {
+						const first = topGroups.find(group => Group.multi_selected.indexOf(group) >= 0);
+						if (first) {
+							Group.multi_selected.splice(Group.multi_selected.indexOf(first), 1);
+							Group.multi_selected.unshift(first);
+						}
+					}
+				} catch (e) { /* ignore */ }
+			}
+		} catch (e) { /* ignore */ }
 	} finally { guardingBox = false; }
 }
 

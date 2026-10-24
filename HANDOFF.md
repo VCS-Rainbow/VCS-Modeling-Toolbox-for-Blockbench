@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-25 · 当前版本 **0.63.7**（tag `v0.63.7`）
+> 生成时间：2026-10-25 · 当前版本 **0.63.8**（tag `v0.63.8`）
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 
 ---
@@ -169,6 +169,7 @@
 ## 3. 版本历史（近期，git tag）
 
 ```
+0.63.8  顶层选中分组排到 Outliner.selected 首位（修全局移动方向）
 0.63.7  向上选组处理所有祖先分支（修 sacpack1/2 之外的父组）
 0.63.6  选择守卫改为 mouseup 后判定；animation_mode 恢复 true
 0.63.5  animation_mode 默认关闭、Tools 手动切换（保 gizmo）
@@ -305,7 +306,7 @@
 $node = 'C:\Users\Rainbow_\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 & $node --check 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js'
 & $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_assembly.js'   # 离线冒烟
-& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图/复调用/着色单测（150 项）
+& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图/复调用/着色单测（151 项）
 Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js' `
   'C:\Users\Rainbow_\AppData\Roaming\Blockbench\plugins\item_model_definition_assembly.js' -Force
 ```
