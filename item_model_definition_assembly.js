@@ -824,81 +824,39 @@ async function mergeIntoPack() {
 				}
 			} catch (error) { /* 清单损坏就跳过清理 */ }
 
-			// 计算改动清单（覆盖 / 新建 / 删除），先让用户确认
-			const current = new Set(files.map(file => file.path));
-			const overwritten = [];
-			const added = [];
+			let written = 0;
 			for (const file of files) {
-				if (fs_module.existsSync(pathmod.join(target_root, file.path))) overwritten.push(file.path);
-				else added.push(file.path);
+				const full_path = pathmod.join(target_root, file.path);
+				fs_module.mkdirSync(pathmod.dirname(full_path), { recursive: true });
+				Blockbench.writeFile(full_path, {
+					content: file.base64 ? ('data:image/png;base64,' + file.data) : file.data,
+					savetype: file.base64 ? 'image' : 'text',
+				});
+				if (!fs_module.existsSync(full_path)) throw new Error('写入失败：' + full_path);
+				written++;
 			}
-			const stale = [];
+
+			const current = new Set(files.map(file => file.path));
+			let removed = 0;
 			for (const relative_path of previous) {
 				if (current.has(relative_path) || !isSafeGeneratedPath(relative_path)) continue;
-				if (fs_module.existsSync(pathmod.join(target_root, relative_path))) stale.push(relative_path);
+				const full_path = pathmod.join(target_root, relative_path);
+				try {
+					if (fs_module.existsSync(full_path)) { fs_module.unlinkSync(full_path); removed++; }
+				} catch (error) { /* 删不掉就算了 */ }
 			}
 
-			const lines = ['目标：' + target_root, ''];
-			const section = (title, list) => {
-				if (!list.length) return;
-				lines.push(title + '（' + list.length + ' 个）');
-				list.slice(0, 20).forEach(item => lines.push('  ' + item));
-				if (list.length > 20) lines.push('  … 其余 ' + (list.length - 20) + ' 个');
-				lines.push('');
-			};
-			section('覆盖已有文件', overwritten);
-			section('新建文件', added);
-			section('删除过期文件', stale);
-			if (!overwritten.length && !added.length && !stale.length) lines.push('（没有任何变化）');
-			lines.push('合并后游戏里按 F3+T 重载资源包。');
-
-			Blockbench.showMessageBox({
-				title: '合并到资源包 — 确认改动',
-				message: lines.join('\n'),
-				buttons: ['取消', '重新选择…', '合并'],
-				confirm: 2,
-				cancel: 0,
-			}, button => {
-				if (button === 1) { pickRoot(); return; }
-				if (button !== 2) return;
-				try {
-					let written = 0;
-					for (const file of files) {
-						const full_path = pathmod.join(target_root, file.path);
-						fs_module.mkdirSync(pathmod.dirname(full_path), { recursive: true });
-						Blockbench.writeFile(full_path, {
-							content: file.base64 ? ('data:image/png;base64,' + file.data) : file.data,
-							savetype: file.base64 ? 'image' : 'text',
-						});
-						if (!fs_module.existsSync(full_path)) throw new Error('写入失败：' + full_path);
-						written++;
-					}
-					let removed = 0;
-					for (const relative_path of stale) {
-						try {
-							fs_module.unlinkSync(pathmod.join(target_root, relative_path));
-							removed++;
-						} catch (error) { /* 删不掉就算了 */ }
-					}
-					Blockbench.writeFile(manifest_path, {
-						content: JSON.stringify({ version: 1, files: Array.from(current) }, null, 2),
-						savetype: 'text',
-					});
-					Project.imm_pack_path = target_root;
-					Project.saved = false;
-					Blockbench.showQuickMessage('已合并 ' + written + ' 个文件'
-						+ (removed ? ('，清理 ' + removed + ' 个过期文件') : '') + ' → 游戏里按 F3+T 重载', 5000);
-					const notes = exporter.buildNotes();
-					if (notes) console.warn('[物品模型映射装配] 提示：\n' + notes);
-				} catch (write_error) {
-					console.error(write_error);
-					Blockbench.showMessageBox({
-						title: '合并失败',
-						message: String((write_error && write_error.message) || write_error),
-						icon: 'error',
-					});
-				}
+			Blockbench.writeFile(manifest_path, {
+				content: JSON.stringify({ version: 1, files: Array.from(current) }, null, 2),
+				savetype: 'text',
 			});
+
+			Project.imm_pack_path = target_root;
+			Project.saved = false;
+			Blockbench.showQuickMessage('已合并 ' + written + ' 个文件' + (removed ? ('，清理 ' + removed + ' 个过期文件') : '')
+				+ ' → 游戏里按 F3+T 重载资源包', 5000);
+			const notes = exporter.buildNotes();
+			if (notes) console.warn('[物品模型映射装配] 提示：\n' + notes);
 		} catch (error) {
 			console.error(error);
 			Blockbench.showMessageBox({ title: '合并失败', message: String((error && error.message) || error), icon: 'error' });
@@ -906,14 +864,6 @@ async function mergeIntoPack() {
 	};
 
 	const pickRoot = async () => {
-		if (typeof Blockbench.pickDirectory !== 'function') {
-			Blockbench.showMessageBox({
-				title: '当前环境不支持选择文件夹',
-				message: '网页版无法选择本地文件夹。请改用「导出装配资源包 (zip)」，或直接在项目设置里填写「合并目标资源包路径」。',
-				icon: 'warning',
-			});
-			return;
-		}
 		const picked = await Promise.resolve(Blockbench.pickDirectory({ resource_id: 'imm_merge_pack', title: '选择目标资源包文件夹' }));
 		if (!picked) { Blockbench.showQuickMessage('已取消', 2000); return; }
 		runMerge(picked);
@@ -921,7 +871,16 @@ async function mergeIntoPack() {
 
 	if (!root) { await pickRoot(); return; }
 
-	runMerge(root);
+	Blockbench.showMessageBox({
+		title: '合并到资源包',
+		message: '目标：' + root + '\n\n会覆盖同名的 items / models / textures 文件，并清理上一轮生成、这次已不存在的模型文件。',
+		buttons: ['取消', '重新选择…', '合并'],
+		confirm: 2,
+		cancel: 0,
+	}, button => {
+		if (button === 2) runMerge(root);
+		else if (button === 1) { pickRoot(); }
+	});
 }
 
 function checkAssembly() {
