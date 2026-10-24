@@ -18,21 +18,21 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.62.2';
+const VERSION = '0.62.3';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
 const MAPPING_TYPES = ['composite', 'inline', 'model', 'range_dispatch', 'condition', 'select', 'empty'];
 const MANIFEST = '.imm-assembly-manifest.json';
 
-const BLOCK_DISPLAY = {
-	thirdperson_righthand: { rotation: [75, 45, 0], translation: [0, 2.5, 0], scale: [0.375, 0.375, 0.375] },
-	thirdperson_lefthand: { rotation: [75, 45, 0], translation: [0, 2.5, 0], scale: [0.375, 0.375, 0.375] },
-	firstperson_righthand: { rotation: [0, 45, 0], translation: [0, 0, 0], scale: [0.4, 0.4, 0.4] },
-	firstperson_lefthand: { rotation: [0, 225, 0], translation: [0, 0, 0], scale: [0.4, 0.4, 0.4] },
-	ground: { rotation: [0, 0, 0], translation: [0, 3, 0], scale: [0.25, 0.25, 0.25] },
-	gui: { rotation: [30, 225, 0], translation: [0, 0, 0], scale: [0.625, 0.625, 0.625] },
-	fixed: { rotation: [0, 0, 0], translation: [0, 0, 0], scale: [0.5, 0.5, 0.5] },
+const ITEM_DISPLAY = {
+	thirdperson_righthand: { rotation: [0, 0, 0], translation: [0, 3, 1], scale: [0.55, 0.55, 0.55] },
+	thirdperson_lefthand: { rotation: [0, 0, 0], translation: [0, 3, 1], scale: [0.55, 0.55, 0.55] },
+	firstperson_righthand: { rotation: [0, -135, 25], translation: [0, 4, 2], scale: [1.7, 1.7, 1.7] },
+	firstperson_lefthand: { rotation: [0, 135, -25], translation: [0, 4, 2], scale: [1.7, 1.7, 1.7] },
+	ground: { rotation: [0, 0, 0], translation: [0, 2, 0], scale: [0.5, 0.5, 0.5] },
+	gui: { rotation: [0, 0, 0], translation: [0, 0, 0], scale: [1, 1, 1] },
+	fixed: { rotation: [0, 0, 0], translation: [0, 0, 0], scale: [1, 1, 1] },
 };
 
 let format_object = null;
@@ -369,7 +369,7 @@ class Exporter {
 		if (particle) textures.particle = particle;
 
 		const model = { textures, elements };
-		if (this.blockDisplay) model.display = JSON.parse(JSON.stringify(BLOCK_DISPLAY));
+		if (this.blockDisplay) model.display = JSON.parse(JSON.stringify(ITEM_DISPLAY));
 
 		const name = this.unique(sanitizePath(this.stem + '_' + (hint || 'part'), 'model'), this.modelNames);
 		this.models.push({ name, data: model });
@@ -3054,7 +3054,7 @@ function registerProperties() {
 
 	P(ModelProject, 'string', 'imm_namespace', { label: '命名空间（namespace）', default: 'custom' });
 	P(ModelProject, 'boolean', 'imm_center_pivot', { label: '旋转枢轴用 (0.5,0.5,0.5)（= 像素 8,8,8）', default: false });
-	P(ModelProject, 'boolean', 'imm_block_display', { label: '模型附带方块 display 变换', default: true });
+	P(ModelProject, 'boolean', 'imm_block_display', { label: '模型附带 item/generated display 变换（推荐开）', default: true });
 	P(ModelProject, 'boolean', 'imm_hide_unavailable', { label: '隐藏当前条件下不可用的分组', default: true });
 	P(ModelProject, 'string', 'imm_pack_path', { label: '资源包工程路径（pack.mcmeta 所在目录）', default: '' });
 	P(ModelProject, 'string', 'imm_pack_version', {

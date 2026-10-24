@@ -2,6 +2,11 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.62.3
+- **修模型在游戏里偏小**：模型自带的 display 从 `block/block` 预设改为 `item/generated` 标准预设（GUI scale 1.0、地面 0.5、手持 0.55/1.7、fixed 1.0）。
+- 项目属性 `imm_block_display` 保留原键名，标签改为「模型附带 item/generated display 变换（推荐开）」。
+- 单测扩到 **146 项**（GUI/ground display 缩放断言）。
+
 ## 0.62.2
 - **修选中父分组时 gizmo 动不了**：当首选节点是分组、或 `Group.selected` 非空时，框选选择守卫直接让路，不再重算选择；子分组/方块仍可单独移动。
 - 单测扩到 **144 项**。

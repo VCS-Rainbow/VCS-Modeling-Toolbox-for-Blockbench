@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.62.2', api.VERSION, '0.62.2');
+eq('版本是 0.62.3', api.VERSION, '0.62.3');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -610,6 +610,17 @@ global.Outliner.selected.length = 0; global.Outliner.selected.push(gizmoGroup);
 api.guardBoxSelection();
 eq('分组优先选择时不改写选择', gizmoCube.selected !== true, true);
 global.Group.selected = []; global.Outliner.selected.length = 0;
+
+/* ---------- display 变换 ---------- */
+console.log('\n[display 变换]');
+const dispTex = new global.Texture({ name: 'dispTex', uuid: 'tex-disp', uv_width: 16, uv_height: 16 });
+global.Texture.all.push(dispTex);
+const dispCube = new global.Cube({ from: [0, 0, 0], to: [4, 4, 4], origin: [2, 2, 2], rotation: [0, 0, 0] });
+dispCube.faces = { north: { texture: 'tex-disp', uv: [0, 0, 16, 16] } };
+const dispExporter = api.createExporter();
+dispExporter.addModel([dispCube], 'displayTest');
+eq('GUI display scale = 1', dispExporter.models[0].data.display.gui.scale, [1, 1, 1]);
+eq('地面 display scale = 0.5', dispExporter.models[0].data.display.ground.scale, [0.5, 0.5, 0.5]);
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
