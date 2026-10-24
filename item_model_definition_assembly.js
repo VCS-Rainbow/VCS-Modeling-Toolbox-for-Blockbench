@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.61.3';
+const VERSION = '0.61.4';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2310,8 +2310,6 @@ function guardBoxSelection() {
 	if (typeof Outliner === 'undefined' || !Outliner || !Array.isArray(Outliner.selected)) return;
 	const cubes = Outliner.selected.filter(isCube);
 	if (cubes.length < 2) return;
-	// 方块已经在某个被选中的分组里（单击分组/上一次转换的结果）→ 不再处理
-	if (cubes.every(cube => { let node = cube && cube.parent; while (node) { if (node.selected) return true; node = node.parent; } return false; })) return;
 	const groups = [];
 	for (const cube of cubes) {
 		const parent = cube && cube.parent;
@@ -2320,16 +2318,17 @@ function guardBoxSelection() {
 	if (!groups.length) return;
 	// 只选了内建模型里的元素：保持原样，便于直接编辑引用模型内部
 	if (groups.every(isBuiltInModelGroup)) return;
+	// 分组及其全部子项都已选中（上一次转换已经完成）→ 不再处理
+	if (groups.every(group => group.selected && (group.children || []).every(child => child.selected))) return;
 	// 父分组已经处于选中状态：说明这是“单击分组”的结果，不要再把子元素取消
-	if (groups.every(group => group.selected)) return;
 	guardingBox = true;
 	try {
 		for (const cube of cubes) { try { if (typeof cube.unselect === 'function') cube.unselect(); } catch (e) { /* ignore */ } }
 		for (const group of groups) {
-			if (group.selected) continue;
 			try {
-				if (typeof group.markAsSelected === 'function') group.markAsSelected();
-				else if (typeof group.select === 'function') group.select();
+				if (typeof group.select === 'function') group.select({ ctrlOrCmd: true }, true);
+				else if (typeof group.markAsSelected === 'function') group.markAsSelected();
+				else group.selected = true;
 			} catch (e) { /* ignore */ }
 		}
 		try { if (typeof updateSelection === 'function') updateSelection(); } catch (e) { /* ignore */ }

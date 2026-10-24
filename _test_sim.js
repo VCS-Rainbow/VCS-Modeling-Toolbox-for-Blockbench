@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.61.3', api.VERSION, '0.61.3');
+eq('版本是 0.61.4', api.VERSION, '0.61.4');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -567,6 +567,14 @@ global.Outliner.selected.push(boxCube1, boxCube2);
 api.guardBoxSelection();
 eq('其它格式默认关闭', global.Outliner.selected.indexOf(boxCube1) >= 0 && global.Outliner.selected.indexOf(boxGroup) < 0, true);
 global.Format.id = savedFormatId; global.Outliner.selected.length = 0;
+
+/* ---------- 分组已选中但子项未选中的展开 ---------- */
+console.log('\n[分组展开]');
+boxGroup.selected = true; boxCube1.selected = false; boxCube2.selected = false;
+global.Outliner.selected.length = 0; global.Outliner.selected.push(boxCube1, boxCube2);
+api.guardBoxSelection();
+eq('分组已选中但子项未选时仍展开子项', global.Outliner.selected.indexOf(boxCube1) >= 0 && global.Outliner.selected.indexOf(boxCube2) >= 0, true);
+global.Outliner.selected.length = 0;
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
