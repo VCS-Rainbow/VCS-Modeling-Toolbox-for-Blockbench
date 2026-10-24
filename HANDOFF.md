@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-25 · 当前版本 **0.62.1**（tag `v0.62.1`）
+> 生成时间：2026-10-25 · 当前版本 **0.63.0**（tag `v0.63.0`）
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 
 ---
@@ -141,6 +141,19 @@
 - 目标也可以写模型 id（含 `:`）→ 直接输出 `minecraft:model`。
 - 标签只建议放在 composite / inline 分组；其他类型会警告并忽略。
 ---
+### 2.12 时间轴 / 逐帧动画（0.63.0）
+
+- 格式开启 `animation_mode: true`；项目属性新增 **时间轴 FPS**（`imm_anim_fps`，默认 20）与 **时间轴 custom_model_data index**（`imm_anim_index`，默认 0）。
+- 新分组类型 `range_dispatch_timeline`（下拉显示 `range_dispatch(timeline)`）：只作为“导出前的时间轴数据容器”，**不参与动画自动包裹**，避免循环递增。
+- `Tools → 解析时间轴为复调用标签…`：按项目 FPS 采样当前动画，把每个带关键帧的分组的 rotation/position 采样成帧姿态；创建/替换根部的 `[timeline]` 分组（类型 `range_dispatch_timeline`），每帧一个 Locator：
+  - `imm_frame` = 帧号（0,1,2…）
+  - `imm_pose` = JSON `{ "<group-uuid>": {rotation, origin, position} }`
+  - 创建顺序：`addTo(timeline)` → `init()`（两者都必须调用）。
+- 导出：`buildTimelineNode()` 读取 Locator 的 `imm_frame/imm_pose`，生成 `range_dispatch`（property 默认 `custom_model_data`，index 取分组/项目设置），entries 的 threshold 为 `0,1,2,3…`；每个 entry 克隆所有根部节点，并用该帧姿态覆盖对应分组的 `origin/rotation` + 位移（`__imm_translate`）。
+- 静态子树在帧之间复用 `groupNodeCache`，避免重复生成模型文件；时间轴分组本身从根部列表中排除。
+- 当前限制：只采样 rotation / position，scale 不参与；position 以分组本地单位近似写入 transformation。
+
+
 ### 2.11 选择辅助（锁定 / 批量 / 框选）
 
 - **锁定分支不可选中（0.55.1）**：幽灵/隐藏的锁定模式下，未活跃分组及子项运行时 `locked=true`；`guardLockedSelection()` 在 `update_selection` 时把锁定元素踢出选择，锁定瞬间也会取消已选中。
@@ -156,6 +169,7 @@
 ## 3. 版本历史（近期，git tag）
 
 ```
+0.63.0  动画模式 + range_dispatch(timeline) 逐帧导出 / 复调用标签
 0.62.1  单元素也触发选父组+同层元素
 0.62.0  框选改为向上递归：子项全选才选中分组
 0.61.5  框选改组不再取消方块自身选择
@@ -284,7 +298,7 @@
 $node = 'C:\Users\Rainbow_\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 & $node --check 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js'
 & $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_assembly.js'   # 离线冒烟
-& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图/复调用/着色单测（143 项）
+& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图/复调用/着色单测（147 项）
 Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js' `
   'C:\Users\Rainbow_\AppData\Roaming\Blockbench\plugins\item_model_definition_assembly.js' -Force
 ```
@@ -314,4 +328,5 @@ Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_d
 - **模拟面板**：colors 16 染料预设、行首复选框=自动变化、colors 关联组数角标、不活跃分支锁定模式。
 - **选择辅助**：锁定守卫、批量选组守卫、框选向上递归选组（装配强制开启、inline 例外）。
 - **菜单**：复调用标签右键编辑；分组菜单「创建模型 / 复调用 / 编辑分组」+ 分割线（0.55.0）。
-- **文档**：版本 0.62.1，单测 143 项，全部通过。
+- **时间轴**：动画模式开启；项目 FPS/index；`range_dispatch(timeline)` 分组 + 解析工具生成逐帧 Locator；导出逐帧 range_dispatch（0.63.0）。
+- **文档**：版本 0.63.0，单测 147 项，全部通过。

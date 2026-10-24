@@ -63,7 +63,7 @@
 
 | 属性 | 说明 |
 | --- | --- |
-| `映射类型`（`imm_type`） | `composite`（默认）/ `inline`（内联模型）/ `model` / `range_dispatch` / `condition` / `select` / `empty` |
+| `映射类型`（`imm_type`） | `composite`（默认）/ `inline`（内联模型）/ `model` / `range_dispatch` / `range_dispatch(timeline)` / `condition` / `select` / `empty` |
 | `引用模型`（`imm_model`） | 填 Java 版模型 id（如 `sqsp:item/inker/jet_rifle/sac.full`）时，本层输出为该模型的引用；**留空则用本层自己的方块生成模型文件** |
 | `property`（`imm_property`） | `range_dispatch` / `condition` 的属性（如 `minecraft:custom_model_data`、`minecraft:selected`） |
 | `index`（`imm_index`） | `custom_model_data` 的下标 |
@@ -80,6 +80,8 @@
 | `模型附带方块 display 变换`（`imm_block_display`） | 开 | 给生成的模型补原版 `block/block` 的 display |
 | `资源包工程路径`（`imm_pack_path`） | 空 | 合并目标目录（`pack.mcmeta` 所在目录），由「选择资源包工程路径…」写入 |
 | `目标 Minecraft 版本`（`imm_pack_version`） | `26.2` | 决定 `pack.mcmeta` 的格式字段，见上文；在项目设置里直接下拉选择 |
+| `时间轴 FPS`（`imm_anim_fps`） | `20` | 「解析时间轴为复调用标签…」按此 FPS 采样；改它即改逐帧动画的帧数 |
+| `时间轴 custom_model_data index`（`imm_anim_index`） | `0` | 时间轴 `range_dispatch` 默认取哪个 floats 下标 |
 
 ## 模拟输入面板（`视图 → 面板 → 模拟输入`）
 
@@ -198,6 +200,7 @@ Blockbench 5.x 的实现方式有两条，本插件都接上了：
 - 单轴旋转角超出 ±45° 的元素会被原样写出（`.notes.txt` 里会统计数量），游戏可能拒绝加载。
 - 负尺寸（`from > to`）方块按 Blockbench 的做法原样输出。
 - 纹理必须内嵌在 `.bbmodel`（data URL）才会被打包，否则 `.notes.txt` 会提示手动放置路径。
+- 时间轴逐帧导出只采样 rotation / position；scale 动画不会写入 transformation。
 
 ## 分组属性适用范围
 
@@ -241,6 +244,23 @@ Blockbench 5.x 的实现方式有两条，本插件都接上了：
 分组类型新增 `inline`：**本组方块在装配体里现做**，导出结构等同 `composite`（本组方块烘焙成一个模型文件）；`model` 则专门表示**引用已有模型**（`imm_model`）。
 
 用途：区分“这里是一份就地建模的几何”和“这里只是引用了外部模型”，方便后续筛选、替换和复调用。
+
+## 时间轴 / 逐帧动画（`range_dispatch(timeline)`）
+
+格式已开启动画模式，可以按帧把时间轴导出成 `range_dispatch`：
+
+1. 在 `项目设置` 里设置 **时间轴 FPS** 与 **custom_model_data index**（默认 20 / 0）；
+2. 做好动画后执行 `Tools → 解析时间轴为复调用标签…`：
+   - 按 FPS 采样当前动画里所有带关键帧的分组；
+   - 创建/替换根部的 `[timeline]` 分组（类型 `range_dispatch_timeline`）；
+   - 每帧生成一个 **Locator**：`imm_frame=i`、`imm_pose` 保存该帧各分组的 rotation/origin/position；
+   - 添加顺序为 `addTo` → `init`（两者都必须调用）；
+3. 导出时 `[timeline]` 输出为 `range_dispatch`：
+   - `property` 默认 `minecraft:custom_model_data`，`index` 用项目设置；
+   - `entries[].threshold` = `0,1,2,3…`（每一帧 +1）；
+   - 每个 entry 是该帧姿态下的整棵装配（静态子树会复用缓存）。
+
+注意：时间轴分组只用于导出前调整数据，**不会**再被动画自动包裹；当前只采样 rotation / position，scale 暂不支持。
 
 ## 从分组创建模型
 

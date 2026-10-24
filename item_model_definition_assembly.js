@@ -18,11 +18,11 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.62.1';
+const VERSION = '0.63.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
-const MAPPING_TYPES = ['composite', 'inline', 'model', 'range_dispatch', 'condition', 'select', 'empty'];
+const MAPPING_TYPES = ['composite', 'inline', 'model', 'range_dispatch', 'range_dispatch_timeline', 'condition', 'select', 'empty'];
 const MANIFEST = '.imm-assembly-manifest.json';
 
 const BLOCK_DISPLAY = {
@@ -203,6 +203,7 @@ class Exporter {
 		this.groupNodeCache = new Map(); // 分组 → 已构建的映射节点（复调用克隆用）
 		this.textureNames = new Set();
 		this.negativeCount = 0;
+		this.timelinePoses = null; // uuid → {rotation, origin, position}（逐帧导出时临时覆盖）
 	}
 
 	warn(msg) { if (msg && this.warnings.indexOf(msg) < 0 && this.warnings.length < 40) this.warnings.push(msg); }
@@ -395,8 +396,10 @@ class Exporter {
 
 		const d = Array.isArray(shift) ? shift : [0, 0, 0];
 		const dp = Array.isArray(parent_shift) ? parent_shift : [0, 0, 0];
+		const __translate = (node && Array.isArray(node.__imm_translate)) ? node.__imm_translate : null;
 		const hasShift = Math.abs(d[0]) + Math.abs(d[1]) + Math.abs(d[2]) > 1e-6;
-		if (Math.abs(q.w) > 1 - 1e-7 && !hasShift) return null;
+		const __hasTranslate = Array.isArray(__translate) && Math.abs(num(__translate[0])) + Math.abs(num(__translate[1])) + Math.abs(num(__translate[2])) > 1e-6;
+		if (Math.abs(q.w) > 1 - 1e-7 && !hasShift && !__hasTranslate) return null;
 
 		const m = quatMatrix(q);
 		const origin = (node && node.origin) || [0, 0, 0];
@@ -405,7 +408,7 @@ class Exporter {
 		const rp = rotVec(m, pivot);
 		const rd = rotVec(m, d);
 		return {
-			translation: cleanAll([0, 1, 2].map(a => (rd[a] + pivot[a] - rp[a] - dp[a]) / UNIT)),
+			translation: cleanAll([0, 1, 2].map(a => (rd[a] + pivot[a] - rp[a] - dp[a] + (__translate ? num(__translate[a]) : 0)) / UNIT)),
 			left_rotation: cleanAll([q.x, q.y, q.z, q.w]),
 			scale: [1, 1, 1],
 			right_rotation: [0, 0, 0, 1],
@@ -514,6 +517,18 @@ class Exporter {
 	}
 
 	buildNode(group, hint, parent_shift) {
+		if (this.normalizeType(group.imm_type) === 'range_dispatch_timeline') return this.buildTimelineNode(group, hint, parent_shift);
+		const __pose = this.timelinePoses ? this.timelinePoses.get(group.uuid) : null;
+		if (__pose) {
+			group = Object.assign({}, group, {
+				origin: Array.isArray(__pose.origin) ? __pose.origin.slice() : group.origin,
+				rotation: Array.isArray(__pose.rotation) ? __pose.rotation.slice() : group.rotation,
+				children: group.children,
+				__imm_translate: Array.isArray(__pose.position) ? __pose.position.slice() : null,
+			});
+		} else if (this.timelinePoses && this.groupNodeCache.has(group) && !this.hasPoseInSubtree(group)) {
+			return this.groupNodeCache.get(group);
+		}
 		const children = (group.children || []).filter(c => c && c.export !== false);
 		const childGroups = children.filter(isGroup);
 		const cubes = children.filter(isCube);
@@ -710,8 +725,66 @@ class Exporter {
 		}
 	}
 
+	/** 分组子树里是否有任何节点带当前帧姿态 */
+	hasPoseInSubtree(group) {
+		if (!this.timelinePoses || !group) return false;
+		if (this.timelinePoses.has(group.uuid)) return true;
+		for (const child of (group.children || [])) {
+			if (isGroup(child) && this.hasPoseInSubtree(child)) return true;
+		}
+		return false;
+	}
+
+	/** range_dispatch(timeline)：按 Locator 的 imm_frame/imm_pose 生成逐帧 entries */
+	buildTimelineNode(group, hint, parent_shift) {
+		const locators = (group.children || []).filter(isLocator);
+		const frames = new Map();
+		for (const locator of locators) {
+			const frame = num(locator.imm_frame);
+			if (!isFinite(frame) || frame < 0) continue;
+			let pose = {};
+			try { pose = JSON.parse(String(locator.imm_pose || '{}')); } catch (e) { pose = {}; }
+			const map = frames.get(frame) || new Map();
+			for (const uuid of Object.keys(pose || {})) {
+				if (pose[uuid] && typeof pose[uuid] === 'object') map.set(uuid, pose[uuid]);
+			}
+			frames.set(frame, map);
+		}
+		const sorted = Array.from(frames.keys()).sort((a, b) => a - b);
+		if (!sorted.length) { this.warn('时间轴分组 “' + labelOf(group) + '” 没有带 imm_frame/imm_pose 的复调用标签，已跳过。'); return null; }
+		const roots = ((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []).filter(n => isGroup(n) && n !== group && n.export !== false);
+		const entries = [];
+		for (const frame of sorted) {
+			this.timelinePoses = frames.get(frame);
+			const nodes = [];
+			for (const rootGroup of roots) {
+				const node = this.buildNode(rootGroup, hint + '_f' + frame, parent_shift);
+				if (node) nodes.push(node);
+			}
+			this.timelinePoses = null;
+			if (!nodes.length) continue;
+			const model = nodes.length === 1 ? nodes[0] : { type: 'minecraft:composite', models: nodes };
+			entries.push({ threshold: frame, model });
+		}
+		if (!entries.length) return null;
+		const prop = String(group.imm_property || 'custom_model_data').replace(/^minecraft:/, '').trim() || 'custom_model_data';
+		const index = (group.imm_index != null) ? num(group.imm_index) : num(projectValue('imm_anim_index', 0));
+		const node = { type: 'minecraft:range_dispatch', property: 'minecraft:' + prop };
+		if (prop === 'custom_model_data') node.index = clean(index);
+		node.entries = entries;
+		return node;
+	}
+
 	buildMapping() {
 		const root = (typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : [];
+		const __timelineRoot = root.find(node => isGroup(node) && this.normalizeType(node.imm_type) === 'range_dispatch_timeline');
+		if (__timelineRoot) {
+			const __timelineNode = this.buildTimelineNode(__timelineRoot, sanitizePath(labelOf(__timelineRoot), 'timeline'), [0, 0, 0]);
+			if (!__timelineNode) throw new Error('时间轴分组没有可导出的帧。');
+			const __result = { model: __timelineNode };
+			this.resolveCallPlaceholders(__result.model);
+			return __result;
+		}
 		const models = [];
 		const loose = [];
 		for (const node of root) {
@@ -1496,15 +1569,15 @@ function editGroupProps() {
 		form: {
 			imm_type: {
 				label: '映射类型（type）', description: '语法：{"type": "minecraft:<类型>"}\n作用：决定本节点是哪一种物品模型映射。\n可选：composite / model / range_dispatch / condition / empty', type: 'select', value: String(group.imm_type || 'composite'),
-				options: { composite: 'composite', inline: 'inline（内联模型）', model: 'model（引用模型）', range_dispatch: 'range_dispatch', condition: 'condition', select: 'select', empty: 'empty' },
+				options: { composite: 'composite', inline: 'inline（内联模型）', model: 'model（引用模型）', range_dispatch: 'range_dispatch', range_dispatch_timeline: 'range_dispatch(timeline)（逐帧时间轴）', condition: 'condition', select: 'select', empty: 'empty' },
 			},
 			imm_model: { label: '引用模型（model）', description: '语法：{"type": "minecraft:model", "model": "<命名空间>:item/<路径>"}\n作用：本节点直接引用一个 Java 版模型；\n留空则由本层方块生成模型文件。', type: 'text', value: String(group.imm_model || ''), condition: (r) => r.imm_type === 'model' },
-			imm_property: { label: 'property（谓词 / 属性）', type: 'select', value: String(group.imm_property || ''), options: { '': '（未设置）', selected: 'selected', broken: 'broken', damaged: 'damaged', carried: 'carried', extended_view: 'extended_view', using_item: 'using_item', view_entity: 'view_entity', 'fishing_rod/cast': 'fishing_rod/cast', 'bundle/has_selected_item': 'bundle/has_selected_item', custom_model_data: 'custom_model_data', has_component: 'has_component', component: 'component', keybind_down: 'keybind_down', compass: 'compass（range）', count: 'count（range）', damage: 'damage（range）', time: 'time（range）', use_cycle: 'use_cycle（range）', use_duration: 'use_duration（range）', 'bundle/fullness': 'bundle/fullness（range）', cooldown: 'cooldown（range）', 'crossbow/pull': 'crossbow/pull（range）', context_dimension: 'context_dimension（select）', block_state: 'block_state（select）', local_time: 'local_time（select）' }, description: 'condition：谓词（selected / broken / custom_model_data / has_component / component / keybind_down …）；\nrange_dispatch：数值属性（custom_model_data / compass / count / damage / time / use_cycle / use_duration）', condition: (r) => r.imm_type === 'range_dispatch' || r.imm_type === 'condition' },
+			imm_property: { label: 'property（谓词 / 属性）', type: 'select', value: String(group.imm_property || ''), options: { '': '（未设置）', selected: 'selected', broken: 'broken', damaged: 'damaged', carried: 'carried', extended_view: 'extended_view', using_item: 'using_item', view_entity: 'view_entity', 'fishing_rod/cast': 'fishing_rod/cast', 'bundle/has_selected_item': 'bundle/has_selected_item', custom_model_data: 'custom_model_data', has_component: 'has_component', component: 'component', keybind_down: 'keybind_down', compass: 'compass（range）', count: 'count（range）', damage: 'damage（range）', time: 'time（range）', use_cycle: 'use_cycle（range）', use_duration: 'use_duration（range）', 'bundle/fullness': 'bundle/fullness（range）', cooldown: 'cooldown（range）', 'crossbow/pull': 'crossbow/pull（range）', context_dimension: 'context_dimension（select）', block_state: 'block_state（select）', local_time: 'local_time（select）' }, description: 'condition：谓词（selected / broken / custom_model_data / has_component / component / keybind_down …）；\nrange_dispatch：数值属性（custom_model_data / compass / count / damage / time / use_cycle / use_duration）', condition: (r) => r.imm_type === 'range_dispatch' || r.imm_type === 'range_dispatch_timeline' || r.imm_type === 'condition' },
 			imm_component: { label: 'component（has_component 用）', type: 'text', value: String(group.imm_component || ''), description: '语法："component": "minecraft:lodestone_tracker"', condition: (r) => r.imm_property === 'has_component' },
 			imm_ignore_default: { label: 'ignore_default', type: 'checkbox', value: !!group.imm_ignore_default, description: 'has_component：组件值与默认值相同时是否视为不存在', condition: (r) => r.imm_property === 'has_component' },
 			imm_predicate: { label: 'predicate（component 用）', type: 'text', value: String(group.imm_predicate || ''), description: '语法："predicate": "minecraft:stored_enchantments"', condition: (r) => r.imm_property === 'component' },
 			imm_value: { label: 'value（component 用，JSON）', type: 'text', value: String(group.imm_value == null ? '' : group.imm_value), description: '语法："value": [ { ... } ]', condition: (r) => r.imm_property === 'component' },
-			imm_keybind: { label: 'keybind（keybind_down 用）', type: 'text', value: String(group.imm_keybind || ''), description: '语法："keybind": "key.jump"', condition: (r) => r.imm_property === 'keybind_down' },			imm_index: { label: '分派下标（index）', description: '语法："index": 0\n作用：仅 range_dispatch，指定从 property 的哪个下标取值。', type: 'number', value: num(group.imm_index), condition: (r) => r.imm_type === 'range_dispatch' },
+			imm_keybind: { label: 'keybind（keybind_down 用）', type: 'text', value: String(group.imm_keybind || ''), description: '语法："keybind": "key.jump"', condition: (r) => r.imm_property === 'keybind_down' },			imm_index: { label: '分派下标（index）', description: '语法："index": 0\n作用：仅 range_dispatch，指定从 property 的哪个下标取值。', type: 'number', value: num(group.imm_index), condition: (r) => r.imm_type === 'range_dispatch' || r.imm_type === 'range_dispatch_timeline' },
 			imm_threshold_format: { label: '分支编号格式（entries[].threshold）', type: 'text', value: String(group.imm_threshold_format || ''), description: '语法：i → 0,1,2；2i 或 i*2 → 0,2,4；10+2i → 10,12,14；0,1,3 → 字面列表；2:2i → 每个值重复 2 次、索引从 1 起（2,2,4,4,6,6…）。\n作用：range_dispatch 的子分组按顺序取这些阈值；留空为 0,1,2…', condition: (r) => r.imm_type === 'range_dispatch' },
 			imm_threshold: { label: '分支编号 / 阈值（entries[].threshold）', type: 'number', value: num(group.imm_threshold), description: '语法：{"threshold": 0}\n作用：父分组为 range_dispatch 时，本分组的阈值；修改后自动按阈值重排。', condition: (r) => r.imm_type === 'range_dispatch' || parent_type === 'range_dispatch' },
 			imm_condition: { label: '分支条件（on_true / on_false）', type: 'select', value: String(group.imm_condition || ''), options: { '': '（按位置）', on_true: 'on_true', on_false: 'on_false' }, description: '语法："on_true" / "on_false"\n作用：父分组为 condition 时决定本分支走哪一支；修改后自动重排。', condition: (r) => parent_type === 'condition' },
@@ -1595,6 +1668,69 @@ function editGroupProps() {
 }
 
 /** 从分组创建模型：烘焙组内方块、写到资源包 models/item、分组改为引用并记录居中补偿 */
+/** 手动解析：按项目 FPS 采样当前动画，生成 range_dispatch(timeline) 分组和逐帧 Locator */
+function bakeTimelineToCallTags() {
+	const animation = (typeof Animation !== 'undefined' && Animation) ? (Animation.selected || (Array.isArray(Animation.all) ? Animation.all[0] : null)) : null;
+	if (!animation) { Blockbench.showMessageBox({ title: '没有动画', message: '请先打开动画模式并选择一个动画。', icon: 'info' }); return; }
+	const fps = Math.max(1, num(projectValue('imm_anim_fps', 20)) || 20);
+	let duration = num(animation.length);
+	if (!(duration > 0) && typeof Timeline !== 'undefined') duration = num(Timeline.length);
+	if (!(duration > 0)) { Blockbench.showMessageBox({ title: '动画长度为 0', message: '时间轴上没有可采样的关键帧。', icon: 'info' }); return; }
+	const frameCount = Math.max(1, Math.ceil(duration * fps));
+	const animated = [];
+	for (const group of (typeof Group !== 'undefined' ? Group.all : [])) {
+		let animator = null;
+		try { animator = animation.getBoneAnimator(group); } catch (e) { animator = null; }
+		if (!animator) continue;
+		const hasKeys = !!(animator.keyframes && animator.keyframes.length) || !!(animator.channels && Object.keys(animator.channels).some(k => animator.channels[k] && animator.channels[k].length));
+		if (!hasKeys) continue;
+		animated.push({ group, animator, baseRotation: (group.rotation || [0, 0, 0]).slice(), baseOrigin: (group.origin || [0, 0, 0]).slice() });
+	}
+	if (!animated.length) { Blockbench.showMessageBox({ title: '没有关键帧', message: '当前动画里没有带关键帧的分组。', icon: 'info' }); return; }
+	const oldTime = animation.time;
+	const poses = [];
+	for (let frame = 0; frame < frameCount; frame++) {
+		try { animation.time = frame / fps; } catch (e) { /* ignore */ }
+		const map = {};
+		for (const item of animated) {
+			let rotation = item.baseRotation.slice();
+			let position = [0, 0, 0];
+			try {
+				const delta = item.animator.interpolate('rotation');
+				if (Array.isArray(delta)) rotation = rotation.map((v, i) => num(v) + num(delta[i]));
+			} catch (e) { /* ignore */ }
+			try {
+				const delta = item.animator.interpolate('position');
+				if (Array.isArray(delta)) position = delta.map(v => num(v));
+			} catch (e) { /* ignore */ }
+			map[item.group.uuid] = { rotation, origin: item.baseOrigin.slice(), position };
+		}
+		poses.push(map);
+	}
+	try { animation.time = oldTime; } catch (e) { /* ignore */ }
+	const oldTimeline = (Outliner.root || []).filter(node => isGroup(node) && String(node.imm_type || '') === 'range_dispatch_timeline');
+	try { Undo.initEdit({ outliner: true, groups: oldTimeline, elements: [] }); } catch (e) { /* ignore */ }
+	for (const old of oldTimeline) { try { old.remove(); } catch (e) { /* ignore */ } }
+	const timeline = new Group({ name: '[timeline]', imm_type: 'range_dispatch_timeline', imm_property: 'minecraft:custom_model_data', imm_index: num(projectValue('imm_anim_index', 0)) || 0, origin: [8, 8, 8], rotation: [0, 0, 0] });
+	try { timeline.addTo(); } catch (e) { /* ignore */ }
+	try { timeline.init(); } catch (e) { /* ignore */ }
+	for (let frame = 0; frame < poses.length; frame++) {
+		try {
+			const locator = new Locator({ name: 'frame ' + frame, position: [8, 8, 8], rotation: [0, 0, 0] });
+			try { locator.addTo(timeline); } catch (e) { locator.addTo(); }
+			try { locator.init(); } catch (e) { /* ignore */ }
+			locator.imm_frame = frame;
+			locator.imm_pose = JSON.stringify(poses[frame]);
+			locator.imm_call_target = 'timeline';
+		} catch (error) { console.warn('[装配] 创建帧标签失败', error); }
+	}
+	try { Undo.finishEdit('解析时间轴为复调用标签'); } catch (e) { /* ignore */ }
+	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+	try { Project.saved = false; } catch (e) { /* ignore */ }
+	simInvalidate();
+	Blockbench.showQuickMessage('已解析时间轴：' + poses.length + ' 帧 × ' + animated.length + ' 个动画分组（' + fps + ' FPS）', 5000);
+}
+
 function callSelectedGroup() {
 	if (typeof Locator === 'undefined') {
 		Blockbench.showMessageBox({ title: '不支持定位点', message: '当前 Blockbench 版本没有 Locator。', icon: 'warning' });
@@ -3053,6 +3189,8 @@ function registerProperties() {
 	P(ModelProject, 'boolean', 'imm_center_pivot', { label: '旋转枢轴用 (0.5,0.5,0.5)（= 像素 8,8,8）', default: false });
 	P(ModelProject, 'boolean', 'imm_block_display', { label: '模型附带方块 display 变换', default: true });
 	P(ModelProject, 'boolean', 'imm_hide_unavailable', { label: '隐藏当前条件下不可用的分组', default: true });
+	P(ModelProject, 'number', 'imm_anim_fps', { label: '时间轴 FPS（逐帧导出）', default: 20, min: 1, max: 120 });
+	P(ModelProject, 'number', 'imm_anim_index', { label: '时间轴 custom_model_data index', default: 0, min: 0 });
 	P(ModelProject, 'string', 'imm_pack_path', { label: '资源包工程路径（pack.mcmeta 所在目录）', default: '' });
 	P(ModelProject, 'string', 'imm_pack_version', {
 		label: '目标 Minecraft 版本（pack.mcmeta 格式）',
@@ -3075,6 +3213,8 @@ function registerProperties() {
 	try { new Property(Group, 'string', 'imm_model_shift', { default: '', exposed: false, condition: cond }); } catch (e) { /* ignore */ }
 	if (typeof Locator !== 'undefined') {
 		try { new Property(Locator, 'string', 'imm_call_target', { label: '复调用目标（分组 UUID 或模型 id）', default: '', exposed: false }); } catch (e) { /* ignore */ }
+		try { new Property(Locator, 'number', 'imm_frame', { label: '时间轴帧号', default: -1, exposed: false }); } catch (e) { /* ignore */ }
+		try { new Property(Locator, 'string', 'imm_pose', { label: '时间轴帧姿态 JSON', default: '', exposed: false }); } catch (e) { /* ignore */ }
 	}
 	P(Group, 'string', 'imm_property', { label: '取值来源 / 条件（property / when）', default: '' });
 	P(Group, 'number', 'imm_index', { label: 'index（仅 range_dispatch：custom_model_data 下标）', default: 0 });
@@ -3188,7 +3328,7 @@ Plugin.register('item_model_definition_assembly', {
 			rotation_snap: false,
 			integer_size: false,
 			display_mode: true,
-			animation_mode: false,
+			animation_mode: true,
 			euler_order: 'ZYX',
 			model_identifier: true,
 			parent_model_id: true,
@@ -3225,6 +3365,7 @@ Plugin.register('item_model_definition_assembly', {
 		actions.viewDiag = new Action('imm_view_diag', { name: '诊断：模拟视图联动', description: '打印匹配到的分组/方块/材质数量', icon: 'bug_report', category: 'tools', condition, click: diagnoseSimView });
 		actions.pivot = new Action('imm_fix_pivot', { name: '枢轴归位（对齐几何中心）…', description: '把分组 origin 移到几何中心，补偿方块坐标，外观不变', icon: 'center_focus_strong', category: 'tools', condition, click: openPivotFix });
 		actions.props = new Action('imm_group_props', { name: '编辑分组映射属性…', description: '映射类型 / 引用模型 / property 等', icon: 'tune', category: 'tools', condition, click: editGroupProps });
+		actions.bakeTimeline = new Action('imm_bake_timeline', { name: '解析时间轴为复调用标签…', description: '按项目 FPS 采样当前动画，生成 range_dispatch(timeline) 分组与逐帧 Locator', icon: 'timeline', category: 'tools', condition, click: bakeTimelineToCallTags });
 		actions.boxToggle = new Action('imm_box_toggle', { name: '开关：框选方块时改选所属分组', description: '切换“一次选中多个方块时自动改为选中其父分组”', icon: 'select_all', category: 'tools', click: () => { if (!immBoxSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !boxGroupsEnabled(); setBoxSelectGroups(next); try { if (typeof immBoxSetting.save === 'function') immBoxSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('框选方块改选所属分组：' + (next ? '开' : '关') + (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID ? '（装配格式内强制开启）' : ''), 2600); } });
 		actions.batchToggle = new Action('imm_batch_toggle', { name: '开关：批量选择时取消单个元素', description: '切换“同时选中多个分组时自动取消方块/定位点选择”', icon: 'select_all', category: 'tools', click: () => { if (!immBatchSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !batchGroupsOnlyEnabled(); setBatchGroupsOnly(next); try { if (typeof immBatchSetting.save === 'function') immBatchSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('批量选择时取消单个元素：' + (next ? '开' : '关'), 2200); } });
 		actions.editCall = new Action('imm_edit_call', { name: '编辑复调用标签…', description: '修改选中的复调用 Locator 指向的分组或模型 id', icon: 'edit', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && Locator.selected && Locator.selected.length > 0), click: () => { const locator = (Locator.selected && Locator.selected[0]) || null; if (!locator) { Blockbench.showMessageBox({ title: '请先选中复调用标签', message: '在 outliner 里选中一个 Locator（复调用标签）。', icon: 'info' }); return; } editCallTag(locator); } });
@@ -3241,6 +3382,7 @@ Plugin.register('item_model_definition_assembly', {
 		addMenu(actions.editCall, 'tools');
 		addMenu(actions.batchToggle, 'tools');
 		addMenu(actions.boxToggle, 'tools');
+		addMenu(actions.bakeTimeline, 'tools');
 		addMenu(actions.pivot, 'tools');
 		addMenu(actions.viewDiag, 'tools');
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
