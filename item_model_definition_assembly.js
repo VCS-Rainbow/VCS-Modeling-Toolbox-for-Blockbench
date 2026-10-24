@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.50.0';
+const VERSION = '0.51.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -442,8 +442,10 @@ class Exporter {
 		// 纹理着色：索引为空 → 不输出任何 tints；类型默认 custom_model_data
 		const index_text = String(group.imm_tint_index == null ? '' : group.imm_tint_index).trim();
 		if (!/^-?\d+$/.test(index_text)) return null;
+		// 明确选择“不生成 tints”（空字符串）时直接退出；只有从未设置（undefined）才按默认 custom_model_data
+		if (group.imm_tint_type === '' || group.imm_tint_type === 'none') return null;
 		const index = Number(index_text);
-		const type = (String(group.imm_tint_type || 'custom_model_data').replace(/^minecraft:/, '').trim()) || 'custom_model_data';
+		const type = (String(group.imm_tint_type == null ? 'custom_model_data' : group.imm_tint_type).replace(/^minecraft:/, '').trim()) || 'custom_model_data';
 		const value_text = String(group.imm_tint_value == null ? '' : group.imm_tint_value).trim();
 		if (type === 'custom_model_data') return [{ type: 'custom_model_data', index, default: index }];
 		if (type === 'constant') return [{ type: 'constant', value: value_text.length ? Number(value_text) : 0 }];
@@ -1435,7 +1437,7 @@ function editGroupProps() {
 			imm_threshold: { label: '分支编号 / 阈值（entries[].threshold）', type: 'number', value: num(group.imm_threshold), description: '语法：{"threshold": 0}\n作用：父分组为 range_dispatch 时，本分组的阈值；修改后自动按阈值重排。', condition: (r) => r.imm_type === 'range_dispatch' || parent_type === 'range_dispatch' },
 			imm_condition: { label: '分支条件（on_true / on_false）', type: 'select', value: String(group.imm_condition || ''), options: { '': '（按位置）', on_true: 'on_true', on_false: 'on_false' }, description: '语法："on_true" / "on_false"\n作用：父分组为 condition 时决定本分支走哪一支；修改后自动重排。', condition: (r) => parent_type === 'condition' },
 			imm_scale: { label: '数值缩放（scale）', description: '语法："scale": 1.0\n作用：仅 range_dispatch，property 数值乘以该倍数后再查阈值。', type: 'number', value: num(group.imm_scale) || 1, condition: (r) => r.imm_type === 'range_dispatch' },
-						imm_tint_type: { label: '纹理着色类型（tints[].type）', description: '语法："tints": [{"type": "<类型>"}]\n作用：染色来源类型（默认 custom_model_data）。\n可选：custom_model_data / constant / dye / potion / grass / team\n仅“纹理着色索引”非空时生效。', type: 'select', value: String(group.imm_tint_type || 'custom_model_data'), options: { '': '（不生成 tints）', custom_model_data: 'custom_model_data', constant: 'constant', dye: 'dye', potion: 'potion', grass: 'grass', team: 'team' }, description: '纹理着色来源类型；保存为键 imm_tint_type', condition: (r) => r.imm_type === 'model' || r.imm_type === 'composite' },
+						imm_tint_type: { label: '纹理着色类型（tints[].type）', description: '语法："tints": [{"type": "<类型>"}]\n作用：染色来源类型（默认 custom_model_data）。\n可选：custom_model_data / constant / dye / potion / grass / team\n仅“纹理着色索引”非空时生效。', type: 'select', value: String(group.imm_tint_type == null ? 'custom_model_data' : (group.imm_tint_type === 'none' ? '' : group.imm_tint_type)), options: { '': '（不生成 tints）', custom_model_data: 'custom_model_data', constant: 'constant', dye: 'dye', potion: 'potion', grass: 'grass', team: 'team' }, description: '纹理着色来源类型；保存为键 imm_tint_type', condition: (r) => r.imm_type === 'model' || r.imm_type === 'composite' },
 			imm_range_target: { label: 'compass target', type: 'select', value: String(group.imm_range_target || ''), options: { '': '（未设置）', lodestone: 'lodestone', none: 'none', spawn: 'spawn', recovery: 'recovery' }, description: '语法："target": "spawn"\n作用：compass 必填，指定指南针指向目标。', condition: (r) => r.imm_property === 'compass' },
 			imm_range_source: { label: 'time source', type: 'select', value: String(group.imm_range_source || ''), options: { '': '（未设置）', daytime: 'daytime', random: 'random', moon_phase: 'moon_phase' }, description: '语法："source": "daytime"\n作用：time 必填，指定时间来源。', condition: (r) => r.imm_property === 'time' },
 			imm_range_wobble: { label: 'wobble（摆动浮动）', type: 'checkbox', value: group.imm_range_wobble !== false, description: '默认 true；关闭后摆动立即平滑到正确值。', condition: (r) => r.imm_property === 'compass' || r.imm_property === 'time' },
@@ -1477,7 +1479,7 @@ function editGroupProps() {
 				if (result.imm_scale !== undefined) group.imm_scale = num(result.imm_scale) || 1;
 				if (result.imm_tints !== undefined) group.imm_tints = result.imm_tints;
 				if (result.imm_align_center !== undefined) group.imm_align_center = !!result.imm_align_center;
-				if (result.imm_tint_type !== undefined) group.imm_tint_type = result.imm_tint_type;
+				if (result.imm_tint_type !== undefined) group.imm_tint_type = (result.imm_tint_type === '' ? 'none' : result.imm_tint_type);
 				if (result.imm_tint_index !== undefined) group.imm_tint_index = num(result.imm_tint_index);
 				if (result.imm_tint_value !== undefined) group.imm_tint_value = result.imm_tint_value;
 								// 按 index 自动勾选着色：本层 index 下发给直接子项，子项自己的 index 优先
@@ -1939,12 +1941,21 @@ function simApplySlot(inputs, key, slot) {
 function simTintColorOf(cube) {
 	const faces = cube && cube.faces;
 	if (!faces) return null;
-	let index = null;
+	// 分组明确“不生成 tints”时不着色
+	const group = cube.parent;
+	if (!group) return null;
+	if (group.imm_tint_type === '' || group.imm_tint_type === 'none') return null;
+	const type = String(group.imm_tint_type == null ? 'custom_model_data' : group.imm_tint_type).replace(/^minecraft:/, '').trim() || 'custom_model_data';
+	if (type !== 'custom_model_data') return null;
+	const indexText = String(group.imm_tint_index == null ? '' : group.imm_tint_index).trim();
+	if (!/^-?\d+$/.test(indexText)) return null;
+	let hasTintedFace = false;
 	for (const dir of FACE_KEYS) {
 		const face = faces[dir];
-		if (face && typeof face.tint === 'number' && face.tint >= 0) { index = face.tint; break; }
+		if (face && typeof face.tint === 'number' && face.tint >= 0) { hasTintedFace = true; break; }
 	}
-	if (index === null) return null;
+	if (!hasTintedFace) return null;
+	const index = Number(indexText);
 	const raw = (sim.inputs.colors || [])[index];
 	if (raw == null) return null;
 	const argb = raw >>> 0;
@@ -2380,18 +2391,12 @@ function collectInputUsage() {
 			const index = Number(node.imm_index) || 0;
 			const name = labelOf(node);
 			const branchChildren = (node.children || []).filter(isGroup).map(c => labelOf(c));
-			// colors：面的 tintindex（以及 model/composite 的 tints 来源 index）→ 所属分组
+			// colors：按分组 tints 配置（custom_model_data + index）关联；明确“不生成”则不关联
 			const tintIndices = new Set();
-			for (const child of (node.children || [])) {
-				if (!isCube(child) || !child.faces) continue;
-				for (const dir of FACE_KEYS) {
-					const face = child.faces[dir];
-					if (face && typeof face.tint === 'number' && face.tint >= 0) tintIndices.add(face.tint);
-				}
-			}
-			if (String(node.imm_tint_type || '').replace(/^minecraft:/, '') === 'custom_model_data') {
+			if (node.imm_tint_type !== '' && node.imm_tint_type !== 'none') {
+				const tintType = String(node.imm_tint_type == null ? 'custom_model_data' : node.imm_tint_type).replace(/^minecraft:/, '').trim() || 'custom_model_data';
 				const rawTintIndex = String(node.imm_tint_index == null ? '' : node.imm_tint_index).trim();
-				if (/^-?\d+$/.test(rawTintIndex)) tintIndices.add(Number(rawTintIndex));
+				if (tintType === 'custom_model_data' && /^-?\d+$/.test(rawTintIndex)) tintIndices.add(Number(rawTintIndex));
 			}
 			for (const tintIndex of tintIndices) add('colors', tintIndex, name, []);
 			if (type === 'range_dispatch' && prop === 'custom_model_data') add('floats', index, name, branchChildren);
@@ -2779,7 +2784,7 @@ function registerProperties() {
 	P(Group, 'string', 'imm_threshold_format', { label: '分支编号格式', description: 'i / i*2 / 10+i*5 / 0,1,3', default: '' });
 	P(Group, 'number', 'imm_threshold', { label: '分支编号 / 阈值（entries[].threshold）', default: 0 });
 	P(Group, 'number', 'imm_scale', { label: '数值缩放（scale）', default: 1 });
-	P(Group, 'string', 'imm_tint_type', { label: 'tints 来源类型', default: '', enum_values: ['', 'custom_model_data', 'constant', 'dye', 'potion', 'grass', 'team'] });
+	P(Group, 'string', 'imm_tint_type', { label: 'tints 来源类型', default: '', enum_values: ['', 'none', 'custom_model_data', 'constant', 'dye', 'potion', 'grass', 'team'] });
 	P(Group, 'number', 'imm_tint_index', { label: 'tints 来源 index（custom_model_data）', default: 0 });
 	P(Group, 'string', 'imm_tint_value', { label: 'tints 来源值（constant 的 ARGB / 其它 default）', default: '' });
 	P(Group, 'string', 'imm_tints', { label: 'tints（JSON，仅 model / composite 自带模型）', default: '' });

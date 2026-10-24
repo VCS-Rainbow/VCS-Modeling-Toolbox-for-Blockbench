@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.50.0', api.VERSION, '0.50.0');
+eq('版本是 0.51.0', api.VERSION, '0.51.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -403,15 +403,25 @@ const tintCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1
 tintCube.faces = { north: { tint: 0, uv: [0, 0, 2, 2] }, east: { tint: -1 }, south: { tint: -1 } };
 const tintOriginal = { map: { name: 'tex' }, side: 2 };
 tintCube.mesh = { material: tintOriginal };
-const tintGroup = new global.Group({ name: 'tintGroup', imm_type: 'composite' });
+const tintGroup = new global.Group({ name: 'tintGroup', imm_type: 'composite', imm_tint_type: 'custom_model_data', imm_tint_index: '0' });
 tintGroup.children.push(tintCube);
+tintCube.parent = tintGroup;
 tintGroup.mesh = { visible: true };
-const savedRoot4 = global.Outliner.root.splice(0, global.Outliner.root.length, tintGroup);
+const noTintGroup = new global.Group({ name: 'noTintGroup', imm_type: 'composite', imm_tint_type: '', imm_tint_index: '0' });
+const noTintCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0], export: true });
+noTintCube.faces = { north: { tint: 0 } };
+const noTintOriginal = { map: { name: 'nt' } };
+noTintCube.mesh = { material: noTintOriginal };
+noTintCube.parent = noTintGroup;
+noTintGroup.children.push(noTintCube);
+noTintGroup.mesh = { visible: true };
+const savedRoot4 = global.Outliner.root.splice(0, global.Outliner.root.length, tintGroup, noTintGroup);
 const simState2 = api.getSimState();
 simState2.inputs.colors[0] = 0xFFFF0000 | 0;
 api.simApplyTints();
 eq('colors[0] 给 tintindex 0 的方块着色', tintCube.mesh.material.color.v, 0xff0000);
 eq('着色不改原纹理对象', tintCube.mesh.material.map === tintOriginal.map, true);
+eq('不生成 tints 的组不预览着色', noTintCube.mesh.material === noTintOriginal, true);
 simState2.inputs.colors.length = 0;
 api.simApplyTints();
 eq('清空 colors 后恢复原材质', tintCube.mesh.material === tintOriginal, true);
@@ -421,6 +431,11 @@ colorsRow.slots[0].els.presets.fire('change');
 eq('colors 预设色解析为数字', colorsRow.slots[0].presets.length === 2 && colorsRow.slots[0].presets[0] === 0xFFFF0000, true);
 const colorsUsage = api.collectInputUsage();
 eq('colors 关联分组包含 tintindex 0 所在分组', !!(colorsUsage['colors#0'] || []).find(entry => entry.parent === 'tintGroup'), true);
+eq('不生成 tints 的组不关联 colors', !(colorsUsage['colors#0'] || []).find(entry => entry.parent === 'noTintGroup'), true);
+const tintExporter = api.createExporter();
+eq('不生成 tints 时 buildTints 为 null', tintExporter.buildTints({ imm_tint_type: '', imm_tint_index: 0 }), null);
+eq('none 时 buildTints 为 null', tintExporter.buildTints({ imm_tint_type: 'none', imm_tint_index: 0 }), null);
+eq('custom_model_data 时 buildTints 有值', Array.isArray(tintExporter.buildTints({ imm_tint_type: 'custom_model_data', imm_tint_index: 2 })), true);
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRoot4);
 
 /* ---------- 汇总 ---------- */
