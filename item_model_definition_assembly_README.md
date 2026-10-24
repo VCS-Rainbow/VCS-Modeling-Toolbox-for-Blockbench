@@ -247,7 +247,7 @@ Blockbench 5.x 的实现方式有两条，本插件都接上了：
 
 ## 时间轴 / 逐帧动画（`range_dispatch(timeline)`）
 
-格式默认不开动画模式（避免影响分组 gizmo）。先执行 `Tools → 切换动画模式（时间轴）`，再按帧把时间轴导出成 `range_dispatch`：
+格式已开启动画模式，可以按帧把时间轴导出成 `range_dispatch`（`Tools → 切换动画模式（时间轴）` 可临时开关）：
 
 1. 在 `项目设置` 里设置 **时间轴 FPS** 与 **custom_model_data index**（默认 20 / 0）；
 2. 做好动画后执行 `Tools → 解析时间轴为复调用标签…`：

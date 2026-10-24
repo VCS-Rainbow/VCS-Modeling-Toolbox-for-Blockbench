@@ -2,6 +2,12 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.63.6
+- **选择守卫改为鼠标松开后判定**：不再挂 `update_selection`，拖动/gizmo 过程中完全不碰选择；`mouseup` 后 `setTimeout(0)` 跑一次向上选组。
+- `animation_mode` 恢复默认 `true`（0.63.5 的“动画模式导致 gizmo”结论作废）；仍保留 `Tools → 切换动画模式（时间轴）` 手动开关。
+- 指针监听在 `onunload` 里移除，避免重载后重复触发。
+- 单测 148 项保持通过。
+
 ## 0.63.5
 - **动画模式改为默认关闭、手动切换**：`animation_mode` 默认 false，保证分组 gizmo 正常；需要时间轴时用 `Tools → 切换动画模式（时间轴）` 打开。
 - 排查结论：0.62.2（无 animation_mode）gizmo 正常，0.63.2 恢复后必坏；根因是 Blockbench 在动画模式下的分组变换/gizmo 行为，不是选择守卫。

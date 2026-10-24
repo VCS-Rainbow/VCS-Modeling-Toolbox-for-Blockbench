@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-25 · 当前版本 **0.63.5**（tag `v0.63.5`）
+> 生成时间：2026-10-25 · 当前版本 **0.63.6**（tag `v0.63.6`）
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 
 ---
@@ -143,7 +143,7 @@
 ---
 ### 2.12 时间轴 / 逐帧动画（0.63.0）
 
-- 格式默认 `animation_mode: false`（保证 gizmo 正常）；需要时间轴时执行 `Tools → 切换动画模式（时间轴）`，再解析/导出。项目属性新增 **时间轴 FPS**（`imm_anim_fps`，默认 20）与 **时间轴 custom_model_data index**（`imm_anim_index`，默认 0）。
+- 格式默认 `animation_mode: true`（0.63.6 恢复）；`Tools → 切换动画模式（时间轴）` 可临时开关。选择守卫只在鼠标松开后判定，避免干扰 gizmo。项目属性新增 **时间轴 FPS**（`imm_anim_fps`，默认 20）与 **时间轴 custom_model_data index**（`imm_anim_index`，默认 0）。
 - 新分组类型 `range_dispatch_timeline`（下拉显示 `range_dispatch(timeline)`）：只作为“导出前的时间轴数据容器”，**不参与动画自动包裹**，避免循环递增。
 - `Tools → 解析时间轴为复调用标签…`：按项目 FPS 采样当前动画，把每个带关键帧的分组的 rotation/position 采样成帧姿态；创建/替换根部的 `[timeline]` 分组（类型 `range_dispatch_timeline`），每帧一个 Locator：
   - `imm_frame` = 帧号（0,1,2…）
@@ -169,6 +169,7 @@
 ## 3. 版本历史（近期，git tag）
 
 ```
+0.63.6  选择守卫改为 mouseup 后判定；animation_mode 恢复 true
 0.63.5  animation_mode 默认关闭、Tools 手动切换（保 gizmo）
 0.63.4  父分组已 selected 时选择守卫让路
 0.63.3  选择守卫只保留“首个选中项是分组”让路
