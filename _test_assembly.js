@@ -66,7 +66,6 @@ global.THREE = { Quaternion, Euler };
 global.Texture = Texture; global.Cube = Cube; global.Group = Group;
 global.Outliner = { root };
 global.ModelProject = class { };
-global.Face = class { };
 global.Project = { name: 'sac_assembly', model_identifier: 'sac_assembly', imm_namespace: 'sqsptst', imm_center_pivot: true, imm_block_display: false };
 global.Format = { id: 'item_model_definition_assembly' };
 global.Properties = [];
