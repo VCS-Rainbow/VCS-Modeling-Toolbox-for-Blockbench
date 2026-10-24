@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.8.6';
+const VERSION = '0.9.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -749,8 +749,30 @@ function editGroupProps() {
 				if (result.imm_threshold !== undefined) group.imm_threshold = num(result.imm_threshold);
 				if (result.imm_scale !== undefined) group.imm_scale = num(result.imm_scale) || 1;
 				if (result.imm_tints !== undefined) group.imm_tints = result.imm_tints;
-				Undo.finishEdit('修改分组映射属性');
-				Blockbench.showQuickMessage('已更新 “' + labelOf(group) + '”', 2500);
+								// 按 index 自动勾选着色：本层 index 下发给直接子项，子项自己的 index 优先
+				const root_index = num(group.imm_index);
+				let tinted = 0;
+				const walkTint = (node, inherited) => {
+					const own = num(node.imm_index);
+					const effective = (own !== 0) ? own : inherited;
+					for (const child of node.children || []) {
+						if (isGroup(child)) { walkTint(child, effective); continue; }
+						if (!isCube(child)) continue;
+						const faces = Object.values(child.faces || {});
+						if (!faces.length) continue;
+						if (faces.some(f => typeof f.tint === 'number')) continue;
+						if (effective === undefined) continue;
+						for (const f of faces) f.tint = effective;
+						tinted++;
+					}
+				};
+				walkTint(group, root_index !== 0 ? root_index : undefined);
+				if (tinted) {
+					Project.saved = false;
+					try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+				}
+Undo.finishEdit('修改分组映射属性');
+				Blockbench.showQuickMessage('已更新 “' + labelOf(group) + '”' + (tinted ? ('，为 ' + tinted + ' 个方块自动勾选着色') : ''), 2500);
 			} catch (error) {
 				console.error(error);
 				Blockbench.showMessageBox({ title: '修改失败', message: String((error && error.message) || error), icon: 'error' });
