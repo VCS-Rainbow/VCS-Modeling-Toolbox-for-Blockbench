@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.8.3';
+const VERSION = '0.8.4';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -291,7 +291,7 @@ class Exporter {
 			];
 			const entry = { uv, texture: '#' + order.get(texture) };
 			if (face.rotation) entry.rotation = clean(face.rotation);
-			if (typeof face.tint === 'number' && face.tint > 0) entry.tintindex = face.tint;
+			if (typeof face.tint === 'number') entry.tintindex = face.tint;
 			faces[dir] = entry;
 			count++;
 		}
@@ -445,6 +445,7 @@ class Exporter {
 		}
 
 		if (type === 'range_dispatch') {
+			if (group.imm_tints) this.warn('分组 "' + labelOf(group) + '" 的 tints 只在 model / composite 生效，range_dispatch 已忽略。');
 			node.property = String(group.imm_property || 'minecraft:custom_model_data');
 			const scale = num(group.imm_scale);
 			if (scale && scale !== 1) node.scale = clean(scale);
@@ -461,7 +462,14 @@ class Exporter {
 		}
 
 		const models = [];
-		if (built) models.push({ type: 'minecraft:model', model: built.reference });
+		const tints = this.parseTints(group.imm_tints);
+				if (built) {
+					const model_node = { type: 'minecraft:model', model: built.reference };
+					if (tints) model_node.tints = tints;
+					models.push(model_node);
+				} else if (tints) {
+					this.warn('分组 "' + labelOf(group) + '" 设置了 tints 但没有自己的模型，已忽略。');
+				}
 		for (const extra of extras) models.push(extra);
 		for (const child of childGroups) {
 			const childNode = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'), own_shift);
@@ -720,10 +728,10 @@ function editGroupProps() {
 			},
 			imm_model: { label: '引用模型（Java 模型 id，留空=用本层方块生成）', type: 'text', value: String(group.imm_model || '') },
 			imm_property: { label: 'property', type: 'text', value: String(group.imm_property || '') },
-			imm_index: { label: 'index', type: 'number', value: num(group.imm_index) },
+			imm_index: { label: 'index（仅 range_dispatch）', type: 'number', value: num(group.imm_index) },
 			imm_threshold: { label: 'threshold（父层 range_dispatch）', type: 'number', value: num(group.imm_threshold) },
 			imm_scale: { label: 'scale', type: 'number', value: num(group.imm_scale) || 1 },
-			imm_tints: { label: 'tints（JSON，仅 model）', type: 'text', value: String(group.imm_tints || '') },
+			imm_tints: { label: 'tints（JSON，仅 model / composite 自带模型）', type: 'text', value: String(group.imm_tints || '') },
 		},
 		onConfirm(result) {
 			try {
@@ -785,10 +793,10 @@ function registerProperties() {
 	P(Group, 'string', 'imm_type', { label: '映射类型', default: 'composite', enum_values: MAPPING_TYPES });
 	P(Group, 'string', 'imm_model', { label: '引用模型（Java 模型 id）', default: '' });
 	P(Group, 'string', 'imm_property', { label: 'property', default: '' });
-	P(Group, 'number', 'imm_index', { label: 'index', default: 0 });
+	P(Group, 'number', 'imm_index', { label: 'index（仅 range_dispatch：custom_model_data 下标）', default: 0 });
 	P(Group, 'number', 'imm_threshold', { label: 'threshold', default: 0 });
 	P(Group, 'number', 'imm_scale', { label: 'scale', default: 1 });
-	P(Group, 'string', 'imm_tints', { label: 'tints（JSON）', default: '' });
+	P(Group, 'string', 'imm_tints', { label: 'tints（JSON，仅 model / composite 自带模型）', default: '' });
 }
 
 let menuAttached = false;
