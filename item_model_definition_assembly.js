@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.22.1';
+const VERSION = '0.22.2';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1311,6 +1311,8 @@ function importModelReference(group) {
 	try {
 		Undo.initEdit({ groups: [group], elements: (group.children || []).filter(isCube) });
 		// 清空原有子项与方块
+		// 确保分组可见（可能被“隐藏不可用分支”关闭过）
+		try { group.visibility = true; group.export = true; group.imm_auto_disabled = false; } catch (e) { /* ignore */ }
 		for (const child of (group.children || []).slice()) {
 			try { child.remove(false); } catch (e) { /* ignore */ }
 		}
@@ -1329,6 +1331,10 @@ function importModelReference(group) {
 			from: [Number(el.from[0]) || 0, Number(el.from[1]) || 0, Number(el.from[2]) || 0],
 			to: [Number(el.to[0]) || 0, Number(el.to[1]) || 0, Number(el.to[2]) || 0],
 		}).addTo(group);
+		try { cube.visibility = true; } catch (e) { /* ignore */ }
+		for (const dirKey of Object.keys(cube.faces || {})) {
+			if (cube.faces[dirKey]) cube.faces[dirKey].enabled = true;
+		}
 		if (el.shade === false) cube.shade = false;
 		if (el.rotation && el.rotation.origin && el.rotation.axis) {
 			const axis = ['x', 'y', 'z'].indexOf(String(el.rotation.axis));
