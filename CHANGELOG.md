@@ -2,6 +2,10 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.65.0
+- 时间轴采样抽成可测试的 `sampleTimelinePoses(animation, fps, frameCount)`：逐帧读取带关键帧分组的 rotation / position 增量，恢复动画时间；`bakeTimelineToCallTags()` 复用它。
+- 单测扩到 **155 项**（采样帧数、rotation 叠加、position、时间恢复）。
+
 ## 0.64.0
 - 选择优化改为“计算最高级分组 → 清空选择 → 逐个模拟普通单击”（`group.select({ctrlOrCmd:true})`）：不再手动拼 `Outliner.selected`/子项 selected，交给 Blockbench 原生选择逻辑，修多分组全局移动方向不一致。
 - 单测 151 项保持通过。

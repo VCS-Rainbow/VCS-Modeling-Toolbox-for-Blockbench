@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.64.0';
+const VERSION = '0.65.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1668,15 +1668,8 @@ function editGroupProps() {
 }
 
 /** 从分组创建模型：烘焙组内方块、写到资源包 models/item、分组改为引用并记录居中补偿 */
-/** 手动解析：按项目 FPS 采样当前动画，生成 range_dispatch(timeline) 分组和逐帧 Locator */
-function bakeTimelineToCallTags() {
-	const animation = (typeof Animation !== 'undefined' && Animation) ? (Animation.selected || (Array.isArray(Animation.all) ? Animation.all[0] : null)) : null;
-	if (!animation) { Blockbench.showMessageBox({ title: '没有动画', message: '请先打开动画模式并选择一个动画。', icon: 'info' }); return; }
-	const fps = Math.max(1, num(projectValue('imm_anim_fps', 20)) || 20);
-	let duration = num(animation.length);
-	if (!(duration > 0) && typeof Timeline !== 'undefined') duration = num(Timeline.length);
-	if (!(duration > 0)) { Blockbench.showMessageBox({ title: '动画长度为 0', message: '时间轴上没有可采样的关键帧。', icon: 'info' }); return; }
-	const frameCount = Math.max(1, Math.ceil(duration * fps));
+/** 采样当前动画：返回 { animated, poses }（poses[frame][uuid] = {rotation, origin, position}） */
+function sampleTimelinePoses(animation, fps, frameCount) {
 	const animated = [];
 	for (const group of (typeof Group !== 'undefined' ? Group.all : [])) {
 		let animator = null;
@@ -1686,7 +1679,6 @@ function bakeTimelineToCallTags() {
 		if (!hasKeys) continue;
 		animated.push({ group, animator, baseRotation: (group.rotation || [0, 0, 0]).slice(), baseOrigin: (group.origin || [0, 0, 0]).slice() });
 	}
-	if (!animated.length) { Blockbench.showMessageBox({ title: '没有关键帧', message: '当前动画里没有带关键帧的分组。', icon: 'info' }); return; }
 	const oldTime = animation.time;
 	const poses = [];
 	for (let frame = 0; frame < frameCount; frame++) {
@@ -1708,6 +1700,22 @@ function bakeTimelineToCallTags() {
 		poses.push(map);
 	}
 	try { animation.time = oldTime; } catch (e) { /* ignore */ }
+	return { animated, poses };
+}
+
+/** 手动解析：按项目 FPS 采样当前动画，生成 range_dispatch(timeline) 分组和逐帧 Locator */
+function bakeTimelineToCallTags() {
+	const animation = (typeof Animation !== 'undefined' && Animation) ? (Animation.selected || (Array.isArray(Animation.all) ? Animation.all[0] : null)) : null;
+	if (!animation) { Blockbench.showMessageBox({ title: '没有动画', message: '请先打开动画模式并选择一个动画。', icon: 'info' }); return; }
+	const fps = Math.max(1, num(projectValue('imm_anim_fps', 20)) || 20);
+	let duration = num(animation.length);
+	if (!(duration > 0) && typeof Timeline !== 'undefined') duration = num(Timeline.length);
+	if (!(duration > 0)) { Blockbench.showMessageBox({ title: '动画长度为 0', message: '时间轴上没有可采样的关键帧。', icon: 'info' }); return; }
+	const frameCount = Math.max(1, Math.ceil(duration * fps));
+	const sampled = sampleTimelinePoses(animation, fps, frameCount);
+	const animated = sampled.animated;
+	const poses = sampled.poses;
+	if (!animated.length) { Blockbench.showMessageBox({ title: '没有关键帧', message: '当前动画里没有带关键帧的分组。', icon: 'info' }); return; }
 	const oldTimeline = (Outliner.root || []).filter(node => isGroup(node) && String(node.imm_type || '') === 'range_dispatch_timeline');
 	try { Undo.initEdit({ outliner: true, groups: oldTimeline, elements: [] }); } catch (e) { /* ignore */ }
 	for (const old of oldTimeline) { try { old.remove(); } catch (e) { /* ignore */ } }
@@ -3474,7 +3482,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, sampleTimelinePoses, createExporter, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

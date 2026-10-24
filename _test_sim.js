@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.64.0', api.VERSION, '0.64.0');
+eq('版本是 0.65.0', api.VERSION, '0.65.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -651,6 +651,19 @@ eq('共同根节点也选中', multiRoot.selected === true, true);
 eq('顶层分组排在选择第一位', global.Outliner.selected[0] === multiRoot, true);
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedMultiRoot);
 global.Outliner.selected.length = 0;
+
+/* ---------- 时间轴采样 ---------- */
+console.log('\n[时间轴采样]');
+const sampleGroup = new global.Group({ name: 'sampleGroup', uuid: 'sample-group', rotation: [0, 0, 10], origin: [8, 8, 8] });
+const savedGroupAll = global.Group.all; global.Group.all = [sampleGroup];
+const fakeAnimator = { keyframes: [{}], channels: { rotation: [{}], position: [{}] }, interpolate(channel) { if (channel === 'rotation') return [0, 20, 0]; if (channel === 'position') return [0, 1, 0]; return [1, 1, 1]; } };
+const fakeAnimation = { time: 0.5, getBoneAnimator(group) { return group === sampleGroup ? fakeAnimator : null; } };
+const sampled = api.sampleTimelinePoses(fakeAnimation, 20, 3);
+eq('采样 3 帧', sampled.poses.length, 3);
+eq('rotation = 基础 + 关键帧增量', sampled.poses[0]['sample-group'].rotation, [0, 20, 10]);
+eq('position 被采样', sampled.poses[0]['sample-group'].position, [0, 1, 0]);
+eq('采样后恢复动画时间', fakeAnimation.time, 0.5);
+global.Group.all = savedGroupAll;
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
