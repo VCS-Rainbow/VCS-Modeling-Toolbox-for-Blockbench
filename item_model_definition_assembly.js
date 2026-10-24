@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.22.5';
+const VERSION = '0.22.6';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1291,7 +1291,7 @@ let lastImportAt = 0;
 function importModelReference(group) {
 	if (importingModel) { console.warn('[装配] 忽略重复导入（进行中）'); return false; }
 	const importKey = String((group && group.uuid) || '') + '|' + String((group && group.imm_model) || '');
-	if (importKey === lastImportKey && (Date.now() - lastImportAt) < 1500) { console.warn('[装配] 忽略重复导入（冷却中）'); return false; }
+	// 冷却已回退：不再按时间拒绝重复导入
 	importingModel = true;
 	lastImportKey = importKey;
 	lastImportAt = Date.now();
