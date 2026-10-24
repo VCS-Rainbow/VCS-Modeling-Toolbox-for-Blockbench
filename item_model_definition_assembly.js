@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.33.1';
+const VERSION = '0.33.2';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1530,38 +1530,40 @@ function buildSimPanel(show_panel) {
 /* 遍历分组，得到 输入键+下标 -> [分组名] */
 function collectInputUsage() {
 	const map = {};
-	const push = (key, index, name) => { const k = key + '#' + (index || 0); map[k] = map[k] || []; if (map[k].indexOf(name) < 0) map[k].push(name); };
+	const push = (key, index, name) => {
+		const k = key + '#' + (index || 0);
+		map[k] = map[k] || [];
+		if (map[k].indexOf(name) < 0) map[k].push(name);
+	};
 	const walk = (nodes) => {
 		for (const node of nodes || []) {
 			if (!node || !isGroup(node)) continue;
 			const type = String(node.imm_type || '').replace(/^minecraft:/, '');
 			const propRaw = String(node.imm_property || '').replace(/^minecraft:/, '').trim();
-			const prop = propRaw || (type === 'range_dispatch' || type === 'select' || type === 'condition' ? 'custom_model_data' : '');
+			const prop = propRaw || ((type === 'range_dispatch' || type === 'select' || type === 'condition') ? 'custom_model_data' : '');
 			const index = Number(node.imm_index) || 0;
 			const name = labelOf(node);
-			const prefixMatch = String(name || '').match(/^\[(\d+)\]/);
-			if (prefixMatch) push('floats', Number(prefixMatch[1]), name);
+			const branchChildren = (node.children || []).filter(isGroup);
 			if (type === 'range_dispatch' && prop === 'custom_model_data') {
 				push('floats', index, name);
-				// 子分支名形如 [0] xxx / [2] xxx，按前缀归到对应 float 下标
-				for (const child of (node.children || [])) {
-					if (!isGroup(child)) continue;
-					const m = String(child.name || '').match(/^\[(\d+)\]/);
-					if (m) push('floats', Number(m[1]), labelOf(child));
-				}
+				for (const child of branchChildren) push('floats', index, labelOf(child));
+			} else if (type === 'select' && prop === 'custom_model_data') {
+				push('strings', index, name);
+				for (const child of branchChildren) push('strings', index, labelOf(child));
+			} else if (type === 'condition' && prop === 'custom_model_data') {
+				push('flags', index, name);
+				for (const child of branchChildren) push('flags', index, labelOf(child));
+			} else if (prop && prop !== 'custom_model_data') {
+				push(prop, 0, name);
+			} else if (prop === 'selected') {
+				push('selected', 0, name);
 			}
-			else if (type === 'select' && prop === 'custom_model_data') push('strings', index, name);
-			else if (type === 'condition' && prop === 'custom_model_data') push('flags', index, name);
-			else if (prop && prop !== 'custom_model_data' && prop !== 'selected') push(prop, 0, name);
-			else if (prop === 'selected') push('selected', 0, name);
 			walk(node.children || []);
 		}
 	};
 	walk((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []);
 	return map;
 }
-
-/* 独立刷新每行的“关联分组”，不依赖映射构建是否成功 */
 function refreshUsage(hits) {
 	if (!sim_ui || !sim_ui.rows) return;
 	try {
