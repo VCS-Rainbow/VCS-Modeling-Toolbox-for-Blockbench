@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.32.0';
+const VERSION = '0.32.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1488,6 +1488,18 @@ function buildSimPanel(show_panel) {
 		body.appendChild(cell('规则', rule));
 		body.appendChild(cell('下限', minI));
 		body.appendChild(cell('上限', maxI));
+		// 组装成三簇：索引+值 / 自动+周期+步长 / 规则+下限+上限（在所有控件创建之后做，顺序安全）
+		const regroupInto = (parent, startIndex) => {
+			const cluster = mk('div', {}, 'display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap');
+			while (parent.children.length > startIndex) cluster.appendChild(parent.children[startIndex]);
+			return cluster;
+		};
+		if (head.children.length > 1) head.appendChild(regroupInto(head, 1));
+		const bodyB = regroupInto(body, 3);
+		const bodyC = mk('div', {}, 'display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap');
+		while (body.children.length) bodyC.appendChild(body.children[0]);
+		body.appendChild(bodyB);
+		body.appendChild(bodyC);
 		box.appendChild(head); box.appendChild(body); box.appendChild(usageEl); root.appendChild(box);
 		row.el = { enable, idx, val, auto: autoC, period, step, rule, min: minI, max: maxI, usage: usageEl };
 		const read = () => { row.enabled = enable.checked; row.index = Number(idx.value) || 0; row.value = val.value; row.auto = autoC.checked; row.period = Math.max(50, (Number(period.value) || 0.2) * 1000); row.step = Number(step.value) || 0.5; row.rule = rule.value; row.min = Number(minI.value) || 0; row.max = Number(maxI.value) || 4; };
