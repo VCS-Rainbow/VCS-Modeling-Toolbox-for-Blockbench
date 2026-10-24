@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.30.2';
+const VERSION = '0.30.3';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1446,7 +1446,7 @@ function buildSimPanel(show_panel) {
 	const root = document.createElement('div');
 	root.style.cssText = 'padding:8px;display:flex;flex-direction:column;gap:4px;font-size:12px;overflow:auto;height:100%';
 	const mk = (tag, props, style) => { const el = document.createElement(tag); Object.assign(el, props || {}); if (style) el.style.cssText = style; return el; };
-	const cell = (labelText, inputEl, width) => { const wrap = mk('label', {}, 'display:flex;flex-direction:column;gap:2px;font-size:10px;opacity:.75' + (width ? (';width:' + width) : '')); wrap.appendChild(mk('span', { textContent: labelText })); wrap.appendChild(inputEl); return wrap; };
+	const cell = (labelText, inputEl, width) => { const wrap = mk('label', {}, 'display:flex;flex-direction:column;gap:2px;font-size:10px;opacity:.75;white-space:nowrap;min-width:0;flex:1 1 0' + (width ? (';flex:0 0 ' + width) : '') + ';overflow:hidden'); wrap.appendChild(mk('span', { textContent: labelText })); wrap.appendChild(inputEl); return wrap; };
 	const SPECS = [
 		['floats', 'cmdata.floats', 'number'],
 		['colors', 'cmdata.colors', 'number'],
@@ -1472,13 +1472,13 @@ function buildSimPanel(show_panel) {
 		head.appendChild(nameEl);
 		if (kind !== 'bool' || (key !== 'selected' && key !== 'using_item')) head.appendChild(cell('索引', idx, '64px'));
 		head.appendChild(cell('值', val, '92px'));
-		const body = mk('div', {}, 'display:grid;grid-template-columns:repeat(5, minmax(0, 1fr));gap:6px;padding:6px 0 4px 0;align-items:end');
+		const body = mk('div', {}, 'display:flex;flex-wrap:nowrap;gap:6px;padding:6px 0 4px 0;align-items:flex-end;overflow:hidden');
 		const autoC = mk('input', { type: 'checkbox' }); const autoL = mk('label', { textContent: '自动' }, 'display:flex;gap:3px;align-items:center'); autoL.appendChild(autoC);
-		const period = mk('input', { type: 'number', value: '800' }, 'width:60px');
-		const step = mk('input', { type: 'number', value: '0.5', step: '0.1' }, 'width:56px');
-		const rule = mk('select', {}); [['pingpong', '往复'], ['wrap', '循环']].forEach(([v, t]) => rule.appendChild(mk('option', { value: v, textContent: t })));
-		const minI = mk('input', { type: 'number', value: '0' }, 'width:52px');
-		const maxI = mk('input', { type: 'number', value: '4' }, 'width:52px');
+		const period = mk('input', { type: 'number', value: '800' }, 'width:100%;min-width:0');
+		const step = mk('input', { type: 'number', value: '0.5', step: '0.1' }, 'width:100%;min-width:0');
+		const rule = mk('select', {}, 'width:100%;min-width:0'); [['pingpong', '往复'], ['wrap', '循环']].forEach(([v, t]) => rule.appendChild(mk('option', { value: v, textContent: t })));
+		const minI = mk('input', { type: 'number', value: '0' }, 'width:100%;min-width:0');
+		const maxI = mk('input', { type: 'number', value: '4' }, 'width:100%;min-width:0');
 		body.appendChild(cell('自动', autoC));
 		body.appendChild(cell('周期 ms', period));
 		body.appendChild(cell('步长', step));
