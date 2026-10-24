@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.14.0';
+const VERSION = '0.15.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -980,6 +980,119 @@ function checkStructure() {
 	Blockbench.showMessageBox({ title: '装配结构 / 变换诊断', message: lines.join('\n') || '（没有分组）', icon: 'info' });
 }
 
+/* ============================== 模拟输入 ============================== */
+
+const sim = { timer: null, value: 0, dir: 1, inputs: { floats: [0, 0, 0, 0, 0, 0, 0, 0], selected: false, damage: 0, use_remainder: false } };
+
+function simValue(node, inputs) {
+	const type = String((node && node.type) || '').replace(/^minecraft:/, '');
+	const prop = String((node && node.property) || '').replace(/^minecraft:/, '');
+	const index = Number(node && node.index) || 0;
+	let value = 0;
+	if (prop === 'custom_model_data') value = Number((inputs.floats || [])[index] || 0);
+	else if (prop === 'selected') value = inputs.selected ? 1 : 0;
+	else value = Number(inputs[prop] || 0);
+	if (node && node.scale) value *= Number(node.scale);
+	return value;
+}
+
+/** 按输入求值整棵映射树，返回 [{ node, hit }]（hit=false 表示该分支被条件挡掉） */
+function simEvaluate(node, inputs, allowOutside) {
+	const result = [];
+	if (!node) return result;
+	const type = String(node.type || '').replace(/^minecraft:/, '');
+	if (type === 'composite') {
+		for (const child of node.models || []) result.push(...simEvaluate(child, inputs, allowOutside));
+		return result;
+	}
+	if (type === 'range_dispatch') {
+		const value = simValue(node, inputs);
+		let best = null;
+		for (const entry of node.entries || []) {
+			const threshold = Number(entry.threshold);
+			if (threshold <= value && (!best || threshold >= Number(best.threshold))) best = entry;
+		}
+		for (const entry of node.entries || []) {
+			const isBest = best === entry;
+			for (const item of simEvaluate(entry.model, inputs, allowOutside)) result.push({ node: item.node, hit: item.hit && isBest });
+		}
+		if (best && node.fallback) for (const item of simEvaluate(node.fallback, inputs, allowOutside)) result.push({ node: item.node, hit: item.hit });
+		return result;
+	}
+	if (type === 'condition') {
+		const prop = String(node.property || 'minecraft:selected').replace(/^minecraft:/, '');
+		const ok = prop === 'selected' ? !!inputs.selected : !!inputs[prop];
+		for (const item of simEvaluate(ok ? node.on_true : node.on_false, inputs, allowOutside)) result.push({ node: item.node, hit: item.hit && ok });
+		return result;
+	}
+	if (type === 'model') { result.push({ node, hit: true }); return result; }
+	return result;
+}
+
+function openSimulator() {
+	if (typeof Project === 'undefined' || !Project) return;
+	const inputs = sim.inputs;
+	let mapping = null;
+	try { mapping = createExporter().buildMapping(); } catch (error) {
+		Blockbench.showMessageBox({ title: '无法生成映射', message: String((error && error.message) || error), icon: 'error' });
+		return;
+	}
+	new Dialog({
+		id: 'imm_simulator',
+		title: '模拟输入 — 预览分支命中',
+		width: 720,
+		form: {
+			prop: { label: '取值来源（property）', type: 'select', value: 'custom_model_data', options: { custom_model_data: 'custom_model_data', selected: 'selected' }, description: '决定用哪个输入值参与判断' },
+			index: { label: '下标（index）', type: 'number', value: 0, description: 'custom_model_data 的 floats 下标' },
+			value: { label: '数值', type: 'number', value: 0, description: '模拟的输入值' },
+			auto: { label: '自动变化', type: 'checkbox', value: false, description: '按周期自动增减数值，实时预览' },
+			period: { label: '周期（毫秒）', type: 'number', value: 800, description: '自动变化的间隔' },
+			step: { label: '步长', type: 'number', value: 0.5, description: '每次变化量' },
+			rule: { label: '规则', type: 'select', value: 'pingpong', options: { pingpong: '往复（到端点反向）', wrap: '循环（回到起点）' } },
+			min: { label: '下限', type: 'number', value: 0 },
+			max: { label: '上限', type: 'number', value: 4 },
+		},
+		onConfirm(result) {
+			if (sim.timer) { clearInterval(sim.timer); sim.timer = null; }
+			inputs.floats = inputs.floats || [];
+			const index = Math.max(0, num(result.index));
+			inputs.selected = false;
+			const applying = (value) => {
+				if (result.prop === 'selected') inputs.selected = Number(value) > 0;
+				else inputs.floats[index] = Number(value);
+				const hits = simEvaluate(mapping.model, inputs).filter(item => item.hit).map(item => item.node.model).filter(Boolean);
+				return hits;
+			};
+			if (!result.auto) {
+				const hits = applying(result.value);
+				Blockbench.showMessageBox({
+					title: '模拟结果',
+					message: (result.prop === 'selected' ? 'selected = ' + (Number(result.value) > 0) : 'floats[' + index + '] = ' + result.value) + '\n\n命中的模型（' + hits.length + '）\n' + (hits.length ? hits.join('\n') : '（无）'),
+					icon: 'info',
+				});
+				return;
+			}
+			let value = Number(result.value);
+			let direction = 1;
+			const period = Math.max(80, num(result.period) || 800);
+			const stepValue = num(result.step) || 0.5;
+			const min = num(result.min);
+			const max = num(result.max);
+			sim.timer = setInterval(() => {
+				try {
+					value += stepValue * direction;
+					if (result.rule === 'wrap') { if (value > max) value = min; }
+					else { if (value > max) { value = max; direction = -1; } if (value < min) { value = min; direction = 1; } }
+					const hits = applying(value);
+					Blockbench.showQuickMessage('模拟 ' + (result.prop === 'selected' ? 'selected=' + (Number(value) > 0) : 'floats[' + index + ']=' + value.toFixed(2)) + ' → 命中 ' + hits.length + ' 个模型', period - 50);
+				} catch (error) { /* ignore */ }
+			}, period);
+			Blockbench.showQuickMessage('已开始自动模拟（再次执行可停止）', 3000);
+		},
+	}).show();
+}
+
+
 /* ============================== 注册 ============================== */
 
 function registerProperties() {
@@ -1123,12 +1236,14 @@ Plugin.register('item_model_definition_assembly', {
 		actions.zip = new Action('imm_export_zip', { name: '导出装配资源包 (zip)', description: 'items + models + textures', icon: 'archive', category: 'file', condition, click: exportZip });
 		actions.merge = new Action('imm_merge_pack', { name: '合并到资源包…', description: '直接写入资源包并覆盖旧文件', icon: 'folder_open', category: 'file', condition, click: mergeToPack });
 		actions.check = new Action('imm_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
+		actions.sim = new Action('imm_simulate', { name: '模拟输入…', description: '按 custom_model_data / selected 预览分支命中', icon: 'play_circle', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: openSimulator });
 		actions.props = new Action('imm_group_props', { name: '编辑分组映射属性…', description: '映射类型 / 引用模型 / property 等', icon: 'tune', category: 'tools', condition, click: editGroupProps });
 
 		MenuBar.addAction(actions.zip, 'file.export');
 		MenuBar.addAction(actions.merge, 'file.export');
 		MenuBar.addAction(actions.check, 'tools');
 		MenuBar.addAction(actions.props, 'tools');
+		MenuBar.addAction(actions.sim, 'tools');
 		attachGroupMenu();
 		for (const event of ['add_group', 'remove_group', 'update_selection']) {
 			try { Blockbench.on(event, (data) => scheduleBranchSync(data && data.object)); } catch (e) { /* ignore */ }
