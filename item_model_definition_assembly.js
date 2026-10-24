@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.16.1';
+const VERSION = '0.16.2';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -985,8 +985,8 @@ function checkStructure() {
 let sim_panel = null;
 let sim_ui = null;
 
-function buildSimPanel() {
-	if (sim_panel) { sim_panel.show(); return sim_panel; }
+function buildSimPanel(show_panel) {
+	if (sim_panel) { if (show_panel !== false) sim_panel.show(); return sim_panel; }
 	if (typeof Panel === 'undefined') return null;
 	sim_panel = new Panel('imm_sim_panel', {
 		name: '模拟输入',
@@ -1028,7 +1028,7 @@ function buildSimPanel() {
 	sim_panel.node.innerHTML = '';
 	sim_panel.node.appendChild(root);
 	try { if (typeof Panels !== 'undefined' && Panels) Panels[sim_panel.id] = sim_panel; } catch (e) { /* ignore */ }
-	sim_panel.show();
+	if (show_panel !== false) sim_panel.show();
 	return sim_panel;
 }
 
@@ -1331,14 +1331,15 @@ Plugin.register('item_model_definition_assembly', {
 		actions.zip = new Action('imm_export_zip', { name: '导出装配资源包 (zip)', description: 'items + models + textures', icon: 'archive', category: 'file', condition, click: exportZip });
 		actions.merge = new Action('imm_merge_pack', { name: '合并到资源包…', description: '直接写入资源包并覆盖旧文件', icon: 'folder_open', category: 'file', condition, click: mergeToPack });
 		actions.check = new Action('imm_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
-		actions.sim = new Action('imm_simulate', { name: '模拟输入…', description: '按 custom_model_data / selected 预览分支命中', icon: 'play_circle', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const panel = buildSimPanel(); if (panel) return; openSimulator(); } });
+		actions.sim = new Action('imm_simulate', { name: '模拟输入…', description: '按 custom_model_data / selected 预览分支命中', icon: 'play_circle', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const panel = buildSimPanel(false); if (panel) { panel.show(); return; } openSimulator(); } });
 		actions.props = new Action('imm_group_props', { name: '编辑分组映射属性…', description: '映射类型 / 引用模型 / property 等', icon: 'tune', category: 'tools', condition, click: editGroupProps });
 
 		MenuBar.addAction(actions.zip, 'file.export');
 		MenuBar.addAction(actions.merge, 'file.export');
 		MenuBar.addAction(actions.check, 'tools');
 		MenuBar.addAction(actions.props, 'tools');
-		MenuBar.addAction(actions.sim, 'tools');
+		try { buildSimPanel(false); } catch (e) { /* ignore */ }
+		// 面板会自动出现在「视图 → 面板」里，不再占用 Tools 菜单
 		attachGroupMenu();
 		for (const event of ['add_group', 'remove_group', 'update_selection']) {
 			try { Blockbench.on(event, (data) => scheduleBranchSync(data && data.object)); } catch (e) { /* ignore */ }
