@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-25 · 当前版本 **0.65.2**（tag `v0.65.2`）
+> 生成时间：2026-10-25 · 当前版本 **0.65.3**（tag `v0.65.3`）
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 
 ---
@@ -169,6 +169,7 @@
 ## 3. 版本历史（近期，git tag）
 
 ```
+0.65.3  过滤空 composite / 清理失败节点缓存
 0.65.2  超宽分组拆逐方块节点 + transformation（修 from/to 越界）
 0.65.1  时间轴复用静态模型几何，逐帧只改 transformation
 0.65.0  时间轴采样抽成 sampleTimelinePoses 并加单测
@@ -311,7 +312,7 @@
 $node = 'C:\Users\Rainbow_\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 & $node --check 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js'
 & $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_assembly.js'   # 离线冒烟
-& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图/复调用/着色单测（158 项）
+& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图/复调用/着色单测（159 项）
 Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js' `
   'C:\Users\Rainbow_\AppData\Roaming\Blockbench\plugins\item_model_definition_assembly.js' -Force
 ```
@@ -337,6 +338,7 @@ Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_d
 - 选择优化：选择守卫只挂 `mouseup`，算最高级分组后清空选择并模拟单击；
 - 回归测试：`_test_sim.js` 的「超宽分组拆分」与「时间轴 range_dispatch」；
 - 导出的 `range_dispatch(timeline)` 帧模型现在与静态模型共用几何，不再每帧生成 `_fN` 文件。
+- `buildNode` 失败会清 `groupNodeCache`；`nodeIsEmpty()` 过滤空 composite/range/select/condition，避免空节点被时间轴复用。
 
 **以后改这里之前先确认**
 - 不要再把大位移/旋转烘进 `from/to`；一律走 `transformation`。

@@ -2,6 +2,10 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.65.3
+- **修导出结果里的空 `composite`**：`buildNode()` 失败（无模型/无分支）时清除 `groupNodeCache`，不再把空节点留给时间轴/父级复用；新增 `nodeIsEmpty()` 并在时间轴帧、根部汇总处过滤空节点。
+- 单测扩到 **159 项**（空分组不产生空 composite）。
+
 ## 0.65.2
 - **超宽分组自动拆成逐方块节点**：inline 方块包围盒任一轴跨度 > 32 时，改为每个方块单独模型 + `transformation`；元素不再写 `rotation`（由 transformation 承载），保证 from/to 落在范围内。
 - 模型缓存键支持无 uuid/name 的方块（WeakMap 兜底），避免不同方块错误复用同一模型。

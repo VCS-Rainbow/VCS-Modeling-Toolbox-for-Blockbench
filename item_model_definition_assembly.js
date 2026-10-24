@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.65.2';
+const VERSION = '0.65.3';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -536,7 +536,7 @@ class Exporter {
 				children: group.children,
 				__imm_translate: Array.isArray(__pose.position) ? __pose.position.slice() : null,
 			});
-		} else if (this.timelinePoses && this.groupNodeCache.has(group) && !this.hasPoseInSubtree(group)) {
+		} else if (this.timelinePoses && this.groupNodeCache.has(group) && !this.nodeIsEmpty(this.groupNodeCache.get(group)) && !this.hasPoseInSubtree(group)) {
 			return this.groupNodeCache.get(group);
 		}
 		const children = (group.children || []).filter(c => c && c.export !== false);
@@ -596,7 +596,7 @@ class Exporter {
 
 		if (type === 'model') {
 			const ref = built ? built.reference : (extras[0] ? extras[0].model : null);
-			if (!ref) { this.warn('分组 “' + labelOf(group) + '” 是 model 类型但没有可用模型，已跳过。'); return null; }
+			if (!ref) { this.groupNodeCache.delete(group); this.warn('分组 “' + labelOf(group) + '” 是 model 类型但没有可用模型，已跳过。'); return null; }
 			node.model = ref;
 			const tints = this.buildTints(group);
 			if (tints) node.tints = tints;
@@ -616,7 +616,7 @@ class Exporter {
 			}
 			const fallback = built ? { type: 'minecraft:model', model: built.reference } : (extras[0] || null);
 			if (fallback) { this.groupNodes.set(fallback, group); node.fallback = fallback; }
-			if (!node.cases.length && !node.fallback) return null;
+			if (!node.cases.length && !node.fallback) { this.groupNodeCache.delete(group); return null; }
 			return node;
 		}
 
@@ -655,7 +655,7 @@ class Exporter {
 			}
 			const fallback = built ? { type: 'minecraft:model', model: built.reference } : (extras[0] || null);
 			if (fallback) { this.groupNodes.set(fallback, group); node.fallback = fallback; }
-			if (!node.entries.length && !node.fallback) return null;
+			if (!node.entries.length && !node.fallback) { this.groupNodeCache.delete(group); return null; }
 			return node;
 		}
 
@@ -675,7 +675,7 @@ class Exporter {
 			const childNode = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'), own_shift);
 			if (childNode) models.push(childNode);
 		}
-		if (!models.length) { this.warn('分组 “' + labelOf(group) + '” 没有可导出内容，已跳过。'); return null; }
+		if (!models.length) { this.groupNodeCache.delete(group); this.warn('分组 “' + labelOf(group) + '” 没有可导出内容，已跳过。'); return null; }
 
 		if (type === 'condition') {
 			const pred = String(group.imm_property || 'minecraft:selected').replace(/^minecraft:/, '').trim() || 'selected';
@@ -790,7 +790,7 @@ class Exporter {
 			const nodes = [];
 			for (const rootGroup of roots) {
 				const node = this.buildNode(rootGroup, hint, parent_shift);
-				if (node) nodes.push(node);
+				if (node && !this.nodeIsEmpty(node)) nodes.push(node);
 			}
 			this.timelinePoses = null;
 			if (!nodes.length) continue;
@@ -804,6 +804,17 @@ class Exporter {
 		if (prop === 'custom_model_data') node.index = clean(index);
 		node.entries = entries;
 		return node;
+	}
+
+	/** 空节点：没有 models / entries / cases / 分支，导出时直接丢弃 */
+	nodeIsEmpty(node) {
+		if (!node) return true;
+		const type = String(node.type || '');
+		if (type === 'minecraft:composite') return !(node.models || []).length;
+		if (type === 'minecraft:range_dispatch') return !(node.entries || []).length && !node.fallback;
+		if (type === 'minecraft:select') return !(node.cases || []).length && !node.fallback;
+		if (type === 'minecraft:condition') return !node.on_true && !node.on_false;
+		return false;
 	}
 
 	buildMapping() {
@@ -822,7 +833,7 @@ class Exporter {
 			if (!node || node.export === false) continue;
 			if (isGroup(node)) {
 				const built = this.buildNode(node, sanitizePath(labelOf(node), 'group'), [0, 0, 0]);
-				if (built) models.push(built);
+				if (built && !this.nodeIsEmpty(built)) models.push(built);
 			} else if (isLocator(node)) {
 				const call = this.buildCallNode(node);
 				if (call) models.push(call);

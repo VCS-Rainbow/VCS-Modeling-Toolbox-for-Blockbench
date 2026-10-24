@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.65.2', api.VERSION, '0.65.2');
+eq('版本是 0.65.3', api.VERSION, '0.65.3');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -685,6 +685,16 @@ eq('超宽分组拆成多个模型', spreadExporter.models.length >= 2, true);
 eq('拆分后 from/to 都在 -16~32', spreadElements.every(el => el.from.concat(el.to).every(v => v >= -16.001 && v <= 32.001)), true);
 eq('节点承载旋转，元素不再写 rotation', spreadElements.every(el => !el.rotation), true);
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedSpreadRoot);
+
+/* ---------- 空节点过滤 ---------- */
+console.log('\n[空节点过滤]');
+const emptyGroup = new global.Group({ name: 'emptyGroup', imm_type: 'composite' });
+const savedEmptyRoot = global.Outliner.root.splice(0, global.Outliner.root.length, spreadGroup, emptyGroup);
+const emptyExporter = api.createExporter();
+const emptyMapping = emptyExporter.buildMapping();
+const hasEmptyComposite = (node) => { if (!node) return false; if (node.type === 'minecraft:composite' && (!node.models || !node.models.length)) return true; for (const child of (node.models || [])) if (hasEmptyComposite(child)) return true; if (node.entries) for (const entry of node.entries) if (hasEmptyComposite(entry.model)) return true; return false; };
+eq('空分组不产生空 composite', hasEmptyComposite(emptyMapping.model), false);
+global.Outliner.root.splice(0, global.Outliner.root.length, ...savedEmptyRoot);
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
