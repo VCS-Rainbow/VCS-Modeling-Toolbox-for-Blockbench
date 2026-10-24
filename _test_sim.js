@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.63.9', api.VERSION, '0.63.9');
+eq('版本是 0.64.0', api.VERSION, '0.64.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -526,9 +526,9 @@ api.setBoxSelectGroups(true);
 global.Outliner.selected.push(boxCube1, boxCube2);
 api.guardBoxSelection();
 eq('多选方块时改为选中父分组', global.Outliner.selected.indexOf(boxGroup) >= 0, true);
-eq('分组及其元素一起被选中', global.Outliner.selected.indexOf(boxCube1) >= 0 && global.Outliner.selected.indexOf(boxCube2) >= 0, true);
+eq('分组及其元素一起被选中', boxCube1.selected === true && boxCube2.selected === true && global.Outliner.selected.indexOf(boxGroup) >= 0, true);
 api.guardBoxSelection();
-eq('再次触发不会再把子元素取消', global.Outliner.selected.indexOf(boxCube1) >= 0 && global.Outliner.selected.indexOf(boxGroup) >= 0, true);
+eq('再次触发不会再把子元素取消', boxCube1.selected === true && global.Outliner.selected.indexOf(boxGroup) >= 0, true);
 global.Outliner.selected.length = 0; boxCube1.selected = true; global.Outliner.selected.push(boxCube1);
 api.guardBoxSelection();
 eq('只选一个方块时不处理', global.Outliner.selected.indexOf(boxCube1) >= 0, true);
@@ -562,7 +562,7 @@ refGroup.markAsSelected = function () { this.selected = true; if (global.Outline
 global.Outliner.selected.length = 0; refCube1.selected = true; refCube2.selected = true;
 global.Outliner.selected.push(refCube1, refCube2);
 api.guardBoxSelection();
-eq('引用模型分组不享受例外', global.Outliner.selected.indexOf(refGroup) >= 0 && global.Outliner.selected.indexOf(refCube1) >= 0, true);
+eq('引用模型分组不享受例外', global.Outliner.selected.indexOf(refGroup) >= 0 && refCube1.selected === true, true);
 
 const savedFormatId = global.Format.id; global.Format.id = 'other';
 global.Outliner.selected.length = 0; boxCube1.selected = true; boxCube2.selected = true;

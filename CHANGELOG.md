@@ -2,6 +2,10 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.64.0
+- 选择优化改为“计算最高级分组 → 清空选择 → 逐个模拟普通单击”（`group.select({ctrlOrCmd:true})`）：不再手动拼 `Outliner.selected`/子项 selected，交给 Blockbench 原生选择逻辑，修多分组全局移动方向不一致。
+- 单测 151 项保持通过。
+
 ## 0.63.9
 - 修框选后移动方向不一致：选择守卫不再把子分组/方块逐个塞进 `Outliner.selected`，只把分组放进去；子项通过 `multiSelect`/`markAsSelected` 置 selected 标记（更接近手动单击分组的真实选择状态），避免 Blockbench 把每个子项当独立变换对象。
 

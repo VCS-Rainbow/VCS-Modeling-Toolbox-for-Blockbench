@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.63.9';
+const VERSION = '0.64.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2518,8 +2518,7 @@ function guardBoxSelection() {
 			if (children.length && children.every(isSelected)) selectWholeGroup(node);
 		}
 		
-		if (changed) { try { if (typeof updateSelection === 'function') updateSelection(); } catch (e) { /* ignore */ } }
-		// 把最顶层选中分组放到选择列表第一位：Blockbench 的全局 gizmo 用第一个元素的父级做方向换算
+		// 先选出最高级分组，再清空选择、对它们逐个模拟普通单击
 		try {
 			const selectedList = Outliner.selected;
 			const hasSelectedAncestor = (node) => {
@@ -2532,20 +2531,22 @@ function guardBoxSelection() {
 			};
 			const topGroups = selectedList.filter(node => isGroup(node) && !hasSelectedAncestor(node));
 			if (topGroups.length) {
-				const rest = selectedList.filter(node => topGroups.indexOf(node) < 0);
+				try { if (typeof unselectAllElements === 'function') unselectAllElements(); } catch (e) { /* ignore */ }
+				try { if (typeof Group !== 'undefined' && Group && Array.isArray(Group.multi_selected)) Group.multi_selected.length = 0; } catch (e) { /* ignore */ }
 				selectedList.length = 0;
-				for (const node of topGroups.concat(rest)) selectedList.push(node);
-				try {
-					if (typeof Group !== 'undefined' && Group && Array.isArray(Group.multi_selected)) {
-						const first = topGroups.find(group => Group.multi_selected.indexOf(group) >= 0);
-						if (first) {
-							Group.multi_selected.splice(Group.multi_selected.indexOf(first), 1);
-							Group.multi_selected.unshift(first);
+				for (const group of topGroups) {
+					try {
+						if (typeof group.select === 'function') group.select({ ctrlOrCmd: true }, true);
+						else {
+							const markAll = (node) => { node.selected = true; for (const child of (node.children || [])) markAll(child); };
+							markAll(group);
+							selectedList.push(group);
 						}
-					}
-				} catch (e) { /* ignore */ }
+					} catch (error) { group.selected = true; selectedList.push(group); }
+				}
 			}
 		} catch (e) { /* ignore */ }
+		try { if (typeof updateSelection === 'function') updateSelection(); } catch (e) { /* ignore */ }
 	} finally { guardingBox = false; }
 }
 
