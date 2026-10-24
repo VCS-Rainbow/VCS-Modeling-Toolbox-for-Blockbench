@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.10.3';
+const VERSION = '0.10.4';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -746,7 +746,7 @@ function editGroupProps() {
 		width: 660,
 		form: {
 			imm_type: {
-				label: '映射类型（imm_type）', type: 'select', value: String(group.imm_type || 'composite'),
+				label: '映射类型', description: '键名 imm_type。可选 composite / model / range_dispatch / condition / empty', type: 'select', value: String(group.imm_type || 'composite'),
 				options: { composite: 'composite', model: 'model', range_dispatch: 'range_dispatch', condition: 'condition', empty: 'empty' },
 			},
 			imm_model: { label: '引用模型', description: '键名 imm_model。填 Java 模型 id；留空则用本层方块生成模型文件', type: 'text', value: String(group.imm_model || ''), condition: (r) => r.imm_type !== 'empty' },
@@ -754,7 +754,7 @@ function editGroupProps() {
 			imm_index: { label: 'index', description: '键名 imm_index。仅 range_dispatch：custom_model_data 的下标', type: 'number', value: num(group.imm_index), condition: (r) => r.imm_type === 'range_dispatch' },
 			imm_threshold: { label: 'threshold', description: '键名 imm_threshold。仅当父分组是 range_dispatch 时生效', type: 'number', value: num(group.imm_threshold), condition: (r) => r.imm_type === 'range_dispatch' },
 			imm_scale: { label: 'scale', description: '键名 imm_scale。仅 range_dispatch：数值缩放', type: 'number', value: num(group.imm_scale) || 1, condition: (r) => r.imm_type === 'range_dispatch' },
-						imm_tint_type: { label: '纹理着色类型（imm_tint_type）', type: 'select', value: String(group.imm_tint_type || 'custom_model_data'), options: { '': '（不生成 tints）', custom_model_data: 'custom_model_data', constant: 'constant', dye: 'dye', potion: 'potion', grass: 'grass', team: 'team' }, description: '纹理着色来源类型；保存为键 imm_tint_type', condition: (r) => r.imm_type === 'model' || r.imm_type === 'composite' },
+						imm_tint_type: { label: '纹理着色类型', description: '键名 imm_tint_type。默认 custom_model_data，仅索引非空时生效', type: 'select', value: String(group.imm_tint_type || 'custom_model_data'), options: { '': '（不生成 tints）', custom_model_data: 'custom_model_data', constant: 'constant', dye: 'dye', potion: 'potion', grass: 'grass', team: 'team' }, description: '纹理着色来源类型；保存为键 imm_tint_type', condition: (r) => r.imm_type === 'model' || r.imm_type === 'composite' },
 			imm_tint_index: { label: '纹理着色索引', description: '键名 imm_tint_index。留空表示不输出 tints；填整数才输出（如 0）', type: 'text', value: String(group.imm_tint_index == null ? '' : group.imm_tint_index), condition: (r) => (r.imm_type === 'model' || r.imm_type === 'composite') && r.imm_tint_type === 'custom_model_data' },
 			imm_tint_value: { label: '纹理着色值', description: '键名 imm_tint_value。constant 填 ARGB 整数；dye/potion/team 可填默认颜色', type: 'text', value: String(group.imm_tint_value == null ? '' : group.imm_tint_value), condition: (r) => (r.imm_type === 'model' || r.imm_type === 'composite') && ['constant', 'dye', 'potion', 'team'].indexOf(r.imm_tint_type) >= 0 },
 		},
@@ -855,7 +855,7 @@ function registerProperties() {
 	// 面着色：Blockbench 的 UV 编辑器“着色”开关绑定 Face.properties.tint（默认 -1 表示未着色）
 	P(Face, 'number', 'tint', { label: '着色 index', default: -1 });
 
-	P(Group, 'string', 'imm_type', { label: '映射类型（imm_type）', default: 'composite', enum_values: MAPPING_TYPES });
+	P(Group, 'string', 'imm_type', { label: '映射类型', description: '键名 imm_type。可选 composite / model / range_dispatch / condition / empty', default: 'composite', enum_values: MAPPING_TYPES });
 	P(Group, 'string', 'imm_model', { label: '引用模型（imm_model）', default: '' });
 	P(Group, 'string', 'imm_property', { label: 'property', default: '' });
 	P(Group, 'number', 'imm_index', { label: 'index（仅 range_dispatch：custom_model_data 下标）', default: 0 });
