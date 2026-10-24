@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.31.0';
+const VERSION = '0.31.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1481,7 +1481,9 @@ function buildSimPanel(show_panel) {
 		const rule = mk('select', {}, 'width:100%;min-width:0'); [['pingpong', '往复'], ['wrap', '循环']].forEach(([v, t]) => rule.appendChild(mk('option', { value: v, textContent: t })));
 		const minI = mk('input', { type: 'number', value: '0' }, 'width:100%;min-width:0');
 		const maxI = mk('input', { type: 'number', value: '4' }, 'width:100%;min-width:0');
-		body.appendChild(cell('自动', autoC));
+		const autoInline = mk('label', {}, 'display:flex;align-items:center;gap:4px;font-size:10px;opacity:.75;padding-bottom:3px;white-space:nowrap');
+		autoInline.appendChild(autoC); autoInline.appendChild(mk('span', { textContent: '自动' }));
+		body.appendChild(autoInline);
 		body.appendChild(cell('脉冲周期（间隔）', period));
 		body.appendChild(cell('步长', step));
 		body.appendChild(cell('规则', rule));
@@ -1502,6 +1504,7 @@ function buildSimPanel(show_panel) {
 	sim_panel.node.appendChild(root);
 	try { if (typeof Panels !== 'undefined' && Panels) Panels[sim_panel.id] = sim_panel; } catch (e) { /* ignore */ }
 	if (show_panel !== false) sim_panel.show();
+	try { simTick(); } catch (e) { /* ignore */ }
 	return sim_panel;
 }
 
@@ -1516,7 +1519,15 @@ function collectInputUsage() {
 			const prop = String(node.imm_property || '').replace(/^minecraft:/, '');
 			const index = Number(node.imm_index) || 0;
 			const name = labelOf(node);
-			if (type === 'range_dispatch' && prop === 'custom_model_data') push('floats', index, name);
+			if (type === 'range_dispatch' && prop === 'custom_model_data') {
+				push('floats', index, name);
+				// 子分支名形如 [0] xxx / [2] xxx，按前缀归到对应 float 下标
+				for (const child of (node.children || [])) {
+					if (!isGroup(child)) continue;
+					const m = String(child.name || '').match(/^\[(\d+)\]/);
+					if (m) push('floats', Number(m[1]), labelOf(child));
+				}
+			}
 			else if (type === 'select' && prop === 'custom_model_data') push('strings', index, name);
 			else if (type === 'condition' && prop === 'custom_model_data') push('flags', index, name);
 			else if (prop && prop !== 'custom_model_data' && prop !== 'selected') push(prop, 0, name);
