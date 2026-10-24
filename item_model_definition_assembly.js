@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.23.1';
+const VERSION = '0.23.2';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1323,6 +1323,7 @@ function importModelReference(group) {
 		try {
 			const holder_name = 'imported_' + Date.now().toString().slice(-5);
 			import_holder = new Group({ name: holder_name }).addTo(import_holder || group);
+			try { if (typeof cube.init === 'function') cube.init(); } catch (e) { console.warn('[装配] cube.init 失败', e); }
 		} catch (e) { import_holder = group; }
 		const created = [];
 		const textureMap = {};
@@ -1339,6 +1340,7 @@ function importModelReference(group) {
 			from: [Number(el.from[0]) || 0, Number(el.from[1]) || 0, Number(el.from[2]) || 0],
 			to: [Number(el.to[0]) || 0, Number(el.to[1]) || 0, Number(el.to[2]) || 0],
 		}).addTo(import_holder || group);
+		try { if (typeof cube.init === 'function') cube.init(); } catch (e) { console.warn('[装配] cube.init 失败', e); }
 		if (typeof Cube !== 'undefined' && Array.isArray(Cube.all) && Cube.all.indexOf(cube) < 0) Cube.all.push(cube);
 		try { cube.visibility = true; } catch (e) { /* ignore */ }
 		for (const dirKey of Object.keys(cube.faces || {})) {
