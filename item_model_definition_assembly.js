@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.10.0';
+const VERSION = '0.10.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -753,7 +753,10 @@ function editGroupProps() {
 			imm_index: { label: 'index（custom_model_data 下标）', type: 'number', value: num(group.imm_index), description: '仅 range_dispatch 有效：property 为 custom_model_data 时取哪个下标', condition: (r) => r.imm_type === 'range_dispatch' },
 			imm_threshold: { label: 'threshold（父层 range_dispatch 的阈值）', type: 'number', value: num(group.imm_threshold), description: '仅当父分组类型是 range_dispatch 时生效：本分组作为 entries 的阈值', condition: (r) => r.imm_type === 'range_dispatch' },
 			imm_scale: { label: 'scale（数值缩放）', type: 'number', value: num(group.imm_scale) || 1, description: '仅 range_dispatch 有效：property 数值乘以该倍数后再查阈值', condition: (r) => r.imm_type === 'range_dispatch' },
-			imm_tints: { label: 'tints（染色来源 JSON）', type: 'text', value: String(group.imm_tints || ''), description: '仅 model / composite（本层自带模型）有效。例：[{"type":"custom_model_data","index":0,"default":0}]', condition: (r) => r.imm_type === 'model' || r.imm_type === 'composite' },
+						imm_tints: { label: 'tints 原始 JSON（优先，留空则用下面的类型构造）', type: 'text', value: String(group.imm_tints || ''), description: '优先级最高；例 [{"type":"custom_model_data","index":0,"default":0}]', condition: (r) => r.imm_type === 'model' || r.imm_type === 'composite' },
+			imm_tint_type: { label: 'tints 来源类型', type: 'select', value: String(group.imm_tint_type || ''), options: { '': '（不生成 tints）', custom_model_data: 'custom_model_data', constant: 'constant', dye: 'dye', potion: 'potion', grass: 'grass', team: 'team' }, description: '仅在“tints 原始 JSON”留空时生效', condition: (r) => r.imm_type === 'model' || r.imm_type === 'composite' },
+			imm_tint_index: { label: 'tints 来源 index（custom_model_data 下标）', type: 'number', value: num(group.imm_tint_index), description: '仅 custom_model_data 使用', condition: (r) => (r.imm_type === 'model' || r.imm_type === 'composite') && r.imm_tint_type === 'custom_model_data' },
+			imm_tint_value: { label: 'tints 来源值（constant 的 ARGB / 其它 default）', type: 'text', value: String(group.imm_tint_value == null ? '' : group.imm_tint_value), description: 'constant 填 ARGB 整数；dye/potion/team 可填默认颜色', condition: (r) => (r.imm_type === 'model' || r.imm_type === 'composite') && ['constant', 'dye', 'potion', 'team'].indexOf(r.imm_tint_type) >= 0 },
 		},
 		onConfirm(result) {
 			try {
@@ -765,6 +768,9 @@ function editGroupProps() {
 				if (result.imm_threshold !== undefined) group.imm_threshold = num(result.imm_threshold);
 				if (result.imm_scale !== undefined) group.imm_scale = num(result.imm_scale) || 1;
 				if (result.imm_tints !== undefined) group.imm_tints = result.imm_tints;
+				if (result.imm_tint_type !== undefined) group.imm_tint_type = result.imm_tint_type;
+				if (result.imm_tint_index !== undefined) group.imm_tint_index = num(result.imm_tint_index);
+				if (result.imm_tint_value !== undefined) group.imm_tint_value = result.imm_tint_value;
 								// 按 index 自动勾选着色：本层 index 下发给直接子项，子项自己的 index 优先
 				// 生效的 tint index：tints 数字简写 > tints[0].index > imm_index（0 视为未设置）
 				const tintIndexOf = (g) => {
