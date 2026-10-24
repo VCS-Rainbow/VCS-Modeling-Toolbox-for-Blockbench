@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.20.9';
+const VERSION = '0.20.10';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -721,6 +721,29 @@ function exportZip() {
 		console.error(error);
 		Blockbench.showMessageBox({ title: '导出失败', message: String((error && error.message) || error), icon: 'error' });
 	}
+}
+
+/* 先正常添加（完成注册），再把条目从菜单末尾搬到指定动作之后 */
+function placeInFileMenu(action, afterIds) {
+	try {
+		MenuBar.addAction(action, 'file');
+		const menu = MenuBar.menus.file;
+		const st = menu.structure;
+		const keyOf = (entry) => (typeof entry === 'string') ? entry : (entry && entry.id);
+		let from = -1;
+		st.forEach((entry, i) => { if (keyOf(entry) === action.id) from = i; });
+		if (from < 0) return false;
+		const item = st.splice(from, 1)[0];
+		let target = -1;
+		for (const want of afterIds) {
+			st.forEach((entry, i) => { if (keyOf(entry) === want) target = i; });
+			if (target >= 0) break;
+		}
+		if (target < 0) { st.push(item); MenuBar.update(); return false; }
+		st.splice(target + 1, 0, item);
+		try { MenuBar.update(); } catch (e) { /* ignore */ }
+		return true;
+	} catch (error) { console.warn('[装配] File 菜单定位失败', error); return false; }
 }
 
 /* 把动作插到某菜单的指定条目之后（Blockbench 的菜单是有序结构数组，用分隔线分区） */
@@ -1580,8 +1603,8 @@ Plugin.register('item_model_definition_assembly', {
 
 		addMenu(actions.zip, 'file.export');
 		addMenu(actions.merge, 'file.export');
-		if (!insertMenuAfter('file', 'save_model', actions.pack)) { insertMenuAfter('file', 'export', actions.pack); }
-		if (MenuBar.menus && MenuBar.menus.file && MenuBar.menus.file.structure && MenuBar.menus.file.structure.indexOf(actions.pack.id) < 0) addMenu(actions.pack, 'file');
+		placeInFileMenu(actions.pack, ['save_model', 'export', 'import']);
+		
 		addMenu(actions.check, 'tools');
 		addMenu(actions.props, 'tools');
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
