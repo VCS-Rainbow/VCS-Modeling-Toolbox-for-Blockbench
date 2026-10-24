@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.21.3';
+const VERSION = '0.22.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1260,6 +1260,32 @@ function resolveJavaModel(pathmod, fsmod, root, reference) {
 	return { elements, textures: textureRefs };
 }
 
+/** 'sqsp:item/inker/jet_rifle/sac.full' -> Texture（找不到就按路径加载 PNG） */
+function getOrCreateModelTexture(pathmod, fsmod, root, reference) {
+	const id = String(reference || '').trim();
+	if (!id) return null;
+	const parts = id.split(':');
+	const ns = parts.length > 1 ? parts[0] : 'minecraft';
+	const path = parts.length > 1 ? parts[1] : parts[0];
+	const png = pathmod.join(root, 'assets', ns, 'textures', path + '.png');
+	const name = path.split('/').pop();
+	const all = (typeof Texture !== 'undefined' && Texture.all) ? Texture.all : [];
+	const existing = all.find(t => t && (t.name === name || (t.path && String(t.path).replace(/\\/g, '/').endsWith('assets/' + ns + '/textures/' + path + '.png'))));
+	if (existing) return existing;
+	if (!fsmod.existsSync(png)) { console.warn('[装配] 纹理不存在：' + png); return null; }
+	try {
+		const texture = new Texture({ name }).fromPath ? new Texture({ name }) : null;
+		if (!texture) return null;
+		texture.fromPath(png);
+		texture.add(false);
+		console.log('[装配] 已加载纹理', name, png);
+		return texture;
+	} catch (error) {
+		console.warn('[装配] 纹理加载失败', png, error);
+		return null;
+	}
+}
+
 /** 把 Java 模型转成方块并放进分组；成功后才清空原有子项 */
 function importModelReference(group) {
 	if (!group) return false;
@@ -1286,6 +1312,13 @@ function importModelReference(group) {
 			try { child.remove(false); } catch (e) { /* ignore */ }
 		}
 		const created = [];
+		const textureMap = {};
+		for (const key of Object.keys(resolved.textures || {})) {
+			const value = String(resolved.textures[key] || '');
+			const id = value.charAt(0) === '#' ? (resolved.textures[value.slice(1)] || value) : value;
+			textureMap[key] = getOrCreateModelTexture(pathmod, fsmod, root, id);
+		}
+		const firstTexture = Object.keys(textureMap).map(k => textureMap[k]).find(Boolean) || null;
 	elements.forEach((el, index) => {
 		if (!el || !Array.isArray(el.from) || !Array.isArray(el.to)) return;
 		const cube = new Cube({
@@ -1307,7 +1340,15 @@ function importModelReference(group) {
 			const src = el.faces[dir];
 			if (!src || !cube.faces[dir]) continue;
 			const uv = Array.isArray(src.uv) ? src.uv : [0, 0, 0, 0];
-			cube.faces[dir].uv = [Number(uv[0]) || 0, Number(uv[1]) || 0, Number(uv[2]) || 0, Number(uv[3]) || 0];
+			const texKey = String(src.texture || '').replace(/^#/, '');
+			const texture = textureMap[texKey] || firstTexture;
+			const scale = (texture && Number(texture.uv_width)) ? (Number(texture.uv_width) / 16) : 1;
+			const scaleV = (texture && Number(texture.uv_height)) ? (Number(texture.uv_height) / 16) : scale;
+			cube.faces[dir].uv = [
+				(Number(uv[0]) || 0) * scale, (Number(uv[1]) || 0) * scaleV,
+				(Number(uv[2]) || 0) * scale, (Number(uv[3]) || 0) * scaleV,
+			];
+			if (texture) cube.faces[dir].texture = texture.uuid;
 			if (src.rotation) cube.faces[dir].rotation = Number(src.rotation) || 0;
 			if (src.cullface) cube.faces[dir].cullface = String(src.cullface);
 		}
