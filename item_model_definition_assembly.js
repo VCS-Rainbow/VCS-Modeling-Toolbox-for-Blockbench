@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.23.3';
+const VERSION = '0.24.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1319,12 +1319,7 @@ function importModelReference(group) {
 		// 清空原有子项与方块
 		// 确保分组可见（可能被“隐藏不可用分支”关闭过）
 		try { group.visibility = true; group.export = true; group.imm_auto_disabled = false; } catch (e) { /* ignore */ }
-		let import_holder = null;
-		try {
-			const holder_name = 'imported_' + Date.now().toString().slice(-5);
-			import_holder = new Group({ name: holder_name }).addTo(import_holder || group);
-		} catch (e) { import_holder = group; }
-		try { if (import_holder && typeof import_holder.init === 'function') import_holder.init(); } catch (e) { console.warn('[装配] holder.init 失败', e); }
+		let import_holder = group; // 直接导入到目标分组（其 mesh 已初始化）
 		const created = [];
 		const textureMap = {};
 		for (const key of Object.keys(resolved.textures || {})) {
@@ -1339,7 +1334,7 @@ function importModelReference(group) {
 			name: 'part_' + index,
 			from: [Number(el.from[0]) || 0, Number(el.from[1]) || 0, Number(el.from[2]) || 0],
 			to: [Number(el.to[0]) || 0, Number(el.to[1]) || 0, Number(el.to[2]) || 0],
-		}).addTo(import_holder || group);
+		}).addTo(group);
 		if (typeof Cube !== 'undefined' && Array.isArray(Cube.all) && Cube.all.indexOf(cube) < 0) Cube.all.push(cube);
 		try { cube.visibility = true; } catch (e) { /* ignore */ }
 		for (const dirKey of Object.keys(cube.faces || {})) {
