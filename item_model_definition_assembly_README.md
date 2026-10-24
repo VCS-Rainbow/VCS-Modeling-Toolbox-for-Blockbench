@@ -147,3 +147,14 @@ Blockbench 5.x 的实现方式有两条，本插件都接上了：
 - `index` 和 `tints` 是两个不同用途的属性：`index` 只用于 `range_dispatch` 选择 `custom_model_data` 的下标；`tints` 是 `model` 节点的染色来源列表。
 - `tints` 必须是 **JSON 数组**，例如 `[{"type":"custom_model_data","index":0,"default":0}]`；填 `"0"` 之类不是合法 JSON，会被忽略并在 `.notes.txt` 提示。
 - 面的 `tintindex` 由 UV 编辑器里的“着色”开关决定（Blockbench 写 `tint: 0`），导出时**只要面有 `tint` 字段就输出 `tintindex`（含 0）**。
+## 安装（自动加载）
+
+把 `item_model_definition_assembly.js` 和 `item_model_definition_assembly.about.md` 一起放到：
+
+```
+%APPDATA%\Blockbench\plugins\
+```
+
+重启 Blockbench 即自动加载。
+
+注意：如果同时安装了 animated_java，它的 **Blockbench Patch Manager** 会在启动时卸载并重载插件，可能把本插件留在未加载状态（表现为需要手动刷新）。遇到时在插件列表里禁用 Patch Manager，或重启后手动重载一次本插件。
