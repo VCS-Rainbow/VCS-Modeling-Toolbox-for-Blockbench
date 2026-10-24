@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.29.0';
+const VERSION = '0.30.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1439,59 +1439,55 @@ let sim_panel = null;
 let sim_ui = null;
 
 function buildSimPanel(show_panel) {
-	if (!sim_panel) {
-		try { if (typeof Panels !== 'undefined' && Panels['imm_sim_panel']) sim_panel = Panels['imm_sim_panel']; } catch (e) { /* ignore */ }
-	}
+	if (!sim_panel) { try { if (typeof Panels !== 'undefined' && Panels['imm_sim_panel']) sim_panel = Panels['imm_sim_panel']; } catch (e) { /* ignore */ } }
 	if (sim_panel) { if (show_panel !== false) sim_panel.show(); return sim_panel; }
-	if (typeof Panel === 'undefined') return null;
-	if (typeof document === 'undefined') return null;
-	sim_panel = new Panel('imm_sim_panel', {
-		name: '模拟输入',
-		icon: 'play_circle',
-		condition: { formats: [FORMAT_ID] },
-		default_position: { slot: 'right_bar', float: false },
-		resizable: true,
-		growable: true,
-	});
+	if (typeof Panel === 'undefined' || typeof document === 'undefined') return null;
+	sim_panel = new Panel('imm_sim_panel', { name: '模拟输入', icon: 'play_circle', condition: { formats: [FORMAT_ID] }, default_position: { slot: 'right_bar', float: false }, resizable: true, growable: true });
 	const root = document.createElement('div');
-	root.style.cssText = 'padding:8px;display:flex;flex-direction:column;gap:6px;font-size:12px;overflow:auto;height:100%';
+	root.style.cssText = 'padding:8px;display:flex;flex-direction:column;gap:4px;font-size:12px;overflow:auto;height:100%';
 	const mk = (tag, props, style) => { const el = document.createElement(tag); Object.assign(el, props || {}); if (style) el.style.cssText = style; return el; };
-	const row = (label, control) => { const wrap = mk('div', {}, 'display:flex;align-items:center;gap:6px'); wrap.appendChild(mk('span', { textContent: label }, 'width:96px;flex:0 0 auto')); wrap.appendChild(control); return wrap; };
-	const propSel = mk('select', {}); [
-		['custom_model_data.floats', 'cmdata.floats（浮点）'],
-		['custom_model_data.colors', 'cmdata.colors（颜色）'],
-		['custom_model_data.strings', 'cmdata.strings（字符串）'],
-		['custom_model_data.flags', 'cmdata.flags（布尔）'],
-		['selected', 'selected（是否选中）'],
-		['damage', 'damage（损坏值）'],
-		['count', 'count（数量）'],
-		['time', 'time（时间）'],
-		['using_item', 'using_item（使用中）'],
-	].forEach(([v, t]) => propSel.appendChild(mk('option', { value: v, textContent: t })));
-	const indexInp = mk('input', { type: 'number', value: '0' }, 'width:70px');
-	const valueInp = mk('input', { type: 'number', value: '0', step: '0.5' }, 'width:80px');
-	const autoChk = mk('input', { type: 'checkbox' });
-	const periodInp = mk('input', { type: 'number', value: '800' }, 'width:70px');
-	const stepInp = mk('input', { type: 'number', value: '0.5', step: '0.1' }, 'width:70px');
-	const ruleSel = mk('select', {}); [['pingpong', '往复'], ['wrap', '循环']].forEach(([v, t]) => ruleSel.appendChild(mk('option', { value: v, textContent: t })));
-	const minInp = mk('input', { type: 'number', value: '0' }, 'width:70px');
-	const maxInp = mk('input', { type: 'number', value: '4' }, 'width:70px');
-	const runBtn = mk('button', { textContent: '运行 / 停止' }, 'padding:4px 8px');
-	const out = mk('div', {}, 'white-space:pre-wrap;font-family:monospace;font-size:11px;opacity:.85;flex:1 1 auto;overflow:auto;border-top:1px solid rgba(128,128,128,.3);padding-top:6px');
-	root.appendChild(row('取值来源', propSel));
-	root.appendChild(row('下标 index', indexInp));
-	root.appendChild(row('数值', valueInp));
-	root.appendChild(row('自动变化', autoChk));
-	root.appendChild(row('周期(ms)', periodInp));
-	root.appendChild(row('步长', stepInp));
-	root.appendChild(row('规则', ruleSel));
-	root.appendChild(row('下限', minInp));
-	root.appendChild(row('上限', maxInp));
-	root.appendChild(runBtn);
-	root.appendChild(out);
-	sim_ui = { propSel, indexInp, valueInp, autoChk, periodInp, stepInp, ruleSel, minInp, maxInp, out };
+	const SPECS = [
+		['floats', 'cmdata.floats', 'number'],
+		['colors', 'cmdata.colors', 'number'],
+		['strings', 'cmdata.strings', 'text'],
+		['flags', 'cmdata.flags', 'bool'],
+		['selected', 'selected', 'bool'],
+		['damage', 'damage', 'number'],
+		['count', 'count', 'number'],
+		['time', 'time', 'number'],
+		['using_item', 'using_item', 'bool'],
+	];
+	sim_ui = { rows: {}, out: null };
+	for (const [key, label, kind] of SPECS) {
+		const row = { key, kind, enabled: false, index: 0, value: kind === 'bool' ? 'false' : (kind === 'text' ? '' : '0'), auto: false, period: 800, step: 0.5, rule: 'pingpong', min: 0, max: 4, dir: 1 };
+		const box = mk('details', {}, 'border-top:1px solid rgba(128,128,128,.25);padding-top:3px');
+		const head = mk('summary', {}, 'cursor:pointer;display:flex;gap:6px;align-items:center');
+		const enable = mk('input', { type: 'checkbox' });
+		const nameEl = mk('span', { textContent: label }, 'flex:1 1 auto');
+		const idx = mk('input', { type: 'number', value: '0' }, 'width:52px;display:' + (kind === 'bool' && (key === 'selected' || key === 'using_item') ? 'none' : 'inline-block'));
+		const val = mk('input', { type: kind === 'text' ? 'text' : (kind === 'bool' ? 'text' : 'number'), value: row.value }, 'width:78px');
+		head.appendChild(enable); head.appendChild(nameEl); head.appendChild(idx); head.appendChild(val);
+		const body = mk('div', {}, 'display:flex;flex-wrap:wrap;gap:4px;padding:4px 0 2px 6px');
+		const autoC = mk('input', { type: 'checkbox' }); const autoL = mk('label', { textContent: '自动' }, 'display:flex;gap:3px;align-items:center'); autoL.appendChild(autoC);
+		const period = mk('input', { type: 'number', value: '800' }, 'width:60px');
+		const step = mk('input', { type: 'number', value: '0.5', step: '0.1' }, 'width:56px');
+		const rule = mk('select', {}); [['pingpong', '往复'], ['wrap', '循环']].forEach(([v, t]) => rule.appendChild(mk('option', { value: v, textContent: t })));
+		const minI = mk('input', { type: 'number', value: '0' }, 'width:52px');
+		const maxI = mk('input', { type: 'number', value: '4' }, 'width:52px');
+		body.appendChild(autoL); body.appendChild(mk('span', { textContent: '周期' })); body.appendChild(period);
+		body.appendChild(mk('span', { textContent: '步长' })); body.appendChild(step); body.appendChild(rule);
+		body.appendChild(mk('span', { textContent: '范围' })); body.appendChild(minI); body.appendChild(maxI);
+		box.appendChild(head); box.appendChild(body); root.appendChild(box);
+		row.el = { enable, idx, val, auto: autoC, period, step, rule, min: minI, max: maxI };
+		const read = () => { row.enabled = enable.checked; row.index = Number(idx.value) || 0; row.value = val.value; row.auto = autoC.checked; row.period = Math.max(120, Number(period.value) || 800); row.step = Number(step.value) || 0.5; row.rule = rule.value; row.min = Number(minI.value) || 0; row.max = Number(maxI.value) || 4; };
+		[enable, idx, val, autoC, period, step, rule, minI, maxI].forEach(el => el.addEventListener('change', () => { read(); simTick(); }));
+		sim_ui.rows[key] = row;
+	}
+	const runBtn = mk('button', { textContent: '运行 / 停止' }, 'padding:4px 8px;margin-top:4px');
+	const out = mk('div', {}, 'white-space:pre-wrap;font-family:monospace;font-size:11px;opacity:.85;flex:1 1 auto;overflow:auto;border-top:1px solid rgba(128,128,128,.3);padding-top:6px;margin-top:4px');
+	sim_ui.out = out;
 	runBtn.addEventListener('click', () => toggleSim());
-	// Panel 的内容容器是 panel.node（DOM），不是 nodes 数组
+	root.appendChild(runBtn); root.appendChild(out);
 	sim_panel.node.innerHTML = '';
 	sim_panel.node.appendChild(root);
 	try { if (typeof Panels !== 'undefined' && Panels) Panels[sim_panel.id] = sim_panel; } catch (e) { /* ignore */ }
