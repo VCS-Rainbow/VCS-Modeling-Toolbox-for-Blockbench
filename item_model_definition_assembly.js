@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.25.0';
+const VERSION = '0.26.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1349,8 +1349,16 @@ function importModelReference(group) {
 		if (!el || !Array.isArray(el.from) || !Array.isArray(el.to)) return;
 		const cube = new Cube({
 			name: (el && el.name ? String(el.name) : ('part_' + index)),
-			from: [Number(el.from[0]) || 0, Number(el.from[1]) || 0, Number(el.from[2]) || 0],
-			to: [Number(el.to[0]) || 0, Number(el.to[1]) || 0, Number(el.to[2]) || 0],
+			from: [
+				(Number(el.from[0]) || 0) + (Number(import_base[0]) || 0),
+				(Number(el.from[1]) || 0) + (Number(import_base[1]) || 0),
+				(Number(el.from[2]) || 0) + (Number(import_base[2]) || 0),
+			],
+			to: [
+				(Number(el.to[0]) || 0) + (Number(import_base[0]) || 0),
+				(Number(el.to[1]) || 0) + (Number(import_base[1]) || 0),
+				(Number(el.to[2]) || 0) + (Number(import_base[2]) || 0),
+			],
 		}).addTo(group);
 		try { if (typeof cube.init === 'function') cube.init(); } catch (e) { console.warn('[装配] cube.init 失败', e); }
 		if (typeof Cube !== 'undefined' && Array.isArray(Cube.all) && Cube.all.indexOf(cube) < 0) Cube.all.push(cube);
@@ -1362,7 +1370,11 @@ function importModelReference(group) {
 		if (el.rotation && el.rotation.origin && el.rotation.axis) {
 			const axis = ['x', 'y', 'z'].indexOf(String(el.rotation.axis));
 			if (axis >= 0) {
-				cube.origin = [Number(el.rotation.origin[0]) || 0, Number(el.rotation.origin[1]) || 0, Number(el.rotation.origin[2]) || 0];
+				cube.origin = [
+					(Number(el.rotation.origin[0]) || 0) + (Number(import_base[0]) || 0),
+					(Number(el.rotation.origin[1]) || 0) + (Number(import_base[1]) || 0),
+					(Number(el.rotation.origin[2]) || 0) + (Number(import_base[2]) || 0),
+				];
 				const rot = [0, 0, 0];
 				rot[axis] = Number(el.rotation.angle) || 0;
 				cube.rotation = rot;
