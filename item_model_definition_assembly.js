@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.40.0';
+const VERSION = '0.41.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1004,11 +1004,13 @@ function scheduleBranchSync(target) {
 		try {
 			const active = (typeof document !== 'undefined') ? document.activeElement : null;
 			if (active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName || '')) return;
+			let changed = stripStrayBranchPrefixes();
 			const group = target || pickTargetGroup();
-			if (!group) return;
-			const parent = group.parent || null;
-			let changed = sortBranchChildren(group) + syncBranchLabels(group);
-			if (parent) changed += sortBranchChildren(parent) + syncBranchLabels(parent);
+			if (group) {
+				const parent = group.parent || null;
+				changed += sortBranchChildren(group) + syncBranchLabels(group);
+				if (parent) changed += sortBranchChildren(parent) + syncBranchLabels(parent);
+			}
 			if (changed) { simInvalidate(); try { Project.saved = false; Canvas.updateAll(); } catch (e) { /* ignore */ } }
 		} catch (error) { /* ignore */ }
 	}, 250);
@@ -1082,6 +1084,175 @@ function stripChildPrefixes(group) {
 		if (child.imm_auto_disabled) { child.imm_auto_disabled = false; changed++; }
 	}
 	return changed;
+}
+
+/* 分组被挪出分支容器（或挪到根目录）后，去掉名字里的 [k] / ⚠ 前缀 */
+function stripStrayBranchPrefixes() {
+	const branchTypes = ['condition', 'range_dispatch', 'select'];
+	let changed = 0;
+	const walk = (nodes, parent) => {
+		for (const node of nodes || []) {
+			if (!isGroup(node)) continue;
+			const parentType = parent ? String(parent.imm_type || '').replace(/^minecraft:/, '') : '';
+			if (branchTypes.indexOf(parentType) < 0) {
+				const base = String(node.name || '').replace(/^\[[^\]]*\]\s*/, '').replace(/^\u26a0\s*/, '');
+				if (base && base !== node.name) { node.name = base; changed++; }
+				if (node.imm_auto_disabled) { node.imm_auto_disabled = false; changed++; }
+			}
+			walk(node.children, node);
+		}
+	};
+	walk((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : [], null);
+	return changed;
+}
+
+/* 拖拽重排分组不会触发 add_group，这里兜底：outliner 上松开鼠标/拖拽结束就跑一次同步 */
+let outlinerHookBound = false;
+function bindOutlinerHook() {
+	if (outlinerHookBound || typeof document === 'undefined' || !document.addEventListener) return;
+	outlinerHookBound = true;
+	const onMaybeReparent = (event) => {
+		const target = event && event.target;
+		if (!target || !target.closest || !target.closest('#outliner')) return;
+		simInvalidate();
+		scheduleBranchSync(pickTargetGroup());
+	};
+	try { document.addEventListener('mouseup', onMaybeReparent, true); } catch (e) { /* ignore */ }
+	try { document.addEventListener('dragend', onMaybeReparent, true); } catch (e) { /* ignore */ }
+}
+
+/* ============================== 枢轴归位 ============================== */
+/* 分组变换 A(p) = R(p − O) + O（O 在父坐标系里）。把枢轴从 O 挪到 O′ 时，
+ * 内容坐标要平移 d = (I − R⁻¹)(O′ − O) 才能保持外观不变；子分组再按 R_c⁻¹ d 递归。 */
+const PIVOT_IDENTITY = { x: 0, y: 0, z: 0, w: 1 };
+
+function pivotQuat(node) {
+	try { const q = readQuaternion(node); if (q) return q; } catch (e) { /* ignore */ }
+	return PIVOT_IDENTITY;
+}
+
+function pivotConj(q) { return { x: -q.x, y: -q.y, z: -q.z, w: q.w }; }
+
+function rotateAroundQuat(q, origin, point) {
+	const rel = [point[0] - origin[0], point[1] - origin[1], point[2] - origin[2]];
+	const rot = rotVec(quatMatrix(q), rel);
+	return [rot[0] + origin[0], rot[1] + origin[1], rot[2] + origin[2]];
+}
+
+function addVec(target, delta) {
+	if (!Array.isArray(target)) return;
+	target[0] += delta[0]; target[1] += delta[1]; target[2] += delta[2];
+}
+
+/** 方块自身变换后的中心（分组本地坐标） */
+function pivotCubeCenter(cube) {
+	const from = cube.from || [0, 0, 0], to = cube.to || [0, 0, 0];
+	const center = [(num(from[0]) + num(to[0])) / 2, (num(from[1]) + num(to[1])) / 2, (num(from[2]) + num(to[2])) / 2];
+	return rotateAroundQuat(pivotQuat(cube), cube.origin || [0, 0, 0], center);
+}
+
+/** 分组本地坐标里、包含所有后代方块的中心点集合 */
+function pivotContentPoints(group) {
+	const points = [];
+	for (const child of (group.children || [])) {
+		if (isCube(child)) points.push(pivotCubeCenter(child));
+		else if (isGroup(child)) {
+			const q = pivotQuat(child), origin = child.origin || [0, 0, 0];
+			for (const p of pivotContentPoints(child)) points.push(rotateAroundQuat(q, origin, p));
+		}
+	}
+	return points;
+}
+
+/** 把分组（及其后代）的内容整体平移 d（本分组本地坐标） */
+function pivotTranslateContents(group, delta) {
+	for (const child of (group.children || [])) {
+		if (isCube(child)) {
+			addVec(child.from, delta);
+			addVec(child.to, delta);
+			if (Array.isArray(child.origin)) addVec(child.origin, delta);
+		} else if (isGroup(child)) {
+			const inv = rotVec(quatMatrix(pivotConj(pivotQuat(child))), delta);
+			pivotTranslateContents(child, inv);
+		}
+	}
+}
+
+/** 把枢轴移到“自身 + 后代方块”的几何中心；方块同步补偿，外观不变。返回枢轴移动距离 */
+function fixGroupPivot(group) {
+	const points = pivotContentPoints(group);
+	if (!points.length) return 0;
+	const q = pivotQuat(group);
+	const origin = (group.origin || [0, 0, 0]).slice();
+	const rendered = points.map(p => rotateAroundQuat(q, origin, p));
+	const target = [0, 1, 2].map(i => rendered.reduce((sum, p) => sum + p[i], 0) / rendered.length);
+	const delta = [target[0] - origin[0], target[1] - origin[1], target[2] - origin[2]];
+	const back = rotVec(quatMatrix(pivotConj(q)), delta);
+	const shift = [delta[0] - back[0], delta[1] - back[1], delta[2] - back[2]];
+	pivotTranslateContents(group, shift);
+	group.origin = target;
+	return Math.hypot(delta[0], delta[1], delta[2]);
+}
+
+function walkGroups(nodes, callback) {
+	for (const node of nodes || []) {
+		if (!isGroup(node)) continue;
+		callback(node);
+		walkGroups(node.children, callback);
+	}
+}
+
+function selectedGroups() {
+	const found = [];
+	const push = (n) => { if (isGroup(n) && found.indexOf(n) < 0) found.push(n); };
+	try { if (typeof Group !== 'undefined' && Array.isArray(Group.selected)) Group.selected.forEach(push); } catch (e) { /* ignore */ }
+	try { if (typeof Outliner !== 'undefined' && Outliner && Array.isArray(Outliner.selected)) Outliner.selected.forEach(push); } catch (e) { /* ignore */ }
+	return found;
+}
+
+function applyPivotFix(selectedOnly) {
+	const roots = (typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : [];
+	const targets = selectedOnly ? selectedGroups() : roots.filter(isGroup);
+	if (!targets.length) {
+		Blockbench.showMessageBox({ title: '没有目标', message: selectedOnly ? '先在 outliner 里选中至少一个分组。' : '当前项目没有分组。', icon: 'info' });
+		return;
+	}
+	const groups = [], cubes = [];
+	walkGroups(targets, g => { groups.push(g); for (const c of (g.children || [])) if (isCube(c)) cubes.push(c); });
+	try { Undo.initEdit({ groups, elements: cubes }); } catch (e) { /* ignore */ }
+	let fixed = 0, total = 0, max = 0;
+	const run = (g) => {
+		const moved = fixGroupPivot(g);
+		if (moved > 0.001) { fixed++; total += moved; if (moved > max) max = moved; }
+		for (const child of (g.children || [])) if (isGroup(child)) run(child);
+	};
+	for (const t of targets) run(t);
+	try { Undo.finishEdit('枢轴归位'); } catch (e) { /* ignore */ }
+	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+	try { Project.saved = false; } catch (e) { /* ignore */ }
+	simInvalidate();
+	Blockbench.showQuickMessage(fixed
+		? ('枢轴归位：' + fixed + ' 个分组，平均 ' + (total / fixed).toFixed(1) + 'px，最大 ' + max.toFixed(1) + 'px')
+		: '所有分组枢轴已经在几何中心附近', 4000);
+}
+
+function openPivotFix() {
+	if (typeof Project === 'undefined' || !Project) { Blockbench.showQuickMessage('请先打开项目', 3000); return; }
+	new Dialog({
+		id: 'imm_fix_pivot',
+		title: '枢轴归位（对齐几何中心）',
+		width: 560,
+		form: {
+			scope: {
+				label: '范围',
+				type: 'select',
+				value: 'all',
+				options: { all: '全部分组', selected: '选中的分组（含子分组）' },
+				description: '把每个分组的 origin 移到它（含子分组）的几何中心；方块坐标会同步补偿，模型外观不变。嵌套旋转也会正确换算。',
+			},
+		},
+		onConfirm(result) { applyPivotFix(result.scope === 'selected'); },
+	}).show();
 }
 
 function syncBranchLabels(group) {
@@ -2258,6 +2429,7 @@ Plugin.register('item_model_definition_assembly', {
 		actions.check = new Action('imm_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
 		actions.pack = new Action('imm_pick_pack', { name: '选择资源包工程路径…', description: '打开系统文件夹选择框，设为资源包工程目录', icon: 'folder_open', category: 'file', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: pickPackPath });
 		actions.sim = new Action('imm_simulate', { name: '模拟输入…', description: '按 custom_model_data / selected 预览分支命中', icon: 'play_circle', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const panel = buildSimPanel(false); if (panel) { panel.show(); return; } openSimulator(); } });
+		actions.pivot = new Action('imm_fix_pivot', { name: '枢轴归位（对齐几何中心）…', description: '把分组 origin 移到几何中心，补偿方块坐标，外观不变', icon: 'center_focus_strong', category: 'tools', condition, click: openPivotFix });
 		actions.props = new Action('imm_group_props', { name: '编辑分组映射属性…', description: '映射类型 / 引用模型 / property 等', icon: 'tune', category: 'tools', condition, click: editGroupProps });
 
 		addMenu(actions.zip, 'file.export');
@@ -2267,9 +2439,11 @@ Plugin.register('item_model_definition_assembly', {
 		addMenu(actions.check, 'tools');
 		addMenu(actions.import, 'tools');
 		addMenu(actions.props, 'tools');
+		addMenu(actions.pivot, 'tools');
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
 		// 面板会自动出现在「视图 → 面板」里，不再占用 Tools 菜单
 		attachGroupMenu();
+		bindOutlinerHook();
 		for (const event of ['add_group', 'remove_group', 'update_selection']) {
 			try { Blockbench.on(event, (data) => { simInvalidate(); scheduleBranchSync(data && data.object); }); } catch (e) { /* ignore */ }
 		}
@@ -2281,7 +2455,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, pivotContentPoints, rotateAroundQuat, readQuaternion, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

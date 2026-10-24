@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-24 · 当前版本 **0.40.0**（tag `v0.40.0`）
+> 生成时间：2026-10-24 · 当前版本 **0.41.0**（tag `v0.41.0`）
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 
 ---
@@ -68,6 +68,7 @@
 分支编号：`range_dispatch` 子分组按 outliner 顺序自动编号，导出阈值默认 `0,1,2…`；
 父分组可写**编号格式**：`i` / `2i` / `i*2` / `10+2i` / 字面列表 `0,1,3` / `2:2i`（前缀=重复次数，索引从 1 起 → `2,2,4,4,6,6`）。
 确认时会把编号写进子分组名（`[0] xxx`），并幂等去重。
+分组被挪出分支容器（拖到根目录/普通父级）时，`stripStrayBranchPrefixes()` 会自动去掉 `[k]` / `⚠` 前缀（0.41.0）。
 
 ### 2.5 资源包工程
 
@@ -101,11 +102,22 @@
 - 活跃判定：`activeIndex = max{ k | k ≤ 当前值 }`（k 来自子分组名 `[k]` 前缀）。
 - 关联信息由 `refreshUsage()` **统一持有**（`simTick` 只调用它）：按每个槽自己的 `idx/val` 取下标与值，不要再从 DOM 顺序去猜目标节点。
 
+### 2.8 枢轴归位（Tools → 枢轴归位…）
+
+- 问题：嵌套旋转下，分组 `origin` 常常离几何中心 17–48px；旋转/移动工具的手柄飘在远处，Blockbench 自带「枢纽居中」在多层旋转上会歪。
+- 做法：把每个分组的 `origin` 移到它（**含所有后代**）方块中心的平均值，同时平移内容补偿，外观不变。
+  - 补偿：`d = (I − R⁻¹)(O′ − O)`（分组本地坐标）；子分组递归 `R_c⁻¹ d`。
+  - 注意：**不能用「世界坐标写回 origin」**——origin 在父坐标系，嵌套旋转必须递归换算。
+- 实现：`pivotContentPoints()`（递归收集后代方块中心）、`pivotTranslateContents()`（递归补偿）、`fixGroupPivot()`；`applyPivotFix(selectedOnly)` 走 Undo + `Canvas.updateAll()` + `simInvalidate()`。
+- 验证：`pivot_lab2.js`（临时脚本）在真实 `assembly.bbmodel` 上逐组/整树修正，153 个角点误差 0。
+- 单测：`_test_sim.js` 用两层旋转分组断言「世界坐标不变 + 枢轴落在内容中心」。
+
 ---
 
 ## 3. 版本历史（近期，git tag）
 
 ```
+0.41.0  分支前缀自动清理；枢轴归位（嵌套旋转补偿，外观不变）
 0.40.0  槽级开关；未活跃改自绘折叠（原生 details 打不开）；映射/用量缓存 + 输入防抖 + ⟳ 刷新
 0.39.0  恢复 sim 状态对象（修“值没反应”）；面板：大类/槽双层折叠、每槽控制器+命中角标、运行状态
 0.38.0  目标版本移入项目设置下拉；模拟面板每行「标题+输入」常显（去掉折叠）
@@ -198,7 +210,7 @@
 $node = 'C:\Users\Rainbow_\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 & $node --check 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js'
 & $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_assembly.js'   # 离线冒烟
-& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板单测（70 项）
+& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴单测（75 项）
 Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js' `
   'C:\Users\Rainbow_\AppData\Roaming\Blockbench\plugins\item_model_definition_assembly.js' -Force
 ```
@@ -214,5 +226,5 @@ Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_d
 
 ### 6.1 新增的求值/版本钩子
 
-- `_test_sim.js` 通过 `globalThis.__IMM_TEST__ = {}`（require 之前设置）拿到 `api = { simEvaluate, simValue, packMcmetaData, packFormatLabel, packMcmetaFormat, PACK_VERSIONS, VERSION, buildSimPanel, getSimUi, getSimPanel }`；生产环境不设这个全局就没有副作用。它还 mock 了极简 `document` / `Panel`，用来断言面板结构（输入不能在 `<details>` 里）。
+- `_test_sim.js` 通过 `globalThis.__IMM_TEST__ = {}`（require 之前设置）拿到 `api = { simEvaluate, simValue, simTick, packMcmetaData, packFormatLabel, packMcmetaFormat, PACK_VERSIONS, VERSION, buildSimPanel, getSimUi, getSimPanel, stripStrayBranchPrefixes, fixGroupPivot, pivotContentPoints, rotateAroundQuat, readQuaternion }`；生产环境不设这个全局就没有副作用。它还 mock 了极简 `document` / `Panel`，用来断言面板结构（输入不能在 `<details>` 里）。
 - `packMcmetaData(description, versionId)` 是 `pack.mcmeta` 的唯一生成入口；改版本表只改 `PACK_VERSIONS`。

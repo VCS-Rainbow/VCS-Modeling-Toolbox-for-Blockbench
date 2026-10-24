@@ -194,6 +194,23 @@ Blockbench 5.x 的实现方式有两条，本插件都接上了：
 - `index` 和 `tints` 是两个不同用途的属性：`index` 只用于 `range_dispatch` 选择 `custom_model_data` 的下标；`tints` 是 `model` 节点的染色来源列表。
 - `tints` 必须是 **JSON 数组**，例如 `[{"type":"custom_model_data","index":0,"default":0}]`；填 `"0"` 之类不是合法 JSON，会被忽略并在 `.notes.txt` 提示。
 - 面的 `tintindex` 由 UV 编辑器里的“着色”开关决定（Blockbench 写 `tint: 0`），导出时**只要面有 `tint` 字段就输出 `tintindex`（含 0）**。
+
+## 分支编号
+
+`range_dispatch` / `condition` / `select` 的子分组名会自动加 `[k]` 前缀（`range_dispatch` 的编号由父分组的「编号格式」决定）。
+
+分组**移出分支容器**（拖到根目录或普通父级）后，`[k]` / `⚠` 前缀会自动去掉，不需要手动改名。
+
+## 枢轴归位（`Tools → 枢轴归位…`）
+
+嵌套旋转的分组，`origin` 常常离几何中心很远——表现为旋转/移动工具的手柄飘在远处，Blockbench 自带「枢纽居中」在多层旋转下也会歪。
+
+本工具把每个分组的 `origin` 移到它（含子分组）所有方块中心的平均值，同时补偿方块坐标，**外观完全不变**：
+
+- 补偿量 `d = (I − R⁻¹)(O′ − O)`（在分组本地坐标里）；子分组的内容再按 `R_c⁻¹ d` 递归；
+- 嵌套多次旋转也正确（真实 `assembly.bbmodel` 153 个角点验证误差为 0）；
+- 范围可选「全部分组」或「选中的分组（含子分组）」，支持撤销。
+
 ## 安装（自动加载）
 
 把 `item_model_definition_assembly.js` 和 `item_model_definition_assembly.about.md` 一起放到：

@@ -67,7 +67,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.40.0', api.VERSION, '0.40.0');
+eq('版本是 0.41.0', api.VERSION, '0.41.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -231,6 +231,42 @@ floatsRow.els.enable.fire('change');
 simUi.runBtn.fire('click');
 eq('没有启用的数值大类时不会误报运行中', simUi.runBtn.textContent, '▶ 运行');
 simUi.runBtn.fire('click');
+
+/* ---------- 分支前缀清理 ---------- */
+console.log('\n[分支前缀清理]');
+const strayParent = new global.Group({ name: 'container', imm_type: 'composite' });
+const strayChild = new global.Group({ name: '[0] stray', imm_type: 'model' });
+strayChild.parent = strayParent; strayParent.children.push(strayChild);
+const branchParent = new global.Group({ name: 'rd', imm_type: 'range_dispatch' });
+const branchChild = new global.Group({ name: '[2] keep', imm_type: 'model' });
+branchChild.parent = branchParent; branchParent.children.push(branchChild);
+global.Outliner.root.push(strayParent, branchParent);
+api.stripStrayBranchPrefixes();
+eq('挪到普通父级/根目录后 [k] 被去掉', strayChild.name, 'stray');
+eq('分支容器内的 [k] 保留', branchChild.name, '[2] keep');
+
+/* ---------- 枢轴归位 ---------- */
+console.log('\n[枢轴归位]');
+const dist3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+const pivotWorld = (chain, point) => chain.reduceRight((p, g) => api.rotateAroundQuat(api.readQuaternion(g), g.origin, p), point);
+const pivotCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
+const inner = new global.Group({ name: 'inner', origin: [6, 0, 0], rotation: [0, 0, 40] });
+inner.children.push(pivotCube);
+const outer = new global.Group({ name: 'outer', origin: [2, 1, 0], rotation: [0, 0, 25] });
+outer.children.push(inner);
+const chain = [outer, inner];
+const cubeCenterWorld = () => pivotWorld(chain, api.rotateAroundQuat(api.readQuaternion(pivotCube), pivotCube.origin, [1, 1, 1]));
+const beforePivot = cubeCenterWorld();
+api.fixGroupPivot(outer);
+api.fixGroupPivot(inner);
+const afterPivot = cubeCenterWorld();
+eq('改枢轴后方块世界位置不变（误差 < 1e-6）', dist3(beforePivot, afterPivot) < 1e-6, true);
+const outerPoints = api.pivotContentPoints(outer);
+const outerQ = api.readQuaternion(outer);
+const outerRendered = outerPoints.map(p => api.rotateAroundQuat(outerQ, outer.origin, p));
+const outerCenter = [0, 1, 2].map(i => outerRendered.reduce((s, p) => s + p[i], 0) / outerRendered.length);
+eq('外层枢轴落在内容中心（误差 < 1e-6）', dist3(outer.origin, outerCenter) < 1e-6, true);
+eq('枢轴确实移动了', dist3(beforePivot, afterPivot) < 1e-6 && dist3(outer.origin, [2, 1, 0]) > 1, true);
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
