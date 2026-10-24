@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.32.3';
+const VERSION = '0.32.4';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1505,7 +1505,9 @@ function buildSimPanel(show_panel) {
 // 关联信息确保留在 body 之后、独占一行（重组可能把它卷进簇里导致不可见）
 		box.appendChild(usageEl);
 		box.appendChild(head); box.appendChild(body); box.appendChild(usageEl); root.appendChild(box);
-		row.el = { enable, idx, val, auto: autoC, period, step, rule, min: minI, max: maxI, usage: usageEl };
+		const usageFresh = mk('div', {}, 'font-size:10px;opacity:.65;white-space:pre-wrap;line-height:1.4;padding:3px 0 5px 0;border-top:1px dashed rgba(128,128,128,.2)');
+		box.appendChild(usageFresh);
+		row.el = { enable, idx, val, auto: autoC, period, step, rule, min: minI, max: maxI, usage: usageFresh };
 		const read = () => { row.enabled = enable.checked; row.index = Number(idx.value) || 0; row.value = val.value; row.auto = autoC.checked; row.period = Math.max(50, (Number(period.value) || 0.2) * 1000); row.step = Number(step.value) || 0.5; row.rule = rule.value; row.min = Number(minI.value) || 0; row.max = Number(maxI.value) || 4; };
 		[enable, idx, val, autoC, period, step, rule, minI, maxI].forEach(el => el.addEventListener('change', () => { read(); simTick(); }));
 		sim_ui.rows[key] = row;
