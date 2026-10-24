@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.20.5';
+const VERSION = '0.20.6';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1195,6 +1195,7 @@ let sim_ui = null;
 function buildSimPanel(show_panel) {
 	if (sim_panel) { if (show_panel !== false) sim_panel.show(); return sim_panel; }
 	if (typeof Panel === 'undefined') return null;
+	if (typeof document === 'undefined') return null;
 	sim_panel = new Panel('imm_sim_panel', {
 		name: '模拟输入',
 		icon: 'play_circle',
@@ -1458,7 +1459,11 @@ Plugin.register('item_model_definition_assembly', {
 	tags: ['Minecraft: Java Edition'],
 	contributes: { formats: [FORMAT_ID] },
 	onload() {
-		registerProperties();
+		const addMenu = (action, path) => {
+			try { if (action) MenuBar.addAction(action, path); }
+			catch (error) { console.warn('[装配] 菜单挂载失败：' + path, error); }
+		};
+		try { registerProperties(); } catch (error) { console.error('[装配] 属性注册失败', error); }
 
 		format_object = new ModelFormat(FORMAT_ID, {
 			id: FORMAT_ID,
@@ -1553,12 +1558,12 @@ Plugin.register('item_model_definition_assembly', {
 		actions.sim = new Action('imm_simulate', { name: '模拟输入…', description: '按 custom_model_data / selected 预览分支命中', icon: 'play_circle', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const panel = buildSimPanel(false); if (panel) { panel.show(); return; } openSimulator(); } });
 		actions.props = new Action('imm_group_props', { name: '编辑分组映射属性…', description: '映射类型 / 引用模型 / property 等', icon: 'tune', category: 'tools', condition, click: editGroupProps });
 
-		MenuBar.addAction(actions.zip, 'file.export');
-		MenuBar.addAction(actions.merge, 'file.export');
-		MenuBar.addAction(actions.pack, 'file.export');
-		MenuBar.addAction(actions.check, 'tools');
-		MenuBar.addAction(actions.props, 'tools');
-		try { buildSimPanel(false); } catch (e) { /* ignore */ }
+		addMenu(actions.zip, 'file.export');
+		addMenu(actions.merge, 'file.export');
+		addMenu(actions.pack, 'file.export');
+		addMenu(actions.check, 'tools');
+		addMenu(actions.props, 'tools');
+		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
 		// 面板会自动出现在「视图 → 面板」里，不再占用 Tools 菜单
 		attachGroupMenu();
 		for (const event of ['add_group', 'remove_group', 'update_selection']) {
