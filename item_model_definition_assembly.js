@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.20.7';
+const VERSION = '0.20.8';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1560,7 +1560,6 @@ Plugin.register('item_model_definition_assembly', {
 
 		addMenu(actions.zip, 'file.export');
 		addMenu(actions.merge, 'file.export');
-		addMenu(actions.pack, 'tools');
 		addMenu(actions.pack, 'file');
 		addMenu(actions.check, 'tools');
 		addMenu(actions.props, 'tools');
