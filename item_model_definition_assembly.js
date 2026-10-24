@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.63.8';
+const VERSION = '0.63.9';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2479,20 +2479,25 @@ function guardBoxSelection() {
 	guardingBox = true;
 	let changed = false;
 	try {
-		const pushSelected = (node) => {
-			try { if (typeof node.markAsSelected === 'function') node.markAsSelected(); else node.selected = true; } catch (e) { node.selected = true; }
+		const pushPrimary = (node) => {
 			if (Array.isArray(Outliner.selected) && Outliner.selected.indexOf(node) < 0) Outliner.selected.push(node);
 		};
-		// 像单击分组：选中分组自身 + 它的全部子项（同层/后代都选上）
+		// 像单击分组：分组进 Outliner.selected，子项只置 selected 标记（不逐一塞进 Outliner.selected）
 		const selectWholeGroup = (group) => {
-			if (!group.selected) { group.selected = true; changed = true; }
-			try { if (typeof group.multiSelect === 'function') group.multiSelect(); } catch (e) { /* ignore */ }
-			pushSelected(group);
-			for (const child of (group.children || [])) {
-				if (!isSelected(child)) changed = true;
-				pushSelected(child);
-			}
+			if (!group.selected) changed = true;
+			group.selected = true;
+			try {
+				if (typeof group.multiSelect === 'function') group.multiSelect();
+				else if (typeof group.markAsSelected === 'function') group.markAsSelected();
+				else {
+					const markAll = (node) => { node.selected = true; for (const child of (node.children || [])) markAll(child); };
+					markAll(group);
+				}
+			} catch (e) { group.selected = true; }
+			pushPrimary(group);
+			for (const child of (group.children || [])) if (!isSelected(child)) changed = true;
 		};
+
 		for (const parent of parents) {
 			if (parent.selected && isSelected(parent) && (parent.children || []).every(isSelected)) continue;
 			selectWholeGroup(parent);

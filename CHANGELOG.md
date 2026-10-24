@@ -2,6 +2,9 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.63.9
+- 修框选后移动方向不一致：选择守卫不再把子分组/方块逐个塞进 `Outliner.selected`，只把分组放进去；子项通过 `multiSelect`/`markAsSelected` 置 selected 标记（更接近手动单击分组的真实选择状态），避免 Blockbench 把每个子项当独立变换对象。
+
 ## 0.63.8
 - 修框选后全局移动方向不一致：选择守卫完成后，把**最顶层选中分组**排到 `Outliner.selected[0]`（并同步 `Group.multi_selected` 首位），让 Blockbench 用 root/单位旋转做全局方向换算。
 - 单测扩到 **151 项**。
