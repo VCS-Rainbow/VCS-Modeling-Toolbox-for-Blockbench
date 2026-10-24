@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.34.2';
+const VERSION = '0.35.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1511,6 +1511,11 @@ function buildSimPanel(show_panel) {
 		const read = () => { row.enabled = enable.checked; row.index = Number(idx.value) || 0; row.value = val.value; row.auto = autoC.checked; row.period = Math.max(50, (Number(period.value) || 0.2) * 1000); row.step = Number(step.value) || 0.5; row.rule = rule.value; row.min = Number(minI.value) || 0; row.max = Number(maxI.value) || 4; };
 		[enable, idx, val, autoC, period, step, rule, minI, maxI].forEach(el => el.addEventListener('change', () => { read(); simTick(); }));
 		row.order = Object.keys(sim_ui.rows).length;
+		if (key === 'colors' || key === 'strings' || key === 'flags') {
+			autoInline.style.display = 'none';
+			if (period.parentElement) period.parentElement.style.display = 'none';
+			if (step.parentElement) step.parentElement.style.display = 'none';
+		}
 		sim_ui.rows[key] = row;
 	}
 	const runBtn = mk('button', { textContent: '运行 / 停止' }, 'padding:4px 8px;margin-top:4px');
@@ -1566,7 +1571,7 @@ function refreshUsage(hits) {
 		for (const key of Object.keys(sim_ui.rows)) {
 			const row = sim_ui.rows[key];
 			const groups = usageMap[key + '#' + row.index] || [];
-			const value = num(row.value);
+			const value = num(String(row.value).split(',')[row.index - (row.index)] || row.value);
 			const html = ['<div style="opacity:.75;margin-bottom:2px">关联分组：</div>'];
 			if (!groups.length) html.push('<div style="opacity:.5">（无）</div>');
 			groups.forEach((g, gi) => {
@@ -1610,7 +1615,16 @@ function simTick() {
 		if (!row.enabled) continue;
 		const v = String(row.value);
 		switch (key) {
-			case 'floats': inputs.floats[row.index] = num(v); lines.push('floats[' + row.index + '] = ' + num(v)); break;
+			case 'floats': case 'colors': {
+				const parts = String(v).split(',').map(t => t.trim()).filter(t => t !== '');
+				if (!parts.length) parts.push('0');
+				parts.forEach((part, i) => {
+					const idx = row.index + i;
+					if (key === 'floats') { inputs.floats[idx] = num(part); lines.push('floats[' + idx + '] = ' + num(part)); }
+					else { inputs.colors[idx] = num(part) | 0; lines.push('colors[' + idx + '] = #' + (num(part) >>> 0).toString(16).padStart(8, '0')); }
+				});
+				break;
+			}
 			case 'colors': inputs.colors[row.index] = num(v) | 0; lines.push('colors[' + row.index + '] = #' + (num(v) >>> 0).toString(16).padStart(8, '0')); break;
 			case 'strings': inputs.strings[row.index] = v; lines.push('strings[' + row.index + '] = "' + v + '"'); break;
 			case 'flags': inputs.flags[row.index] = (v === 'true' || v === '1'); lines.push('flags[' + row.index + '] = ' + inputs.flags[row.index]); break;
