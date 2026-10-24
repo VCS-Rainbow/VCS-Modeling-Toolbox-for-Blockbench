@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.10.1';
+const VERSION = '0.10.2';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -396,11 +396,11 @@ class Exporter {
 
 	/** 按来源类型构造 tints；imm_tints 的原始 JSON 优先 */
 	buildTints(group) {
-		const raw = this.parseTints(group.imm_tints);
-		if (raw) return raw;
-		const type = String(group.imm_tint_type || '').replace(/^minecraft:/, '').trim();
-		if (!type || type === 'none') return null;
-		const index = num(group.imm_tint_index);
+		// 纹理着色：索引为空 → 不输出任何 tints；类型默认 custom_model_data
+		const index_text = String(group.imm_tint_index == null ? '' : group.imm_tint_index).trim();
+		if (!/^-?\d+$/.test(index_text)) return null;
+		const index = Number(index_text);
+		const type = (String(group.imm_tint_type || 'custom_model_data').replace(/^minecraft:/, '').trim()) || 'custom_model_data';
 		const value_text = String(group.imm_tint_value == null ? '' : group.imm_tint_value).trim();
 		if (type === 'custom_model_data') return [{ type: 'custom_model_data', index, default: index }];
 		if (type === 'constant') return [{ type: 'constant', value: value_text.length ? Number(value_text) : 0 }];
@@ -409,6 +409,7 @@ class Exporter {
 		if (value_text.length) entry.default = Number(value_text) || 0;
 		return [entry];
 	}
+
 
 	parseTints(value) {
 		if (!value) return null;
@@ -745,18 +746,17 @@ function editGroupProps() {
 		width: 660,
 		form: {
 			imm_type: {
-				label: '映射类型', type: 'select', value: String(group.imm_type || 'composite'),
+				label: '映射类型（imm_type）', type: 'select', value: String(group.imm_type || 'composite'),
 				options: { composite: 'composite', model: 'model', range_dispatch: 'range_dispatch', condition: 'condition', empty: 'empty' },
 			},
-			imm_model: { label: '引用模型（Java 模型 id）', type: 'text', value: String(group.imm_model || ''), description: '所有类型可用：填了就引用该 Java 模型作为本层几何；留空则用本层方块生成模型文件', condition: (r) => r.imm_type !== 'empty' },
-			imm_property: { label: 'property（取值来源）', type: 'text', value: String(group.imm_property || ''), description: '仅 range_dispatch / condition 有效。range_dispatch 例 minecraft:custom_model_data；condition 例 minecraft:selected', condition: (r) => r.imm_type === 'range_dispatch' || r.imm_type === 'condition' },
-			imm_index: { label: 'index（custom_model_data 下标）', type: 'number', value: num(group.imm_index), description: '仅 range_dispatch 有效：property 为 custom_model_data 时取哪个下标', condition: (r) => r.imm_type === 'range_dispatch' },
-			imm_threshold: { label: 'threshold（父层 range_dispatch 的阈值）', type: 'number', value: num(group.imm_threshold), description: '仅当父分组类型是 range_dispatch 时生效：本分组作为 entries 的阈值', condition: (r) => r.imm_type === 'range_dispatch' },
-			imm_scale: { label: 'scale（数值缩放）', type: 'number', value: num(group.imm_scale) || 1, description: '仅 range_dispatch 有效：property 数值乘以该倍数后再查阈值', condition: (r) => r.imm_type === 'range_dispatch' },
-						imm_tints: { label: 'tints 原始 JSON（优先，留空则用下面的类型构造）', type: 'text', value: String(group.imm_tints || ''), description: '优先级最高；例 [{"type":"custom_model_data","index":0,"default":0}]', condition: (r) => r.imm_type === 'model' || r.imm_type === 'composite' },
-			imm_tint_type: { label: 'tints 来源类型', type: 'select', value: String(group.imm_tint_type || ''), options: { '': '（不生成 tints）', custom_model_data: 'custom_model_data', constant: 'constant', dye: 'dye', potion: 'potion', grass: 'grass', team: 'team' }, description: '仅在“tints 原始 JSON”留空时生效', condition: (r) => r.imm_type === 'model' || r.imm_type === 'composite' },
-			imm_tint_index: { label: 'tints 来源 index（custom_model_data 下标）', type: 'number', value: num(group.imm_tint_index), description: '仅 custom_model_data 使用', condition: (r) => (r.imm_type === 'model' || r.imm_type === 'composite') && r.imm_tint_type === 'custom_model_data' },
-			imm_tint_value: { label: 'tints 来源值（constant 的 ARGB / 其它 default）', type: 'text', value: String(group.imm_tint_value == null ? '' : group.imm_tint_value), description: 'constant 填 ARGB 整数；dye/potion/team 可填默认颜色', condition: (r) => (r.imm_type === 'model' || r.imm_type === 'composite') && ['constant', 'dye', 'potion', 'team'].indexOf(r.imm_tint_type) >= 0 },
+			imm_model: { label: '引用模型（imm_model）', type: 'text', value: String(group.imm_model || ''), description: '所有类型可用：填了就引用该 Java 模型作为本层几何；留空则用本层方块生成模型文件', condition: (r) => r.imm_type !== 'empty' },
+			imm_property: { label: 'property（imm_property）', type: 'text', value: String(group.imm_property || ''), description: '仅 range_dispatch / condition 有效。range_dispatch 例 minecraft:custom_model_data；condition 例 minecraft:selected', condition: (r) => r.imm_type === 'range_dispatch' || r.imm_type === 'condition' },
+			imm_index: { label: 'index（imm_index）', type: 'number', value: num(group.imm_index), description: '仅 range_dispatch 有效：property 为 custom_model_data 时取哪个下标', condition: (r) => r.imm_type === 'range_dispatch' },
+			imm_threshold: { label: 'threshold（imm_threshold）', type: 'number', value: num(group.imm_threshold), description: '仅当父分组类型是 range_dispatch 时生效：本分组作为 entries 的阈值', condition: (r) => r.imm_type === 'range_dispatch' },
+			imm_scale: { label: 'scale（imm_scale）', type: 'number', value: num(group.imm_scale) || 1, description: '仅 range_dispatch 有效：property 数值乘以该倍数后再查阈值', condition: (r) => r.imm_type === 'range_dispatch' },
+						imm_tint_type: { label: '纹理着色类型（imm_tint_type）', type: 'select', value: String(group.imm_tint_type || 'custom_model_data'), options: { '': '（不生成 tints）', custom_model_data: 'custom_model_data', constant: 'constant', dye: 'dye', potion: 'potion', grass: 'grass', team: 'team' }, description: '纹理着色来源类型；保存为键 imm_tint_type', condition: (r) => r.imm_type === 'model' || r.imm_type === 'composite' },
+			imm_tint_index: { label: '纹理着色索引（imm_tint_index）', type: 'text', value: String(group.imm_tint_index == null ? '' : group.imm_tint_index), description: '仅 custom_model_data 使用', condition: (r) => (r.imm_type === 'model' || r.imm_type === 'composite') && r.imm_tint_type === 'custom_model_data' },
+			imm_tint_value: { label: '纹理着色值（imm_tint_value）', type: 'text', value: String(group.imm_tint_value == null ? '' : group.imm_tint_value), description: 'constant 填 ARGB 整数；dye/potion/team 可填默认颜色', condition: (r) => (r.imm_type === 'model' || r.imm_type === 'composite') && ['constant', 'dye', 'potion', 'team'].indexOf(r.imm_tint_type) >= 0 },
 		},
 		onConfirm(result) {
 			try {
@@ -780,8 +780,8 @@ function editGroupProps() {
 						const parsed = raw ? JSON.parse(raw) : null;
 						if (Array.isArray(parsed) && parsed.length && typeof parsed[0].index === 'number') return parsed[0].index;
 					} catch (e) { /* ignore */ }
-					const index = num(g.imm_index);
-					return index !== 0 ? index : undefined;
+					const index_text = String(g.imm_tint_index == null ? '' : g.imm_tint_index).trim();
+					return /^-?\d+$/.test(index_text) ? Number(index_text) : undefined;
 				};
 				const root_index = tintIndexOf(group);
 				let tinted = 0;
@@ -855,8 +855,8 @@ function registerProperties() {
 	// 面着色：Blockbench 的 UV 编辑器“着色”开关绑定 Face.properties.tint（默认 -1 表示未着色）
 	P(Face, 'number', 'tint', { label: '着色 index', default: -1 });
 
-	P(Group, 'string', 'imm_type', { label: '映射类型', default: 'composite', enum_values: MAPPING_TYPES });
-	P(Group, 'string', 'imm_model', { label: '引用模型（Java 模型 id）', default: '' });
+	P(Group, 'string', 'imm_type', { label: '映射类型（imm_type）', default: 'composite', enum_values: MAPPING_TYPES });
+	P(Group, 'string', 'imm_model', { label: '引用模型（imm_model）', default: '' });
 	P(Group, 'string', 'imm_property', { label: 'property', default: '' });
 	P(Group, 'number', 'imm_index', { label: 'index（仅 range_dispatch：custom_model_data 下标）', default: 0 });
 	P(Group, 'number', 'imm_threshold', { label: 'threshold', default: 0 });
