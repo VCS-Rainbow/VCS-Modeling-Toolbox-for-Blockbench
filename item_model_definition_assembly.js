@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.35.1';
+const VERSION = '0.36.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1617,6 +1617,15 @@ function simTick() {
 		const v = String(row.value);
 		switch (key) {
 			case 'floats': case 'colors': {
+				if (row.pairs && row.pairs.length) {
+					for (const pair of row.pairs) {
+						const idx2 = Number(pair.pi.value) || 0;
+						const raw2 = pair.pv.value;
+						if (key === 'floats') { inputs.floats[idx2] = num(raw2); lines.push('floats[' + idx2 + '] = ' + num(raw2)); }
+						else { inputs.colors[idx2] = num(raw2) | 0; lines.push('colors[' + idx2 + '] = #' + (num(raw2) >>> 0).toString(16).padStart(8, '0')); }
+					}
+					break;
+				}
 				const parts = String(v).split(',').map(t => t.trim()).filter(t => t !== '');
 				if (!parts.length) parts.push('0');
 				parts.forEach((part, i) => {
