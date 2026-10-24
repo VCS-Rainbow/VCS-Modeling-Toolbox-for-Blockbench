@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.57.0', api.VERSION, '0.57.0');
+eq('版本是 0.58.0', api.VERSION, '0.58.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -487,6 +487,22 @@ eq('隐藏并锁定：分组隐藏', lockGroup.mesh.visible, false);
 eq('隐藏并锁定：分组锁定', lockGroup.locked, true);
 api.simRestoreView();
 eq('隐藏并锁定：恢复可见', lockGroup.mesh.visible, true);
+
+/* ---------- 批量选择守卫 ---------- */
+console.log('\n[批量选择守卫]');
+const bg1 = new global.Group({ name: 'bg1' });
+const bg2 = new global.Group({ name: 'bg2' });
+const bgCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
+const detachBatch = function () { this.selected = false; const at = global.Outliner.selected.indexOf(this); if (at >= 0) global.Outliner.selected.splice(at, 1); };
+bg1.unselect = detachBatch; bg2.unselect = detachBatch; bgCube.unselect = detachBatch;
+api.setBatchGroupsOnly(true); global.Outliner.selected.push(bg1, bg2, bgCube);
+api.guardBatchSelection();
+eq('多选分组时取消单个元素', global.Outliner.selected.indexOf(bgCube) < 0, true);
+eq('多选分组时分组仍选中', global.Outliner.selected.indexOf(bg1) >= 0 && global.Outliner.selected.indexOf(bg2) >= 0, true);
+global.Outliner.selected.length = 0; global.Outliner.selected.push(bg1, bgCube);
+api.guardBatchSelection();
+eq('只选一个分组时不干预', global.Outliner.selected.indexOf(bgCube) >= 0, true);
+api.setBatchGroupsOnly(false); global.Outliner.selected.length = 0;
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));

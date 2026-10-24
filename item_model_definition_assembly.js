@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.57.0';
+const VERSION = '0.58.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2265,6 +2265,30 @@ function guardLockedSelection() {
 }
 
 /** 运行时锁定/解锁分组及其所有子项（保存/恢复原有 lock 状态） */
+let guardingBatch = false;
+let immBatchSetting = null;
+let immBatchFallback = false;
+function batchGroupsOnlyEnabled() { return immBatchSetting ? (immBatchSetting.value === true) : immBatchFallback; }
+function setBatchGroupsOnly(value) {
+	immBatchFallback = !!value;
+	return batchGroupsOnlyEnabled();
+}
+/** 批量选中多个分组时，把同时选中的方块/定位点踢出选择 */
+function guardBatchSelection() {
+	if (guardingBatch || !batchGroupsOnlyEnabled()) return;
+	if (typeof Outliner === 'undefined' || !Outliner || !Outliner.selected) return;
+	const groups = selectedGroups();
+	if (groups.length < 2) return;
+	guardingBatch = true;
+	try {
+		for (const element of Outliner.selected.slice()) {
+			if (!element || isGroup(element)) continue;
+			if (!isCube(element) && !isLocator(element)) continue;
+			try { if (typeof element.unselect === 'function') element.unselect(); } catch (e) { /* ignore */ }
+		}
+	} finally { guardingBatch = false; }
+}
+
 function simLockGroup(group, on) {
 	if (!group) return;
 	if (on) {
@@ -3031,6 +3055,17 @@ Plugin.register('item_model_definition_assembly', {
 	onload() {
 		console.log('[装配] onload 开始，版本 ' + VERSION);
 		try {
+		try {
+			if (typeof Setting !== 'undefined') {
+				immBatchSetting = new Setting('imm_batch_groups_only', {
+					name: '批量选择分组时自动取消单个元素',
+					description: '同时选中两个及以上分组时，自动取消被一起选中的方块/定位点，避免批量操作误改单个元素。',
+					category: 'edit',
+					type: 'checkbox',
+					value: false,
+				});
+			}
+		} catch (e) { /* ignore */ }
 		const addMenu = (action, path) => {
 			try { if (action) MenuBar.addAction(action, path); }
 			catch (error) { console.warn('[装配] 菜单挂载失败：' + path, error); }
@@ -3097,6 +3132,7 @@ Plugin.register('item_model_definition_assembly', {
 		actions.viewDiag = new Action('imm_view_diag', { name: '诊断：模拟视图联动', description: '打印匹配到的分组/方块/材质数量', icon: 'bug_report', category: 'tools', condition, click: diagnoseSimView });
 		actions.pivot = new Action('imm_fix_pivot', { name: '枢轴归位（对齐几何中心）…', description: '把分组 origin 移到几何中心，补偿方块坐标，外观不变', icon: 'center_focus_strong', category: 'tools', condition, click: openPivotFix });
 		actions.props = new Action('imm_group_props', { name: '编辑分组映射属性…', description: '映射类型 / 引用模型 / property 等', icon: 'tune', category: 'tools', condition, click: editGroupProps });
+		actions.batchToggle = new Action('imm_batch_toggle', { name: '开关：批量选择时取消单个元素', description: '切换“同时选中多个分组时自动取消方块/定位点选择”', icon: 'select_all', category: 'tools', click: () => { if (!immBatchSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !batchGroupsOnlyEnabled(); setBatchGroupsOnly(next); try { if (typeof immBatchSetting.save === 'function') immBatchSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('批量选择时取消单个元素：' + (next ? '开' : '关'), 2200); } });
 		actions.editCall = new Action('imm_edit_call', { name: '编辑复调用标签…', description: '修改选中的复调用 Locator 指向的分组或模型 id', icon: 'edit', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && Locator.selected && Locator.selected.length > 0), click: () => { const locator = (Locator.selected && Locator.selected[0]) || null; if (!locator) { Blockbench.showMessageBox({ title: '请先选中复调用标签', message: '在 outliner 里选中一个 Locator（复调用标签）。', icon: 'info' }); return; } editCallTag(locator); } });
 
 		addMenu(actions.zip, 'file.export');
@@ -3109,13 +3145,14 @@ Plugin.register('item_model_definition_assembly', {
 		addMenu(actions.import, 'tools');
 		addMenu(actions.props, 'tools');
 		addMenu(actions.editCall, 'tools');
+		addMenu(actions.batchToggle, 'tools');
 		addMenu(actions.pivot, 'tools');
 		addMenu(actions.viewDiag, 'tools');
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
 		// 面板会自动出现在「视图 → 面板」里，不再占用 Tools 菜单
 		attachGroupMenu();
 		bindOutlinerHook();
-		try { Blockbench.on('update_selection', () => { try { guardLockedSelection(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
+		try { Blockbench.on('update_selection', () => { try { guardLockedSelection(); } catch (e) { /* ignore */ } try { guardBatchSelection(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
 		for (const event of ['add_group', 'remove_group', 'update_selection']) {
 			try { Blockbench.on(event, (data) => { simInvalidate(); scheduleBranchSync(data && data.object); }); } catch (e) { /* ignore */ }
 		}
@@ -3127,7 +3164,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
