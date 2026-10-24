@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.32.1';
+const VERSION = '0.32.2';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1498,6 +1498,8 @@ function buildSimPanel(show_panel) {
 		const bodyB = regroupInto(body, 3);
 		const bodyC = mk('div', {}, 'display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap');
 		while (body.children.length) bodyC.appendChild(body.children[0]);
+// 把簇A（索引+值）也放进 body，三簇才能在同一行并排
+		if (head.children.length > 1) { const clusterA = head.children[head.children.length - 1]; body.insertBefore(clusterA, body.firstChild); }
 		body.appendChild(bodyB);
 		body.appendChild(bodyC);
 		box.appendChild(head); box.appendChild(body); box.appendChild(usageEl); root.appendChild(box);
