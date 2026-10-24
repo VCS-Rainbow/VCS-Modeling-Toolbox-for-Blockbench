@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.20.4';
+const VERSION = '0.20.5';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1555,8 +1555,7 @@ Plugin.register('item_model_definition_assembly', {
 
 		MenuBar.addAction(actions.zip, 'file.export');
 		MenuBar.addAction(actions.merge, 'file.export');
-		MenuBar.addAction(actions.pack, 'file');
-		MenuBar.addAction(actions.pack, 'tools');
+		MenuBar.addAction(actions.pack, 'file.export');
 		MenuBar.addAction(actions.check, 'tools');
 		MenuBar.addAction(actions.props, 'tools');
 		try { buildSimPanel(false); } catch (e) { /* ignore */ }
