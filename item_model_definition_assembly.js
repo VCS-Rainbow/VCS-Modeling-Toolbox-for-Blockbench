@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.9.0';
+const VERSION = '0.9.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -750,11 +750,22 @@ function editGroupProps() {
 				if (result.imm_scale !== undefined) group.imm_scale = num(result.imm_scale) || 1;
 				if (result.imm_tints !== undefined) group.imm_tints = result.imm_tints;
 								// 按 index 自动勾选着色：本层 index 下发给直接子项，子项自己的 index 优先
-				const root_index = num(group.imm_index);
+				// 生效的 tint index：tints 数字简写 > tints[0].index > imm_index（0 视为未设置）
+				const tintIndexOf = (g) => {
+					const raw = String(g.imm_tints || '').trim();
+					if (/^-?\d+$/.test(raw)) return Number(raw);
+					try {
+						const parsed = raw ? JSON.parse(raw) : null;
+						if (Array.isArray(parsed) && parsed.length && typeof parsed[0].index === 'number') return parsed[0].index;
+					} catch (e) { /* ignore */ }
+					const index = num(g.imm_index);
+					return index !== 0 ? index : undefined;
+				};
+				const root_index = tintIndexOf(group);
 				let tinted = 0;
 				const walkTint = (node, inherited) => {
-					const own = num(node.imm_index);
-					const effective = (own !== 0) ? own : inherited;
+					const own = tintIndexOf(node);
+					const effective = (own !== undefined) ? own : inherited;
 					for (const child of node.children || []) {
 						if (isGroup(child)) { walkTint(child, effective); continue; }
 						if (!isCube(child)) continue;
@@ -766,10 +777,11 @@ function editGroupProps() {
 						tinted++;
 					}
 				};
-				walkTint(group, root_index !== 0 ? root_index : undefined);
+				walkTint(group, root_index);
 				if (tinted) {
 					Project.saved = false;
 					try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+					try { if (typeof UVEditor !== 'undefined' && UVEditor.updateView) UVEditor.updateView(); } catch (e) { /* ignore */ }
 				}
 Undo.finishEdit('修改分组映射属性');
 				Blockbench.showQuickMessage('已更新 “' + labelOf(group) + '”' + (tinted ? ('，为 ' + tinted + ' 个方块自动勾选着色') : ''), 2500);
