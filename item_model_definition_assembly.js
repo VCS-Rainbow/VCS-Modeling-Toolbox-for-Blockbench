@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.22.6';
+const VERSION = '0.23.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1314,12 +1314,13 @@ function importModelReference(group) {
 	if (resolved.error) { Blockbench.showMessageBox({ title: '导入失败', message: resolved.error, icon: 'error' }); return false; }
 	const elements = resolved.elements;
 	try {
+		try { if (typeof unselectAll === 'function') unselectAll(); } catch (e) { /* ignore */ }
 		Undo.initEdit({ groups: [group], elements: (group.children || []).filter(isCube) });
 		// 清空原有子项与方块
 		// 确保分组可见（可能被“隐藏不可用分支”关闭过）
 		try { group.visibility = true; group.export = true; group.imm_auto_disabled = false; } catch (e) { /* ignore */ }
 		for (const child of (group.children || []).slice()) {
-			try { child.remove(false); } catch (e) { /* ignore */ }
+			try { child.remove(); } catch (e) { /* ignore */ }
 		}
 		const created = [];
 		const textureMap = {};
@@ -1336,6 +1337,7 @@ function importModelReference(group) {
 			from: [Number(el.from[0]) || 0, Number(el.from[1]) || 0, Number(el.from[2]) || 0],
 			to: [Number(el.to[0]) || 0, Number(el.to[1]) || 0, Number(el.to[2]) || 0],
 		}).addTo(group);
+		if (typeof Cube !== 'undefined' && Array.isArray(Cube.all) && Cube.all.indexOf(cube) < 0) Cube.all.push(cube);
 		try { cube.visibility = true; } catch (e) { /* ignore */ }
 		for (const dirKey of Object.keys(cube.faces || {})) {
 			if (cube.faces[dirKey]) cube.faces[dirKey].enabled = true;
