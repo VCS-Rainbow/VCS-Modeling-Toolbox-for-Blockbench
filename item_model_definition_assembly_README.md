@@ -63,7 +63,7 @@
 
 | 属性 | 说明 |
 | --- | --- |
-| `映射类型`（`imm_type`） | `composite`（默认）/ `model` / `range_dispatch` / `condition` / `empty` |
+| `映射类型`（`imm_type`） | `composite`（默认）/ `inline`（内联模型）/ `model` / `range_dispatch` / `range_dispatch(timeline)` / `condition` / `select` / `empty` |
 | `引用模型`（`imm_model`） | 填 Java 版模型 id（如 `sqsp:item/inker/jet_rifle/sac.full`）时，本层输出为该模型的引用；**留空则用本层自己的方块生成模型文件** |
 | `property`（`imm_property`） | `range_dispatch` / `condition` 的属性（如 `minecraft:custom_model_data`、`minecraft:selected`） |
 | `index`（`imm_index`） | `custom_model_data` 的下标 |
@@ -80,6 +80,8 @@
 | `模型附带方块 display 变换`（`imm_block_display`） | 开 | 给生成的模型补原版 `block/block` 的 display |
 | `资源包工程路径`（`imm_pack_path`） | 空 | 合并目标目录（`pack.mcmeta` 所在目录），由「选择资源包工程路径…」写入 |
 | `目标 Minecraft 版本`（`imm_pack_version`） | `26.2` | 决定 `pack.mcmeta` 的格式字段，见上文；在项目设置里直接下拉选择 |
+| `时间轴 FPS`（`imm_anim_fps`） | `20` | 「解析时间轴为复调用标签…」按此 FPS 采样；改它即改逐帧动画的帧数 |
+| `时间轴 custom_model_data index`（`imm_anim_index`） | `0` | 时间轴 `range_dispatch` 默认取哪个 floats 下标 |
 
 ## 模拟输入面板（`视图 → 面板 → 模拟输入`）
 
@@ -101,7 +103,7 @@
   - 关闭联动、切换项目、卸载插件时自动恢复；
   - Blockbench 在选中/更新时会重置材质与可见性，所以联动开启时每 250ms 重贴一次；
   - 如果视图毫无反应，用 `Tools → 诊断：模拟视图联动` 看「映射节点→分组 / 匹配到分组」数量，先确认不是 0。
-- **colors 预览着色**：`colors` 槽的值（ARGB 整数）会作用到带 `tintindex` 的方块——取方块第一个着色面的 tintindex 作为 colors 下标，用运行时材质着色（不改纹理/UV）；清空 colors 或关闭模拟时恢复。不活跃分支的幽灵/隐藏优先，不叠加着色。
+- **colors 预览着色**：`colors` 槽的值（ARGB 整数）作用到带 `tintindex` 的方块——颜色索引优先用分组 tints 配置（可向上继承），完全没有配置时回退到面的 tintindex；运行时材质着色（不改纹理/UV），清空/关闭时恢复；显式「不生成 tints」会阻断。不活跃分支的幽灵/隐藏优先，不叠加着色。
 - 结果区列出每个分支的 ✔/✘ 与命中数；改值即时重算（40ms 防抖）。
 
 求值规则（`_test_sim.js` 覆盖）：
@@ -114,6 +116,8 @@
 ## 输出结构
 
 每个分组 = 一个映射节点；分组自己的方块 → 引用的模型文件；子分组 = 子节点：
+
+> 纹理引用/导出路径按贴图真实位置解析（0.59.0）：`assets/<ns>/textures/<path>.png` → 引用 `<ns>:<path>`，导出写回 `assets/<ns>/textures/<path>.png`；解析不到才回退到项目命名空间 + 贴图名。
 
 ```json
 {
@@ -175,17 +179,28 @@ Blockbench 5.x 的实现方式有两条，本插件都接上了：
 1. **格式级 `parent_model_id`**：`ModelFormat` 的选项 `parent_model_id: true`，会在**项目设置**里生成一个 parent model id 字段（`Project.parent_model_id`）；
 2. **分组级 `引用模型`（`imm_model`）**：直接写 Java 版模型 id，导出成 `{"type":"minecraft:model","model":"<id>"}` —— 这就是“把 Java 版方块/物品模型当作子项”。
 
-> 导入时按模型文件的 `groups` 创建分组，并标记为 `inline`（内联模型）；组的 origin/rotation 会一并写入。
+> 导入时递归解析模型文件的 `groups`（支持嵌套），每组标记为 `inline`（内联模型）；组的 origin/rotation 会一并写入。目标分组的着色配置会复制到所有导入子分组；模型自带的 `tintindex` 原样保留（只有模型完全没有 tintindex 时才整体补）。
 
 编辑器里想看到被引用模型的几何体：用 `File → Import` 导入该 Java Block/Item 模型并选择“导入到当前项目”，再把它放进对应分组（导入的方块可删可留，导出时用 `imm_model` 指向原模型即可）。
+
+## 选择辅助（锁定 / 批量 / 框选）
+
+- **锁定分支不可选中**：`不活跃分支：半透明并锁定 / 完全隐藏并锁定` 下，未活跃分组及子项运行时 `locked=true`，且选择守卫会把锁定元素踢出选择。
+- **批量选组时取消单个元素**（默认关）：`Settings → 编辑` 或 `Tools → 开关：批量选择时取消单个元素`；同时选中 ≥2 个分组时，自动取消一起选中的方块/定位点。
+- **框选/多选方块改选分组**：`Settings → 编辑` 或 `Tools → 开关：框选方块时改选所属分组`；装配格式内**强制开启**，其它格式默认关。
+  - 选中任意元素（哪怕 1 个）→ 选中其父分组 + 同层全部元素，并向上递归（祖父子项全选才选中祖父）；
+  - `inline` 内联模型里的元素例外：保持原选择，便于直接编辑引用模型内部；`model` 引用模型不例外。
+- 开关关闭时不会改动选择；锁定/选择守卫都只改运行时选择，不写项目。
 
 ## 已知限制
 
 - **不支持导入**（`parse` 未实现）：本格式的输出是“装配描述”，几何分散在多个模型文件里，回读需要一并解析它们；目前请用 `.bbmodel` 保存工程。
+- 编辑格式本身不限制方块坐标（0.56.0 起移除 -16~32）；导出到 Java 物品模型时仍受原版 element 范围约束，`.notes.txt` 会统计越界元素。
 - `condition` 只取前两个子项作为 `on_true` / `on_false`；`range_dispatch` 的 entries 来自子分组 + 各自 `threshold`。
 - 单轴旋转角超出 ±45° 的元素会被原样写出（`.notes.txt` 里会统计数量），游戏可能拒绝加载。
 - 负尺寸（`from > to`）方块按 Blockbench 的做法原样输出。
 - 纹理必须内嵌在 `.bbmodel`（data URL）才会被打包，否则 `.notes.txt` 会提示手动放置路径。
+- 时间轴逐帧导出只采样 rotation / position；scale 动画不会写入 transformation。
 
 ## 分组属性适用范围
 
@@ -216,17 +231,36 @@ Blockbench 5.x 的实现方式有两条，本插件都接上了：
 
 嵌套旋转的分组，`origin` 常常离几何中心很远——表现为旋转/移动工具的手柄飘在远处，Blockbench 自带「枢纽居中」在多层旋转下也会歪。
 
-本工具把每个分组的 `origin` 移到它（含子分组）所有方块中心的平均值，同时补偿方块坐标，**外观完全不变**：
+本工具做两层归中，**外观完全不变**：
 
-- 补偿量 `d = (I − R⁻¹)(O′ − O)`（在分组本地坐标里）；子分组的内容再按 `R_c⁻¹ d` 递归；
-- 嵌套多次旋转也正确（真实 `assembly.bbmodel` 153 个角点验证误差为 0）；
-- 范围可选「全部分组」或「选中的分组（含子分组）」，支持撤销。
+1. **分组**：把每个分组的 `origin` 移到它（含子分组）所有方块渲染中心的平均值；
+2. **元素**：把该组每个方块的旋转枢轴（`origin`）移到**父分组的几何中心**，并补偿 `from/to`（补偿量 `R⁻¹d − d`）；
+3. 嵌套分组逐层处理，支持撤销。
+
+范围可选「全部分组」或「选中的分组（含子分组）」；提示会分别统计分组数与方块枢轴数。
 
 ## 内联模型（inline）
 
 分组类型新增 `inline`：**本组方块在装配体里现做**，导出结构等同 `composite`（本组方块烘焙成一个模型文件）；`model` 则专门表示**引用已有模型**（`imm_model`）。
 
 用途：区分“这里是一份就地建模的几何”和“这里只是引用了外部模型”，方便后续筛选、替换和复调用。
+
+## 时间轴 / 逐帧动画（`range_dispatch(timeline)`）
+
+格式已开启动画模式，可以按帧把时间轴导出成 `range_dispatch`：
+
+1. 在 `项目设置` 里设置 **时间轴 FPS** 与 **custom_model_data index**（默认 20 / 0）；
+2. 做好动画后执行 `Tools → 解析时间轴为复调用标签…`：
+   - 按 FPS 采样当前动画里所有带关键帧的分组；
+   - 创建/替换根部的 `[timeline]` 分组（类型 `range_dispatch_timeline`）；
+   - 每帧生成一个 **Locator**：`imm_frame=i`、`imm_pose` 保存该帧各分组的 rotation/origin/position；
+   - 添加顺序为 `addTo` → `init`（两者都必须调用）；
+3. 导出时 `[timeline]` 输出为 `range_dispatch`：
+   - `property` 默认 `minecraft:custom_model_data`，`index` 用项目设置；
+   - `entries[].threshold` = `0,1,2,3…`（每一帧 +1）；
+   - 每个 entry 是该帧姿态下的整棵装配（静态子树会复用缓存）。
+
+注意：时间轴分组只用于导出前调整数据，**不会**再被动画自动包裹；当前只采样 rotation / position，scale 暂不支持。
 
 ## 从分组创建模型
 

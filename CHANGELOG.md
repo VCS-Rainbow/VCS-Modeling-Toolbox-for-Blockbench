@@ -2,9 +2,20 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
-## 0.62.2
-- **修选中父分组时 gizmo 动不了**：当首选节点是分组、或 `Group.selected` 非空时，框选选择守卫直接让路，不再重算选择；子分组/方块仍可单独移动。
-- 单测扩到 **144 项**。
+## 0.63.2
+- **恢复动画模式与 `range_dispatch(timeline)` 时间轴导出**（0.63.0/0.63.1 的特性重新合并到 0.62.2 之后）。
+- 保留 0.62.2 的修复：选择守卫在 `Modes.animate`、首个选中项是分组、或 `Group.selected` 非空时让路，父分组 gizmo 可正常拖动。
+
+## 0.63.1
+- **修动画模式下根节点 gizmo 无法移动**：框选/选择守卫在 `Modes.animate`（动画/姿态模式）下直接跳过；当首个选中项是分组时也不介入，避免在拖动 gizmo 时反复重算选择。
+
+## 0.63.0
+- **允许动画模式**：格式 `animation_mode: true`；项目设置新增「时间轴 FPS」（`imm_anim_fps`，默认 20）与「时间轴 custom_model_data index」（`imm_anim_index`，默认 0）。
+- **新分组类型 `range_dispatch_timeline`（逐帧时间轴）**：只做导出前数据整理，不参与动画自动包裹（避免循环）。
+- **`Tools → 解析时间轴为复调用标签…`**：按 FPS 采样当前动画里所有带关键帧的分组，创建/替换根部 `[timeline]` 分组，每帧一个 Locator（`imm_frame` / `imm_pose`，`addTo` + `init` 都调用）。
+- **导出 `range_dispatch(timeline)`**：entries 阈值 0,1,2…，默认 `custom_model_data`；每个 entry 克隆根部装配并用该帧姿态覆盖 transformation；静态子树缓存复用。
+- 当前限制：只采样 rotation / position，scale 暂不支持。
+- 单测扩到 **147 项**。
 
 ## 0.62.1
 - 选中**单个元素**也会触发：选中它的父分组 + 同层全部元素（像单击分组），并继续向上递归；不再要求至少 2 个方块。
