@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.30.3';
+const VERSION = '0.30.4';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1460,7 +1460,7 @@ function buildSimPanel(show_panel) {
 	];
 	sim_ui = { rows: {}, out: null };
 	for (const [key, label, kind] of SPECS) {
-		const row = { key, kind, enabled: false, index: 0, value: kind === 'bool' ? 'false' : (kind === 'text' ? '' : '0'), auto: false, period: 800, step: 0.5, rule: 'pingpong', min: 0, max: 4, dir: 1 };
+		const row = { key, kind, enabled: false, index: 0, value: kind === 'bool' ? 'false' : (kind === 'text' ? '' : '0'), auto: false, period: 200, step: 0.5, rule: 'pingpong', min: 0, max: 4, dir: 1 };
 		const box = mk('details', {}, 'border-top:1px solid rgba(128,128,128,.25);padding-top:3px');
 		const head = mk('summary', {}, 'cursor:pointer;display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;list-style:none;padding:3px 0');
 		const enable = mk('input', { type: 'checkbox' });
@@ -1474,20 +1474,20 @@ function buildSimPanel(show_panel) {
 		head.appendChild(cell('值', val, '92px'));
 		const body = mk('div', {}, 'display:flex;flex-wrap:nowrap;gap:6px;padding:6px 0 4px 0;align-items:flex-end;overflow:hidden');
 		const autoC = mk('input', { type: 'checkbox' }); const autoL = mk('label', { textContent: '自动' }, 'display:flex;gap:3px;align-items:center'); autoL.appendChild(autoC);
-		const period = mk('input', { type: 'number', value: '800' }, 'width:100%;min-width:0');
+		const period = mk('input', { type: 'number', value: '0.2', step: '0.1' }, 'width:100%;min-width:0');
 		const step = mk('input', { type: 'number', value: '0.5', step: '0.1' }, 'width:100%;min-width:0');
 		const rule = mk('select', {}, 'width:100%;min-width:0'); [['pingpong', '往复'], ['wrap', '循环']].forEach(([v, t]) => rule.appendChild(mk('option', { value: v, textContent: t })));
 		const minI = mk('input', { type: 'number', value: '0' }, 'width:100%;min-width:0');
 		const maxI = mk('input', { type: 'number', value: '4' }, 'width:100%;min-width:0');
 		body.appendChild(cell('自动', autoC));
-		body.appendChild(cell('周期 ms', period));
+		body.appendChild(cell('脉冲周期（间隔）', period));
 		body.appendChild(cell('步长', step));
 		body.appendChild(cell('规则', rule));
 		body.appendChild(cell('下限', minI));
 		body.appendChild(cell('上限', maxI));
 		box.appendChild(head); box.appendChild(body); root.appendChild(box);
 		row.el = { enable, idx, val, auto: autoC, period, step, rule, min: minI, max: maxI };
-		const read = () => { row.enabled = enable.checked; row.index = Number(idx.value) || 0; row.value = val.value; row.auto = autoC.checked; row.period = Math.max(120, Number(period.value) || 800); row.step = Number(step.value) || 0.5; row.rule = rule.value; row.min = Number(minI.value) || 0; row.max = Number(maxI.value) || 4; };
+		const read = () => { row.enabled = enable.checked; row.index = Number(idx.value) || 0; row.value = val.value; row.auto = autoC.checked; row.period = Math.max(50, (Number(period.value) || 0.2) * 1000); row.step = Number(step.value) || 0.5; row.rule = rule.value; row.min = Number(minI.value) || 0; row.max = Number(maxI.value) || 4; };
 		[enable, idx, val, autoC, period, step, rule, minI, maxI].forEach(el => el.addEventListener('change', () => { read(); simTick(); }));
 		sim_ui.rows[key] = row;
 	}
