@@ -2,6 +2,9 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.49.0
+- **colors 关联分组**：`collectInputUsage()` 现在也会收集颜色关联——按方块面的 `tint`（tintindex）以及 `model`/`composite` 的 `tints`（`custom_model_data` 的 `index`）反查所属分组，模拟面板 `colors` 行的「关联分组」不再恒为（无）。
+- 单测扩到 **103 项**：colors 关联分组。
 ## 0.48.0
 - **colors 驱动预览着色**：模拟面板里改 `colors[i]`，带 `tintindex = i` 的方块会在视图里着色（运行时材质，不改纹理/UV）。
   - 每个方块取**第一个着色面的 tintindex** 作为 colors 下标（多 tintindex 的方块暂不支持逐面着色）；

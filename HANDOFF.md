@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-24 · 当前版本 **0.48.0**（tag `v0.48.0`）
+> 生成时间：2026-10-24 · 当前版本 **0.49.0**（tag `v0.49.0`）
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 
 ---
@@ -139,6 +139,7 @@
 ## 3. 版本历史（近期，git tag）
 
 ```
+0.49.0  colors 关联分组（按 tintindex / tints index 反查分组）
 0.48.0  colors 驱动预览着色（tintindex 方块运行时着色）
 0.47.0  Locator 复调用标签（导出替换为目标分组节点）+ 右键/工具菜单
 0.46.0  inline 内联模型类型；从分组创建模型（自动居中 + 引用）
@@ -240,7 +241,7 @@
 $node = 'C:\Users\Rainbow_\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 & $node --check 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js'
 & $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_assembly.js'   # 离线冒烟
-& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图/复调用/着色单测（102 项）
+& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图/复调用/着色单测（103 项）
 Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js' `
   'C:\Users\Rainbow_\AppData\Roaming\Blockbench\plugins\item_model_definition_assembly.js' -Force
 ```

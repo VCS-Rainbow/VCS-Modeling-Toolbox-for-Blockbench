@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.48.0';
+const VERSION = '0.49.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2370,6 +2370,20 @@ function collectInputUsage() {
 			const index = Number(node.imm_index) || 0;
 			const name = labelOf(node);
 			const branchChildren = (node.children || []).filter(isGroup).map(c => labelOf(c));
+			// colors：面的 tintindex（以及 model/composite 的 tints 来源 index）→ 所属分组
+			const tintIndices = new Set();
+			for (const child of (node.children || [])) {
+				if (!isCube(child) || !child.faces) continue;
+				for (const dir of FACE_KEYS) {
+					const face = child.faces[dir];
+					if (face && typeof face.tint === 'number' && face.tint >= 0) tintIndices.add(face.tint);
+				}
+			}
+			if (String(node.imm_tint_type || '').replace(/^minecraft:/, '') === 'custom_model_data') {
+				const rawTintIndex = String(node.imm_tint_index == null ? '' : node.imm_tint_index).trim();
+				if (/^-?\d+$/.test(rawTintIndex)) tintIndices.add(Number(rawTintIndex));
+			}
+			for (const tintIndex of tintIndices) add('colors', tintIndex, name, []);
 			if (type === 'range_dispatch' && prop === 'custom_model_data') add('floats', index, name, branchChildren);
 			else if (type === 'select' && prop === 'custom_model_data') add('strings', index, name, branchChildren);
 			else if (type === 'condition' && prop === 'custom_model_data') add('flags', index, name, branchChildren);
@@ -2909,7 +2923,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, createExporter, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, createExporter, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

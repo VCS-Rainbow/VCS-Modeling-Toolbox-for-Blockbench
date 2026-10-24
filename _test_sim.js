@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.48.0', api.VERSION, '0.48.0');
+eq('版本是 0.49.0', api.VERSION, '0.49.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -413,6 +413,8 @@ eq('着色不改原纹理对象', tintCube.mesh.material.map === tintOriginal.ma
 simState2.inputs.colors.length = 0;
 api.simApplyTints();
 eq('清空 colors 后恢复原材质', tintCube.mesh.material === tintOriginal, true);
+const colorsUsage = api.collectInputUsage();
+eq('colors 关联分组包含 tintindex 0 所在分组', !!(colorsUsage['colors#0'] || []).find(entry => entry.parent === 'tintGroup'), true);
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRoot4);
 
 /* ---------- 汇总 ---------- */
