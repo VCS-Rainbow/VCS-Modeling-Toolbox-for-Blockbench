@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.53.1';
+const VERSION = '0.53.2';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1780,6 +1780,10 @@ function importModelReference(group) {
 		const textureMap = {};
 		// 模型文件里的 groups → Blockbench 分组（内联模型）；children 可以是元素下标或子分组对象
 		const importedGroups = [];
+		// 目标分组的着色配置要下发给所有导入子分组
+		const sourceTintType = group.imm_tint_type;
+		const hasSourceTint = sourceTintType !== undefined && sourceTintType !== null && sourceTintType !== '' && sourceTintType !== 'none';
+		const sourceTintIndex = String(group.imm_tint_index == null ? '' : group.imm_tint_index).trim();
 		const elementGroup = {};
 		const buildImportGroups = (list, parentNode) => {
 			for (const src of (list || [])) {
@@ -1794,6 +1798,12 @@ function importModelReference(group) {
 					try { if (typeof node.init === 'function') node.init(); } catch (e) { /* ignore */ }
 					try { if (typeof node.createUniqueName === 'function') node.createUniqueName(); } catch (e) { /* ignore */ }
 					node.imm_type = 'inline';
+					if (hasSourceTint) {
+						node.imm_tint_type = sourceTintType;
+						if (group.imm_tint_index !== undefined) node.imm_tint_index = group.imm_tint_index;
+						if (group.imm_tint_value !== undefined) node.imm_tint_value = group.imm_tint_value;
+						if (group.imm_tints !== undefined) node.imm_tints = group.imm_tints;
+					}
 					importedGroups.push(node);
 				} catch (error) { console.warn('[装配] 创建导入分组失败', error); continue; }
 				const nested = [];
@@ -1870,6 +1880,20 @@ function importModelReference(group) {
 		}
 		created.push(cube);
 	});
+		// 着色配置有效时，给所有导入方块补 tintindex（面原本没有 tint 的才补）
+		if (hasSourceTint && /^-?\d+$/.test(sourceTintIndex)) {
+			const tintValue = Number(sourceTintIndex);
+			const applyTint = (nodes) => {
+				for (const node of (nodes || [])) {
+					if (isCube(node)) {
+						for (const face of Object.values(node.faces || {})) {
+							if (typeof face.tint !== 'number' || face.tint < 0) face.tint = tintValue;
+						}
+					} else if (isGroup(node)) applyTint(node.children);
+				}
+			};
+			applyTint(group.children);
+		}
 		// 自动对齐：把模型包围盒中点移到 (8,8,8)，偏移写进本层 translation
 		if (group.imm_align_center === true && created.length) {
 			const min = [Infinity, Infinity, Infinity];
