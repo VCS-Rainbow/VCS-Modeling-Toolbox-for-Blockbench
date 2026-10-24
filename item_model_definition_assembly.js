@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.8.4';
+const VERSION = '0.8.5';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -726,23 +726,23 @@ function editGroupProps() {
 				label: '映射类型', type: 'select', value: String(group.imm_type || 'composite'),
 				options: { composite: 'composite', model: 'model', range_dispatch: 'range_dispatch', condition: 'condition', empty: 'empty' },
 			},
-			imm_model: { label: '引用模型（Java 模型 id，留空=用本层方块生成）', type: 'text', value: String(group.imm_model || '') },
-			imm_property: { label: 'property', type: 'text', value: String(group.imm_property || '') },
-			imm_index: { label: 'index（仅 range_dispatch）', type: 'number', value: num(group.imm_index) },
-			imm_threshold: { label: 'threshold（父层 range_dispatch）', type: 'number', value: num(group.imm_threshold) },
-			imm_scale: { label: 'scale', type: 'number', value: num(group.imm_scale) || 1 },
-			imm_tints: { label: 'tints（JSON，仅 model / composite 自带模型）', type: 'text', value: String(group.imm_tints || '') },
+			imm_model: { label: '引用模型（Java 模型 id）', type: 'text', value: String(group.imm_model || ''), description: '所有类型可用：填了就引用该 Java 模型作为本层几何；留空则用本层方块生成模型文件', condition: (r) => r.imm_type !== 'empty' },
+			imm_property: { label: 'property（取值来源）', type: 'text', value: String(group.imm_property || ''), description: '仅 range_dispatch / condition 有效。range_dispatch 例 minecraft:custom_model_data；condition 例 minecraft:selected', condition: (r) => r.imm_type === 'range_dispatch' || r.imm_type === 'condition' },
+			imm_index: { label: 'index（custom_model_data 下标）', type: 'number', value: num(group.imm_index), description: '仅 range_dispatch 有效：property 为 custom_model_data 时取哪个下标', condition: (r) => r.imm_type === 'range_dispatch' },
+			imm_threshold: { label: 'threshold（父层 range_dispatch 的阈值）', type: 'number', value: num(group.imm_threshold), description: '仅当父分组类型是 range_dispatch 时生效：本分组作为 entries 的阈值', condition: (r) => r.imm_type === 'range_dispatch' },
+			imm_scale: { label: 'scale（数值缩放）', type: 'number', value: num(group.imm_scale) || 1, description: '仅 range_dispatch 有效：property 数值乘以该倍数后再查阈值', condition: (r) => r.imm_type === 'range_dispatch' },
+			imm_tints: { label: 'tints（染色来源 JSON）', type: 'text', value: String(group.imm_tints || ''), description: '仅 model / composite（本层自带模型）有效。例：[{"type":"custom_model_data","index":0,"default":0}]', condition: (r) => r.imm_type === 'model' || r.imm_type === 'composite' },
 		},
 		onConfirm(result) {
 			try {
 				Undo.initEdit({ groups: [group] });
 				group.imm_type = result.imm_type;
-				group.imm_model = result.imm_model;
-				group.imm_property = result.imm_property;
-				group.imm_index = num(result.imm_index);
-				group.imm_threshold = num(result.imm_threshold);
-				group.imm_scale = num(result.imm_scale) || 1;
-				group.imm_tints = result.imm_tints;
+				if (result.imm_model !== undefined) group.imm_model = result.imm_model;
+				if (result.imm_property !== undefined) group.imm_property = result.imm_property;
+				if (result.imm_index !== undefined) group.imm_index = num(result.imm_index);
+				if (result.imm_threshold !== undefined) group.imm_threshold = num(result.imm_threshold);
+				if (result.imm_scale !== undefined) group.imm_scale = num(result.imm_scale) || 1;
+				if (result.imm_tints !== undefined) group.imm_tints = result.imm_tints;
 				Undo.finishEdit('修改分组映射属性');
 				Blockbench.showQuickMessage('已更新 “' + labelOf(group) + '”', 2500);
 			} catch (error) {

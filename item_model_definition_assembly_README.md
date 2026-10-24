@@ -128,3 +128,22 @@ Blockbench 5.x 的实现方式有两条，本插件都接上了：
 - 单轴旋转角超出 ±45° 的元素会被原样写出（`.notes.txt` 里会统计数量），游戏可能拒绝加载。
 - 负尺寸（`from > to`）方块按 Blockbench 的做法原样输出。
 - 纹理必须内嵌在 `.bbmodel`（data URL）才会被打包，否则 `.notes.txt` 会提示手动放置路径。
+
+## 分组属性适用范围
+
+编辑对话框（`Tools → 编辑分组映射属性…`）会**按所选映射类型**只显示该类型用得上的字段。
+
+| 属性 | composite | model | range_dispatch | condition | empty |
+| --- | --- | --- | --- | --- | --- |
+| `imm_model` 引用模型 | ✓ | ✓ | ✓（作为 fallback） | ✓ | — |
+| `imm_tints` 染色来源 | ✓（本层自带模型时） | ✓ | — | — | — |
+| `imm_property` | — | — | ✓ | ✓ | — |
+| `imm_index` | — | — | ✓ | — | — |
+| `imm_scale` | — | — | ✓ | — | — |
+| `imm_threshold` | — | — | ✓（用于父层为 range_dispatch 时） | — | — |
+
+说明：
+
+- `index` 和 `tints` 是两个不同用途的属性：`index` 只用于 `range_dispatch` 选择 `custom_model_data` 的下标；`tints` 是 `model` 节点的染色来源列表。
+- `tints` 必须是 **JSON 数组**，例如 `[{"type":"custom_model_data","index":0,"default":0}]`；填 `"0"` 之类不是合法 JSON，会被忽略并在 `.notes.txt` 提示。
+- 面的 `tintindex` 由 UV 编辑器里的“着色”开关决定（Blockbench 写 `tint: 0`），导出时**只要面有 `tint` 字段就输出 `tintindex`（含 0）**。
