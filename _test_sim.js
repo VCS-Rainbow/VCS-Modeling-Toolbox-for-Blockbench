@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.53.3', api.VERSION, '0.53.3');
+eq('版本是 0.54.0', api.VERSION, '0.54.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -452,6 +452,27 @@ eq('同一结果应用到多个分组', batchA.imm_type === 'inline' && batchB.i
 console.log('\n[导入 tintindex 判定]');
 eq('模型已有 tintindex', api.modelElementsHaveTintIndex([{ faces: { north: { tintindex: 0 }, east: {} } }]), true);
 eq('模型没有 tintindex', api.modelElementsHaveTintIndex([{ faces: { north: { uv: [0, 0, 1, 1] } } }]), false);
+
+/* ---------- 不活跃分支锁定 ---------- */
+console.log('\n[不活跃分支锁定]');
+const lockGroup = new global.Group({ name: 'lockGroup', imm_type: 'model', imm_model: 'ns:item/lock' });
+lockGroup.mesh = { visible: true };
+const lockCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0], export: true });
+lockCube.parent = lockGroup; lockGroup.children.push(lockCube); lockCube.mesh = { material: { map: { name: 'lk' } } };
+const activeGroup = new global.Group({ name: 'activeGroup' }); activeGroup.mesh = { visible: true };
+api.simApplyGroupVisual([{ group: lockGroup, active: false }, { group: activeGroup, active: true }], 'ghost_lock');
+eq('半透明并锁定：未活跃组被锁', lockGroup.locked, true);
+eq('半透明并锁定：子方块被锁', lockCube.locked, true);
+eq('半透明并锁定：活跃组不锁', !!activeGroup.locked, false);
+eq('半透明并锁定：仍有半透明', lockCube.mesh.material.transparent === true, true);
+api.simRestoreView();
+eq('恢复后解锁分组', !!lockGroup.locked, false);
+eq('恢复后解锁方块', !!lockCube.locked, false);
+api.simApplyGroupVisual([{ group: lockGroup, active: false }], 'hide_lock');
+eq('隐藏并锁定：分组隐藏', lockGroup.mesh.visible, false);
+eq('隐藏并锁定：分组锁定', lockGroup.locked, true);
+api.simRestoreView();
+eq('隐藏并锁定：恢复可见', lockGroup.mesh.visible, true);
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));

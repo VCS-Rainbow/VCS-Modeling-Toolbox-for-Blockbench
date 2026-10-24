@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.53.3';
+const VERSION = '0.54.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2178,9 +2178,36 @@ function simHideGroup(group, on) {
 	}
 }
 
+/** 运行时锁定/解锁分组及其所有子项（保存/恢复原有 lock 状态） */
+function simLockGroup(group, on) {
+	if (!group) return;
+	if (on) {
+		if (group.__immLock) return;
+		let ancestor = group.parent;
+		while (ancestor) {
+			if (ancestor.__immLock) return;
+			ancestor = ancestor.parent;
+		}
+		const saved = [];
+		const walk = (node) => {
+			saved.push([node, !!node.locked]);
+			for (const child of (node.children || [])) {
+				if (isGroup(child) || isCube(child)) walk(child);
+			}
+		};
+		walk(group);
+		group.__immLock = saved;
+		for (const pair of saved) { try { pair[0].locked = true; } catch (e) { /* ignore */ } }
+	} else if (group.__immLock) {
+		for (const pair of group.__immLock) { try { pair[0].locked = pair[1]; } catch (e) { /* ignore */ } }
+		delete group.__immLock;
+	}
+}
+
 function simRestoreGroup(group) {
 	for (const child of (group.children || [])) if (isCube(child)) simGhostCube(child, false);
 	simHideGroup(group, false);
+	simLockGroup(group, false);
 }
 
 function simViewEntries(items) {
@@ -2207,19 +2234,24 @@ function simRestoreView() {
 function simApplyGroupVisual(entries, mode) {
 	if (!sim.viewTouched) sim.viewTouched = new Set();
 	if (!mode || mode === 'off') { simRestoreView(); return; }
+	const lock = (mode === 'ghost_lock' || mode === 'hide_lock');
+	const baseMode = (mode === 'ghost_lock') ? 'ghost' : ((mode === 'hide_lock') ? 'hide' : mode);
 	const seen = new Set();
 	for (const entry of entries || []) {
 		const group = entry && entry.group;
 		if (!group) continue;
 		seen.add(group);
 		sim.viewTouched.add(group);
-		if (mode === 'ghost') {
+		if (baseMode === 'ghost') {
 			simHideGroup(group, false);
 			for (const child of (group.children || [])) if (isCube(child)) simGhostCube(child, !entry.active);
-		} else if (mode === 'hide') {
+		} else if (baseMode === 'hide') {
 			for (const child of (group.children || [])) if (isCube(child)) simGhostCube(child, false);
 			simHideGroup(group, !entry.active);
 		}
+		// 锁定时只锁未活跃分支；切回普通模式会恢复原有锁定状态
+		if (lock && !entry.active) simLockGroup(group, true);
+		else simLockGroup(group, false);
 	}
 	// 已经不在映射里的分组要恢复，避免退出/改结构后残留幽灵
 	for (const group of Array.from(sim.viewTouched)) {
@@ -2431,7 +2463,7 @@ function buildSimPanel(show_panel) {
 	const refreshBtn = mk('button', { textContent: '⟳ 刷新', title: '结构/属性改动没生效时点这里重建映射' }, 'padding:4px 8px;');
 	controlRow.appendChild(refreshBtn);
 	const viewSel = mk('select', {}, 'font-size:10px;margin-left:auto');
-	[['off', '不活跃分支：不处理'], ['ghost', '不活跃分支：半透明'], ['hide', '不活跃分支：完全隐藏']].forEach(([value, text]) => viewSel.appendChild(mk('option', { value, textContent: text })));
+	[['off', '不活跃分支：不处理'], ['ghost', '不活跃分支：半透明'], ['ghost_lock', '不活跃分支：半透明并锁定'], ['hide', '不活跃分支：完全隐藏'], ['hide_lock', '不活跃分支：完全隐藏并锁定']].forEach(([value, text]) => viewSel.appendChild(mk('option', { value, textContent: text })));
 	viewSel.value = sim.viewMode || 'off';
 	viewSel.addEventListener('change', () => { simSetViewMode(viewSel.value); simTick(); });
 	controlRow.appendChild(statusEl);
