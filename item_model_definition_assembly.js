@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.12.0';
+const VERSION = '0.12.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -898,8 +898,14 @@ function editGroupProps() {
 					}
 				};
 				walkTint(group, root_index);
-				const sortedCount = parent ? sortBranchChildren(parent) : 0;
-				const relabeled = syncBranchLabels(parent || group);
+				// 既处理“本分组是分支容器”（改它的编号格式/子项），也处理“本分组自己是某个分支”（改它的编号）
+				const sortedSelf = sortBranchChildren(group);
+				const relabelSelf = syncBranchLabels(group);
+				const differentParent = parent && parent !== group;
+				const sortedParent = differentParent ? sortBranchChildren(parent) : 0;
+				const relabelParent = differentParent ? syncBranchLabels(parent) : 0;
+				const sortedCount = sortedSelf + sortedParent;
+				const relabeled = relabelSelf + relabelParent;
 				if (tinted) {
 					Project.saved = false;
 					try { Canvas.updateAll(); } catch (e) { /* ignore */ }
