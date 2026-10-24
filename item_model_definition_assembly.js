@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.61.4';
+const VERSION = '0.61.5';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2323,7 +2323,6 @@ function guardBoxSelection() {
 	// 父分组已经处于选中状态：说明这是“单击分组”的结果，不要再把子元素取消
 	guardingBox = true;
 	try {
-		for (const cube of cubes) { try { if (typeof cube.unselect === 'function') cube.unselect(); } catch (e) { /* ignore */ } }
 		for (const group of groups) {
 			try {
 				if (typeof group.select === 'function') group.select({ ctrlOrCmd: true }, true);
