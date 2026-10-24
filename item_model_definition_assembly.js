@@ -18,11 +18,11 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.45.0';
+const VERSION = '0.47.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
-const MAPPING_TYPES = ['composite', 'model', 'range_dispatch', 'condition', 'select', 'empty'];
+const MAPPING_TYPES = ['composite', 'inline', 'model', 'range_dispatch', 'condition', 'select', 'empty'];
 const MANIFEST = '.imm-assembly-manifest.json';
 
 const BLOCK_DISPLAY = {
@@ -46,6 +46,7 @@ const cleanAll = (list) => list.map(clean);
 const labelOf = (node) => (node && node.name) ? node.name : 'unnamed';
 const isGroup = (node) => typeof Group !== 'undefined' && node instanceof Group;
 const isCube = (node) => typeof Cube !== 'undefined' && node instanceof Cube;
+const isLocator = (node) => typeof Locator !== 'undefined' && node instanceof Locator;
 const num = (v) => Number(v) || 0;
 
 function sanitizePath(value, fallback) {
@@ -199,6 +200,7 @@ class Exporter {
 		this.uvScales = new Map();
 		this.modelNames = new Set();
 		this.groupNodes = new Map(); // 映射节点 → 来源分组（视图联动用，不参与导出）
+		this.groupNodeCache = new Map(); // 分组 → 已构建的映射节点（复调用克隆用）
 		this.textureNames = new Set();
 		this.negativeCount = 0;
 	}
@@ -504,16 +506,31 @@ class Exporter {
 		for (const cube of cubes) (this.needsOwnNode(cube) ? ownCubes : inlineCubes).push(cube);
 
 		let built = null;
-		if (type === 'model' && group.imm_model) built = { reference: String(group.imm_model).trim(), shift: [0, 0, 0] };
+		if (type === 'model' && group.imm_model) {
+			let shift = [0, 0, 0];
+			try {
+				const parsed = JSON.parse(String(group.imm_model_shift || ''));
+				if (Array.isArray(parsed) && parsed.length === 3 && parsed.every(v => isFinite(Number(v)))) shift = parsed.map(Number);
+			} catch (e) { /* ignore */ }
+			built = { reference: String(group.imm_model).trim(), shift };
+		}
 		else if (inlineCubes.length) built = this.addModel(inlineCubes, hint);
 
-		const node = { type: 'minecraft:' + type };
+		// inline（内联模型）在导出结构里等同于 composite：自身方块烘焙成模型，子分组各自输出
+		const outputType = type === 'inline' ? 'composite' : type;
+		const node = { type: 'minecraft:' + outputType };
 		try { this.groupNodes.set(node, group); } catch (e) { /* ignore */ }
+		try { this.groupNodeCache.set(group, node); } catch (e) { /* ignore */ }
 		const own_shift = built ? built.shift : [0, 0, 0];
 		const transformation = this.buildTransformation(group, own_shift, parent_shift);
 		if (transformation) node.transformation = transformation;
 
 		const extras = ownCubes.map(cube => this.buildCubeNode(cube, hint, parent_shift)).filter(Boolean);
+		const calls = children.filter(isLocator).map(locator => this.buildCallNode(locator)).filter(Boolean);
+		if (calls.length && type !== 'composite' && type !== 'inline') {
+			this.warn('复调用标签只支持放在 composite / inline 分组里，已忽略 ' + calls.length + ' 个。');
+			calls.length = 0;
+		}
 
 		if (type === 'empty') return node;
 
@@ -593,6 +610,7 @@ class Exporter {
 					this.warn('分组 "' + labelOf(group) + '" 设置了 tints 但没有自己的模型，已忽略。');
 				}
 		for (const extra of extras) models.push(extra);
+		for (const call of calls) models.push(call);
 		for (const child of childGroups) {
 			const childNode = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'), own_shift);
 			if (childNode) models.push(childNode);
@@ -623,6 +641,57 @@ class Exporter {
 		return node;
 	}
 
+
+	/** 定位点 → 复调用节点：指向分组时先占位，构建完成后克隆目标节点 */
+	buildCallNode(locator) {
+		const target = String((locator && locator.imm_call_target) || '').trim();
+		if (!target) return null;
+		if (target.indexOf(':') >= 0) return { type: 'minecraft:model', model: target };
+		let group = null;
+		try { if (typeof Group !== 'undefined' && Array.isArray(Group.all)) group = Group.all.find(g => g && g.uuid === target) || null; } catch (e) { /* ignore */ }
+		if (!group) { this.warn('复调用标签 “' + labelOf(locator) + '” 找不到目标分组：' + target); return null; }
+		return { type: 'minecraft:empty', __imm_call_group: group };
+	}
+
+	/** 把占位替换为目标分组的映射节点（深拷贝，保留 transformation） */
+	resolveCallPlaceholders(node) {
+		if (!node || typeof node !== 'object') return;
+		if (Array.isArray(node)) {
+			for (let i = node.length - 1; i >= 0; i--) {
+				const item = node[i];
+				if (item && typeof item === 'object' && item.__imm_call_group) {
+					const target = this.groupNodeCache ? this.groupNodeCache.get(item.__imm_call_group) : null;
+					if (!target) { this.warn('复调用目标没有可导出的映射节点，已跳过。'); node.splice(i, 1); continue; }
+					const clone = JSON.parse(JSON.stringify(target));
+					this.stripCallPlaceholders(clone);
+					node[i] = clone;
+				} else this.resolveCallPlaceholders(item);
+			}
+			return;
+		}
+		for (const key of Object.keys(node)) {
+			const value = node[key];
+			if (value && typeof value === 'object') this.resolveCallPlaceholders(value);
+		}
+	}
+
+	/** 克隆体内残留的复调用占位改成 empty，避免自引用无限展开 */
+	stripCallPlaceholders(node) {
+		if (!node || typeof node !== 'object') return;
+		if (Array.isArray(node)) {
+			for (let i = node.length - 1; i >= 0; i--) {
+				const item = node[i];
+				if (item && typeof item === 'object' && item.__imm_call_group) node[i] = { type: 'minecraft:empty' };
+				else this.stripCallPlaceholders(item);
+			}
+			return;
+		}
+		for (const key of Object.keys(node)) {
+			const value = node[key];
+			if (value && typeof value === 'object') this.stripCallPlaceholders(value);
+		}
+	}
+
 	buildMapping() {
 		const root = (typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : [];
 		const models = [];
@@ -632,6 +701,9 @@ class Exporter {
 			if (isGroup(node)) {
 				const built = this.buildNode(node, sanitizePath(labelOf(node), 'group'), [0, 0, 0]);
 				if (built) models.push(built);
+			} else if (isLocator(node)) {
+				const call = this.buildCallNode(node);
+				if (call) models.push(call);
 			} else if (isCube(node)) loose.push(node);
 		}
 		if (loose.length) {
@@ -656,7 +728,9 @@ class Exporter {
 			}
 		}
 		if (!models.length) throw new Error('当前项目没有可导出的分组或方块。');
-		return { model: { type: 'minecraft:composite', models } };
+		const result = { model: { type: 'minecraft:composite', models } };
+		this.resolveCallPlaceholders(result.model);
+		return result;
 	}
 
 	buildNotes() {
@@ -1348,7 +1422,7 @@ function editGroupProps() {
 		form: {
 			imm_type: {
 				label: '映射类型（type）', description: '语法：{"type": "minecraft:<类型>"}\n作用：决定本节点是哪一种物品模型映射。\n可选：composite / model / range_dispatch / condition / empty', type: 'select', value: String(group.imm_type || 'composite'),
-				options: { composite: 'composite', model: 'model', range_dispatch: 'range_dispatch', condition: 'condition', select: 'select', empty: 'empty' },
+				options: { composite: 'composite', inline: 'inline（内联模型）', model: 'model（引用模型）', range_dispatch: 'range_dispatch', condition: 'condition', select: 'select', empty: 'empty' },
 			},
 			imm_model: { label: '引用模型（model）', description: '语法：{"type": "minecraft:model", "model": "<命名空间>:item/<路径>"}\n作用：本节点直接引用一个 Java 版模型；\n留空则由本层方块生成模型文件。', type: 'text', value: String(group.imm_model || ''), condition: (r) => r.imm_type === 'model' },
 			imm_property: { label: 'property（谓词 / 属性）', type: 'select', value: String(group.imm_property || ''), options: { '': '（未设置）', selected: 'selected', broken: 'broken', damaged: 'damaged', carried: 'carried', extended_view: 'extended_view', using_item: 'using_item', view_entity: 'view_entity', 'fishing_rod/cast': 'fishing_rod/cast', 'bundle/has_selected_item': 'bundle/has_selected_item', custom_model_data: 'custom_model_data', has_component: 'has_component', component: 'component', keybind_down: 'keybind_down', compass: 'compass（range）', count: 'count（range）', damage: 'damage（range）', time: 'time（range）', use_cycle: 'use_cycle（range）', use_duration: 'use_duration（range）', 'bundle/fullness': 'bundle/fullness（range）', cooldown: 'cooldown（range）', 'crossbow/pull': 'crossbow/pull（range）', context_dimension: 'context_dimension（select）', block_state: 'block_state（select）', local_time: 'local_time（select）' }, description: 'condition：谓词（selected / broken / custom_model_data / has_component / component / keybind_down …）；\nrange_dispatch：数值属性（custom_model_data / compass / count / damage / time / use_cycle / use_duration）', condition: (r) => r.imm_type === 'range_dispatch' || r.imm_type === 'condition' },
@@ -1468,6 +1542,92 @@ Undo.finishEdit('修改分组映射属性');
 				console.error(error);
 				Blockbench.showMessageBox({ title: '修改失败', message: String((error && error.message) || error), icon: 'error' });
 			}
+		},
+	}).show();
+}
+
+/** 从分组创建模型：烘焙组内方块、写到资源包 models/item、分组改为引用并记录居中补偿 */
+function callSelectedGroup() {
+	if (typeof Locator === 'undefined') {
+		Blockbench.showMessageBox({ title: '不支持定位点', message: '当前 Blockbench 版本没有 Locator。', icon: 'warning' });
+		return;
+	}
+	const groups = selectedGroups();
+	if (!groups.length) {
+		Blockbench.showMessageBox({ title: '请先选中分组', message: '在 outliner 里选中至少一个分组，再执行复调用。', icon: 'info' });
+		return;
+	}
+	try { Undo.initEdit({ outliner: true, elements: [] }); } catch (e) { /* ignore */ }
+	let created = 0;
+	for (const group of groups) {
+		try {
+			const locator = new Locator({ name: '调用 ' + labelOf(group), position: (group.origin || [0, 0, 0]).slice(), rotation: (group.rotation || [0, 0, 0]).slice(), ignore_inherited_scale: true });
+			if (group.parent) locator.addTo(group.parent); else locator.addTo();
+			try { locator.init(); } catch (e) { /* ignore */ }
+			locator.imm_call_target = group.uuid;
+			created++;
+		} catch (error) { console.error('[装配] 创建复调用标签失败', error); }
+	}
+	try { Undo.finishEdit('复调用选中的分组'); } catch (e) { /* ignore */ }
+	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+	try { Project.saved = false; } catch (e) { /* ignore */ }
+	simInvalidate();
+	Blockbench.showQuickMessage('已创建 ' + created + ' 个复调用标签', 3000);
+}
+
+function createModelFromGroup(group) {
+	if (!group) return;
+	const root = String(projectValue('imm_pack_path', '') || '').trim();
+	if (!root) {
+		Blockbench.showMessageBox({ title: '需要资源包工程', message: '先通过 File → 选择资源包工程路径… 设置目标资源包，再创建模型。', icon: 'warning' });
+		return;
+	}
+	const cubes = (group.children || []).filter(isCube);
+	if (!cubes.length) {
+		Blockbench.showMessageBox({ title: '没有方块', message: '分组 “' + labelOf(group) + '” 里没有可直接烘焙的方块。', icon: 'info' });
+		return;
+	}
+	new Dialog({
+		id: 'imm_create_model',
+		title: '从分组创建模型',
+		width: 560,
+		form: {
+			name: { label: '模型名', type: 'text', value: sanitizePath(labelOf(group), 'group'), description: '写入 assets/<namespace>/models/item/<名字>.json；分组会改为引用该模型，并记录居中补偿以保持外观。' },
+		},
+		onConfirm(result) {
+			const hint = sanitizePath(result.name || labelOf(group), 'group');
+			const exporter = createExporter();
+			let built = null;
+			try { built = exporter.addModel(cubes, hint); } catch (e) { built = null; }
+			if (!built) {
+				Blockbench.showMessageBox({ title: '创建失败', message: '这些方块没有可导出的纹理面。', icon: 'error' });
+				return;
+			}
+			const model = exporter.models[exporter.models.length - 1];
+			const pathmod = getPath();
+			const fsmod = getScopedFs(root);
+			if (!pathmod || !fsmod || !model) {
+				Blockbench.showMessageBox({ title: '无法写入', message: '需要桌面版 Blockbench，并且资源包路径可用。', icon: 'warning' });
+				return;
+			}
+			const dir = pathmod.join(root, 'assets', exporter.namespace, 'models', 'item');
+			const file = pathmod.join(dir, model.name + '.json');
+			try {
+				fsmod.mkdirSync(dir, { recursive: true });
+				Blockbench.writeFile(file, { content: formatModel(model.data), savetype: 'text' });
+			} catch (error) {
+				Blockbench.showMessageBox({ title: '写入失败', message: String((error && error.message) || error), icon: 'error' });
+				return;
+			}
+			try { Undo.initEdit({ groups: [group] }); } catch (e) { /* ignore */ }
+			group.imm_type = 'model';
+			group.imm_model = built.reference;
+			group.imm_model_shift = JSON.stringify(built.shift);
+			try { Undo.finishEdit('从分组创建模型'); } catch (e) { /* ignore */ }
+			try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+			try { Project.saved = false; } catch (e) { /* ignore */ }
+			simInvalidate();
+			Blockbench.showQuickMessage('已创建 ' + built.reference + '（已居中，分组改为引用）', 4000);
 		},
 	}).show();
 }
@@ -2476,8 +2636,12 @@ function registerProperties() {
 	// 面着色：Blockbench 的 UV 编辑器“着色”开关绑定 Face.properties.tint（默认 -1 表示未着色）
 	P(Face, 'number', 'tint', { label: '着色 index', default: -1 });
 
-	P(Group, 'string', 'imm_type', { label: '映射类型（type）', description: '语法：{"type": "minecraft:<类型>"}\n作用：决定本节点是哪一种物品模型映射。\n可选：composite / model / range_dispatch / condition / empty', default: 'composite', enum_values: MAPPING_TYPES });
+	P(Group, 'string', 'imm_type', { label: '映射类型（type）', description: '语法：{"type": "minecraft:<类型>"}\n作用：决定本节点是哪一种物品模型映射。\ncomposite=结构分组；inline=内联模型（本组方块烘焙成模型）；model=引用模型；还有 range_dispatch / condition / select / empty', default: 'composite', enum_values: MAPPING_TYPES });
 	P(Group, 'string', 'imm_model', { label: '引用模型（imm_model）', default: '' });
+	try { new Property(Group, 'string', 'imm_model_shift', { default: '', exposed: false, condition: cond }); } catch (e) { /* ignore */ }
+	if (typeof Locator !== 'undefined') {
+		try { new Property(Locator, 'string', 'imm_call_target', { label: '复调用目标（分组 UUID 或模型 id）', default: '', exposed: false }); } catch (e) { /* ignore */ }
+	}
 	P(Group, 'string', 'imm_property', { label: '取值来源 / 条件（property / when）', default: '' });
 	P(Group, 'number', 'imm_index', { label: 'index（仅 range_dispatch：custom_model_data 下标）', default: 0 });
 	P(Group, 'string', 'imm_range_target', { label: 'compass target', default: '' });
@@ -2508,6 +2672,8 @@ function attachGroupMenu() {
 	try {
 		if (typeof Group !== 'undefined' && Group.prototype && Group.prototype.menu && typeof Group.prototype.menu.addAction === 'function') {
 			Group.prototype.menu.addAction(actions.props);
+			if (actions.createModel) { try { Group.prototype.menu.addAction(actions.createModel); } catch (e) { /* ignore */ } }
+			if (actions.call) { try { Group.prototype.menu.addAction(actions.call); } catch (e) { /* ignore */ } }
 			menuAttached = true;
 			console.log('[装配] 已加入分组右键菜单');
 		}
@@ -2549,6 +2715,7 @@ Plugin.register('item_model_definition_assembly', {
 			single_texture: false,
 			per_texture_uv_size: true,
 			bone_rig: true,
+			locators: true,
 			centered_grid: false,
 			rotate_cubes: true,
 			rotation_limit: false,
@@ -2623,6 +2790,8 @@ Plugin.register('item_model_definition_assembly', {
 		actions.zip = new Action('imm_export_zip', { name: '导出装配资源包 (zip)', description: 'items + models + textures', icon: 'archive', category: 'file', condition, click: exportZip });
 		actions.merge = new Action('imm_merge_pack', { name: '合并到资源包…', description: '直接写入资源包并覆盖旧文件', icon: 'folder_open', category: 'file', condition, click: mergeToPack });
 		actions.import = new Action('imm_import_model', { name: '导入引用模型（当前分组）', description: '按 imm_model 从资源包工程导入 Java 模型为方块', icon: 'file_download', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const g = pickTargetGroup(); if (!g) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } if (!String(g.imm_model || '').trim()) { Blockbench.showMessageBox({ title: '没有引用模型', message: '该分组没有填写 imm_model（引用模型）。', icon: 'info' }); return; } importModelReference(g); } });
+		actions.call = new Action('imm_call_group', { name: '复调用选中的分组', description: '在分组枢轴处创建复调用标签（Locator），导出时替换为目标分组', icon: 'content_copy', category: 'tools', condition, click: callSelectedGroup });
+		actions.createModel = new Action('imm_create_model', { name: '从分组创建模型…', description: '把选中分组的方块烘焙成 models/item 模型，并改为引用（自动居中）', icon: 'file_upload', category: 'tools', condition, click: () => { const group = pickTargetGroup(); if (!group) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } createModelFromGroup(group); } });
 		actions.check = new Action('imm_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
 		actions.pack = new Action('imm_pick_pack', { name: '选择资源包工程路径…', description: '打开系统文件夹选择框，设为资源包工程目录', icon: 'folder_open', category: 'file', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: pickPackPath });
 		actions.sim = new Action('imm_simulate', { name: '模拟输入…', description: '按 custom_model_data / selected 预览分支命中', icon: 'play_circle', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const panel = buildSimPanel(false); if (panel) { panel.show(); return; } openSimulator(); } });
@@ -2635,6 +2804,8 @@ Plugin.register('item_model_definition_assembly', {
 		placeInFileMenu(actions.pack, ['save_model', 'export', 'import']);
 		
 		addMenu(actions.check, 'tools');
+		addMenu(actions.createModel, 'tools');
+		addMenu(actions.call, 'tools');
 		addMenu(actions.import, 'tools');
 		addMenu(actions.props, 'tools');
 		addMenu(actions.pivot, 'tools');

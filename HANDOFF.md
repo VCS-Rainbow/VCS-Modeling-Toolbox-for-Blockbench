@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-24 · 当前版本 **0.45.0**（tag `v0.45.0`）
+> 生成时间：2026-10-24 · 当前版本 **0.47.0**（tag `v0.47.0`）
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 
 ---
@@ -122,11 +122,24 @@
 - 验证：`pivot_lab2.js`（临时脚本）在真实 `assembly.bbmodel` 上逐组/整树修正，153 个角点误差 0。
 - 单测：`_test_sim.js` 用两层旋转分组断言「世界坐标不变 + 枢轴落在内容中心」。
 
+### 2.9 内联模型 / 从分组创建模型
+
+- `inline`（内联模型）：导出结构等同 composite（本组方块烘焙成模型）；`model` 表示引用 `imm_model`。
+- `Tools → 从分组创建模型…`：`createModelFromGroup()` 用 `createExporter().addModel(cubes, hint)` 烘焙（会自动居中），`formatModel()` 写 `assets/<ns>/models/item/<name>.json`，然后把分组改为 `model` + `imm_model`，并把居中补偿写进隐藏属性 `imm_model_shift`（`buildNode` 的 model 分支会解析它作为 shift，保证外观不变）。
+
+### 2.10 复调用标签（Locator）
+
+- 格式开启 `locators: true`；`Tools / 分组右键 → 复调用选中的分组` 在分组 origin 处创建 Locator，`imm_call_target` = 分组 uuid。
+- 导出：`buildCallNode()` 对分组目标返回占位 `{__imm_call_group}`；`buildMapping()` 结束后 `resolveCallPlaceholders()` 把占位替换为 `groupNodeCache` 里目标节点的深拷贝（保留 transformation），并用 `stripCallPlaceholders()` 去掉克隆体内残留占位（防自引用）。
+- 目标也可以写模型 id（含 `:`）→ 直接输出 `minecraft:model`。
+- 标签只建议放在 composite / inline 分组；其他类型会警告并忽略。
 ---
 
 ## 3. 版本历史（近期，git tag）
 
 ```
+0.47.0  Locator 复调用标签（导出替换为目标分组节点）+ 右键/工具菜单
+0.46.0  inline 内联模型类型；从分组创建模型（自动居中 + 引用）
 0.45.0  幽灵材质改 MeshBasicMaterial（Blockbench 贴图是 ShaderMaterial，opacity 无效）
 0.44.0  视图联动登记 composite 内联/fallback/多轴方块节点；condition 未选分支也求值
 0.43.0  视图联动改为开启时每 250ms 重贴（Blockbench 会重置材质/可见性）+ 诊断入口
@@ -225,7 +238,7 @@
 $node = 'C:\Users\Rainbow_\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 & $node --check 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js'
 & $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_assembly.js'   # 离线冒烟
-& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图单测（94 项）
+& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图/复调用单测（99 项）
 Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js' `
   'C:\Users\Rainbow_\AppData\Roaming\Blockbench\plugins\item_model_definition_assembly.js' -Force
 ```

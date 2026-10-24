@@ -2,6 +2,16 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.47.0
+- **新增「复调用标签」元素**：给格式开启 `locators`，用 Blockbench 的 Locator 承载（无几何，有位置/旋转），自定义属性 `imm_call_target`（目标分组 UUID 或模型 id）。
+- **Tools / 分组右键「复调用选中的分组」**：在选中分组的枢轴处创建标签（position/rotation 同分组），并指向该分组。
+- **导出**：标签位置替换为目标分组的映射节点（深拷贝、保留其 `transformation`），composite / range_dispatch / select / condition 的结构一并复制；几何模型文件只生成一次；找不到目标或循环引用会警告并跳过；标签只建议放在 composite / inline 分组。
+- 单测扩到 **99 项**：新增复调用替换与占位清理断言。
+
+## 0.46.0
+- **新增分组类型 `inline`（内联模型）**：导出结构等同 composite（本组方块烘焙成模型），用来区分「引用模型（model）」和装配体里现做的模型。
+- **Tools / 右键「从分组创建模型…」**：把分组里的方块烘焙成 `assets/<ns>/models/item/<名字>.json`（自动居中）写入资源包；分组改为 `model` 引用，并用隐藏属性 `imm_model_shift` 记录居中补偿，外观不变。
+- 单测扩到 **97 项**：inline 导出结构、引用模型居中补偿。
 ## 0.45.0
 - **修「半透明变成完全消失」**：Blockbench 的贴图材质是**自定义 `ShaderMaterial`**，片元 alpha 直接取纹理（`gl_FragColor = vec4(..., color.a)`），`material.opacity` 完全不参与；克隆后设 `opacity` 不会变半透明（还会因为 `transparent`/`depthWrite` 改动出怪）。
   - 幽灵材质改为 **`THREE.MeshBasicMaterial`**，复用原材质的贴图（`uniforms.map.value` 或 `material.map`），设 `transparent + opacity 0.28 + depthWrite false + alphaTest 0`；

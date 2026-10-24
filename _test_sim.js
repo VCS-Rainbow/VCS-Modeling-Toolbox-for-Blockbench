@@ -30,6 +30,7 @@ global.THREE = { Quaternion, Euler };
 global.Texture = class { constructor(o) { Object.assign(this, o); } }; Texture.all = [];
 global.Cube = class { constructor(o) { Object.assign(this, o); } }; global.Cube.all = [];
 global.Group = class { constructor(o) { Object.assign(this, o); this.children = []; } }; global.Group.all = [];
+global.Locator = class { constructor(o) { Object.assign(this, o); this.uuid = (o && o.uuid) || ('loc-' + Math.random()); } addTo() { return this; } init() { return this; } };
 global.Outliner = { root: [], selected: [] };
 global.Project = { name: 'test', imm_pack_version: '26.2' };
 global.Properties = [];
@@ -67,7 +68,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.45.0', api.VERSION, '0.45.0');
+eq('版本是 0.47.0', api.VERSION, '0.47.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -344,6 +345,52 @@ const fakeMapping = fakeExporter.buildMapping();
 const fakeItems = api.simEvaluate(fakeMapping.model, { floats: [], colors: [], strings: [], flags: [], selected: false, using_item: false, damage: 0, count: 0, time: 0 });
 eq('composite 内联模型节点能反查分组', fakeItems.length > 0 && fakeItems.every(item => fakeExporter.groupNodes.get(item.node) === fakeComposite), true);
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRoot);
+
+/* ---------- 内联模型 / 引用模型 ---------- */
+console.log('\n[内联模型]');
+const inlineGroup = new global.Group({ name: 'inlineGroup', imm_type: 'inline' });
+inlineGroup.children.push(new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0], export: true }));
+inlineGroup.mesh = { visible: true };
+const savedRoot2 = global.Outliner.root.splice(0, global.Outliner.root.length, inlineGroup);
+const inlineExporter = api.createExporter();
+inlineExporter.addModel = () => ({ reference: 'ns:item/inlinefake', shift: [0, 0, 0] });
+const inlineMapping = inlineExporter.buildMapping();
+eq('inline 导出结构等同 composite', inlineMapping.model.type, 'minecraft:composite');
+eq('inline 分组节点能反查', inlineExporter.groupNodes.get(inlineMapping.model.models[0]) === inlineGroup, true);
+global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRoot2);
+
+const buildModelNode = (shiftText) => {
+	const group = new global.Group({ name: 'refGroup', imm_type: 'model', imm_model: 'ns:item/ref', imm_model_shift: shiftText, origin: [8, 8, 8], rotation: [0, 0, 0] });
+	group.mesh = { visible: true };
+	const saved = global.Outliner.root.splice(0, global.Outliner.root.length, group);
+	const exporter = api.createExporter();
+	const mapping = exporter.buildMapping();
+	global.Outliner.root.splice(0, global.Outliner.root.length, ...saved);
+	return mapping.model.models[0].transformation;
+};
+const plainTransform = buildModelNode('');
+const shiftedTransform = buildModelNode('[0,0,8]');
+eq('引用模型会应用居中补偿', JSON.stringify(plainTransform) !== JSON.stringify(shiftedTransform), true);
+
+/* ---------- 复调用标签 ---------- */
+console.log('\n[复调用标签]');
+const targetGroup = new global.Group({ name: 'targetGroup', imm_type: 'composite', uuid: 'target-uuid' });
+targetGroup.children.push(new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0], export: true }));
+targetGroup.mesh = { visible: true };
+const callerGroup = new global.Group({ name: 'callerGroup', imm_type: 'composite', uuid: 'caller-uuid' });
+const callLocator = new global.Locator({ name: '调用 targetGroup', position: [0, 0, 0], rotation: [0, 0, 0] });
+callLocator.imm_call_target = 'target-uuid';
+callerGroup.children.push(callLocator);
+callerGroup.mesh = { visible: true };
+global.Group.all.push(targetGroup);
+const savedRoot3 = global.Outliner.root.splice(0, global.Outliner.root.length, targetGroup, callerGroup);
+const callExporter = api.createExporter();
+callExporter.addModel = () => ({ reference: 'ns:item/callfake', shift: [0, 0, 0] });
+const callJSON = JSON.stringify(callExporter.buildMapping());
+eq('复调用标签被替换为目标分组节点（几何只生成一次）', (callJSON.match(/ns:item\/callfake/g) || []).length, 2);
+eq('导出结果不含占位字段', callJSON.indexOf('__imm_call_group'), -1);
+global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRoot3);
+global.Group.all.splice(global.Group.all.indexOf(targetGroup), 1);
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
