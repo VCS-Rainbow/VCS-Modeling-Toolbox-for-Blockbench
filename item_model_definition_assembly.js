@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.31.3';
+const VERSION = '0.31.4';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1462,20 +1462,32 @@ function buildSimPanel(show_panel) {
 	for (const [key, label, kind] of SPECS) {
 		const row = { key, kind, enabled: false, index: 0, value: kind === 'bool' ? 'false' : (kind === 'text' ? '' : '0'), auto: false, period: 200, step: 0.5, rule: 'pingpong', min: 0, max: 4, dir: 1 };
 		const box = mk('details', {}, 'border-top:1px solid rgba(128,128,128,.25);padding-top:3px');
-		const head = mk('summary', {}, 'cursor:pointer;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;list-style:none;padding:3px 0');
+		const head = mk('summary', {}, 'cursor:pointer;display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;list-style:none;padding:3px 0');
+		const enable = mk('input', { type: 'checkbox' });
 		const nameEl = mk('span', { textContent: label }, 'flex:1 1 100%;font-weight:600;opacity:.95');
+		const idx = mk('input', { type: 'number', value: '0' }, 'width:52px;display:' + (kind === 'bool' && (key === 'selected' || key === 'using_item') ? 'none' : 'inline-block'));
+		const val = mk('input', { type: kind === 'text' ? 'text' : (kind === 'bool' ? 'text' : 'number'), value: row.value }, 'width:78px');
+		const enableWrap = mk('label', {}, 'display:flex;align-items:center;gap:4px;font-size:11px');
+		enableWrap.appendChild(enable); enableWrap.appendChild(mk('span', { textContent: label }));
+		head.appendChild(nameEl);
+		if (kind !== 'bool' || (key !== 'selected' && key !== 'using_item')) head.appendChild(cell('索引', idx, '64px'));
+		head.appendChild(cell('值', val, '92px'));
 		const usageEl = mk('div', {}, 'font-size:10px;opacity:.6;white-space:pre-wrap;line-height:1.35;padding:2px 0 4px 0');
-		const clusterA = mk('div', {}, 'display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap');   // 索引 + 值
-		const clusterB = mk('div', {}, 'display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap');   // 自动 + 周期 + 步长
-		const clusterC = mk('div', {}, 'display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap');   // 规则 + 下限 + 上限
+		const body = mk('div', {}, 'display:flex;flex-wrap:nowrap;gap:6px;padding:6px 0 4px 0;align-items:flex-end;overflow:hidden');
+		const autoC = mk('input', { type: 'checkbox' }); const autoL = mk('label', { textContent: '自动' }, 'display:flex;gap:3px;align-items:center'); autoL.appendChild(autoC);
+		const period = mk('input', { type: 'number', value: '0.2', step: '0.1' }, 'width:100%;min-width:0');
+		const step = mk('input', { type: 'number', value: '0.5', step: '0.1' }, 'width:100%;min-width:0');
+		const rule = mk('select', {}, 'width:100%;min-width:0'); [['pingpong', '往复'], ['wrap', '循环']].forEach(([v, t]) => rule.appendChild(mk('option', { value: v, textContent: t })));
+		const minI = mk('input', { type: 'number', value: '0' }, 'width:100%;min-width:0');
+		const maxI = mk('input', { type: 'number', value: '4' }, 'width:100%;min-width:0');
 		const autoInline = mk('label', {}, 'display:flex;align-items:center;gap:4px;font-size:10px;opacity:.75;padding-bottom:3px;white-space:nowrap');
 		autoInline.appendChild(autoC); autoInline.appendChild(mk('span', { textContent: '自动' }));
-		if (kind !== 'bool' || (key !== 'selected' && key !== 'using_item')) clusterA.appendChild(cell('索引', idx, '58px'));
-		clusterA.appendChild(cell('值', val, '86px'));
-		clusterB.appendChild(autoInline); clusterB.appendChild(cell('脉冲周期（间隔）', period, '76px')); clusterB.appendChild(cell('步长', step, '58px'));
-		clusterC.appendChild(cell('规则', rule, '74px')); clusterC.appendChild(cell('下限', minI, '52px')); clusterC.appendChild(cell('上限', maxI, '52px'));
-		head.appendChild(nameEl); head.appendChild(clusterA);
-		body.appendChild(clusterB); body.appendChild(clusterC);
+		body.appendChild(autoInline);
+		body.appendChild(cell('脉冲周期（间隔）', period));
+		body.appendChild(cell('步长', step));
+		body.appendChild(cell('规则', rule));
+		body.appendChild(cell('下限', minI));
+		body.appendChild(cell('上限', maxI));
 		box.appendChild(head); box.appendChild(body); box.appendChild(usageEl); root.appendChild(box);
 		row.el = { enable, idx, val, auto: autoC, period, step, rule, min: minI, max: maxI, usage: usageEl };
 		const read = () => { row.enabled = enable.checked; row.index = Number(idx.value) || 0; row.value = val.value; row.auto = autoC.checked; row.period = Math.max(50, (Number(period.value) || 0.2) * 1000); row.step = Number(step.value) || 0.5; row.rule = rule.value; row.min = Number(minI.value) || 0; row.max = Number(maxI.value) || 4; };
@@ -1569,12 +1581,6 @@ function simTick() {
 	lines.push('命中 ' + hits.length + ' / 分支 ' + items.length);
 	lines.push('');
 	for (const item of items) lines.push((item.hit ? '  ✔ ' : '  ✘ ') + (item.node.model || item.node.type));
-	for (const key of Object.keys(sim_ui.rows)) {
-		const row = sim_ui.rows[key];
-		if (!row.el || !row.el.usage) continue;
-		const txt = row.el.usage.textContent;
-		if (txt) lines.push('[关联] ' + key + '#' + row.index + ' ' + txt.replace(/\n/g, ' '));
-	}
 	sim_ui.out.textContent = lines.join('\n');
 }
 
