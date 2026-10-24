@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.13.0';
+const VERSION = '0.14.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -833,6 +833,13 @@ function syncBranchLabels(group) {
 						// condition 只输出前两个分支，其余标上 ⚠ 提醒（导出时会被忽略）
 						const ignored = type === 'condition' && index >= 2;
 						const target = (ignored ? '\u26a0 ' : '') + base;
+						if (ignored) {
+							if (child.export !== false) { child.export = false; changed++; }
+							if (projectValue('imm_hide_unavailable', true) !== false && child.visibility !== false) { child.visibility = false; changed++; }
+						} else if (child.export === false && child.imm_auto_disabled) {
+							child.export = true; child.imm_auto_disabled = false; changed++;
+						}
+						if (ignored) child.imm_auto_disabled = true;
 						if (target !== child.name) { child.name = target; changed++; }
 						return;
 					}
@@ -982,6 +989,7 @@ function registerProperties() {
 	P(ModelProject, 'string', 'imm_namespace', { label: '命名空间（namespace）', default: 'custom' });
 	P(ModelProject, 'boolean', 'imm_center_pivot', { label: '旋转枢轴用 (0.5,0.5,0.5)（= 像素 8,8,8）', default: false });
 	P(ModelProject, 'boolean', 'imm_block_display', { label: '模型附带方块 display 变换', default: true });
+	P(ModelProject, 'boolean', 'imm_hide_unavailable', { label: '隐藏当前条件下不可用的分组', default: true });
 	P(ModelProject, 'string', 'imm_pack_path', { label: '合并目标资源包路径', default: '' });
 
 	// 面着色：Blockbench 的 UV 编辑器“着色”开关绑定 Face.properties.tint（默认 -1 表示未着色）
