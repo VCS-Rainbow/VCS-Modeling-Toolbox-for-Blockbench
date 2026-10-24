@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.16.2';
+const VERSION = '0.16.3';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -94,7 +94,7 @@ function formatNode(node, depth) {
 	const pad = '\t'.repeat(depth);
 	const padIn = pad + '\t';
 	const fields = ['"type": ' + JSON.stringify(node.type)];
-	for (const key of ['model', 'property', 'index', 'scale', 'tints', 'transformation']) {
+	for (const key of ['model', 'property', 'when', 'index', 'scale', 'tints', 'transformation']) {
 		if (node[key] !== undefined) fields.push(JSON.stringify(key) + ': ' + inline(node[key]));
 	}
 	for (const key of ['on_true', 'on_false', 'fallback']) {
@@ -544,7 +544,7 @@ class Exporter {
 		if (!models.length) { this.warn('分组 “' + labelOf(group) + '” 没有可导出内容，已跳过。'); return null; }
 
 		if (type === 'condition') {
-			node.property = String(group.imm_property || 'minecraft:selected');
+			node.when = String(group.imm_property || 'minecraft:selected');
 			node.on_true = models[built ? 1 : 0] || { type: 'minecraft:empty' };
 			node.on_false = models[built ? 2 : 1] || { type: 'minecraft:empty' };
 			if (models.length > 2) this.warn('condition 分组只使用前两个子项。');
@@ -877,7 +877,7 @@ function editGroupProps() {
 				options: { composite: 'composite', model: 'model', range_dispatch: 'range_dispatch', condition: 'condition', empty: 'empty' },
 			},
 			imm_model: { label: '引用模型（model）', description: '语法：{"type": "minecraft:model", "model": "<命名空间>:item/<路径>"}\n作用：本节点直接引用一个 Java 版模型；\n留空则由本层方块生成模型文件。', type: 'text', value: String(group.imm_model || ''), condition: (r) => r.imm_type !== 'empty' },
-			imm_property: { label: '取值来源（property）', description: '语法："property": "minecraft:custom_model_data"\n作用：range_dispatch / condition 从这里取值做分派。\n例：minecraft:custom_model_data、minecraft:selected', type: 'text', value: String(group.imm_property || ''), condition: (r) => r.imm_type === 'range_dispatch' || r.imm_type === 'condition' },
+			imm_property: { label: '取值来源 / 条件（property / when）', description: 'range_dispatch 输出为 "property"（例 minecraft:custom_model_data）；\ncondition 输出为 "when"（例 minecraft:selected、minecraft:has_component）。', type: 'text', value: String(group.imm_property || ''), condition: (r) => r.imm_type === 'range_dispatch' || r.imm_type === 'condition' },
 			imm_index: { label: '分派下标（index）', description: '语法："index": 0\n作用：仅 range_dispatch，指定从 property 的哪个下标取值。', type: 'number', value: num(group.imm_index), condition: (r) => r.imm_type === 'range_dispatch' },
 			imm_threshold_format: { label: '分支编号格式（entries[].threshold）', type: 'text', value: String(group.imm_threshold_format || ''), description: '语法：i → 0,1,2；2i 或 i*2 → 0,2,4；10+2i → 10,12,14；0,1,3 → 字面列表；2:2i → 每个值重复 2 次、索引从 1 起（2,2,4,4,6,6…）。\n作用：range_dispatch 的子分组按顺序取这些阈值；留空为 0,1,2…', condition: (r) => r.imm_type === 'range_dispatch' },
 			imm_threshold: { label: '分支编号 / 阈值（entries[].threshold）', type: 'number', value: num(group.imm_threshold), description: '语法：{"threshold": 0}\n作用：父分组为 range_dispatch 时，本分组的阈值；修改后自动按阈值重排。', condition: (r) => r.imm_type === 'range_dispatch' || parent_type === 'range_dispatch' },
@@ -1137,7 +1137,7 @@ function openSimulator() {
 		title: '模拟输入 — 预览分支命中',
 		width: 720,
 		form: {
-			prop: { label: '取值来源（property）', type: 'select', value: 'custom_model_data', options: { custom_model_data: 'custom_model_data', selected: 'selected' }, description: '决定用哪个输入值参与判断' },
+			prop: { label: '取值来源 / 条件（property / when）', type: 'select', value: 'custom_model_data', options: { custom_model_data: 'custom_model_data', selected: 'selected' }, description: '决定用哪个输入值参与判断' },
 			index: { label: '下标（index）', type: 'number', value: 0, description: 'custom_model_data 的 floats 下标' },
 			value: { label: '数值', type: 'number', value: 0, description: '模拟的输入值' },
 			auto: { label: '自动变化', type: 'checkbox', value: false, description: '按周期自动增减数值，实时预览' },
@@ -1205,7 +1205,7 @@ function registerProperties() {
 
 	P(Group, 'string', 'imm_type', { label: '映射类型（type）', description: '语法：{"type": "minecraft:<类型>"}\n作用：决定本节点是哪一种物品模型映射。\n可选：composite / model / range_dispatch / condition / empty', default: 'composite', enum_values: MAPPING_TYPES });
 	P(Group, 'string', 'imm_model', { label: '引用模型（imm_model）', default: '' });
-	P(Group, 'string', 'imm_property', { label: '取值来源（property）', default: '' });
+	P(Group, 'string', 'imm_property', { label: '取值来源 / 条件（property / when）', default: '' });
 	P(Group, 'number', 'imm_index', { label: 'index（仅 range_dispatch：custom_model_data 下标）', default: 0 });
 	P(Group, 'string', 'imm_condition', { label: '分支条件（on_true/on_false）', default: '' });
 	P(Group, 'string', 'imm_threshold_format', { label: '分支编号格式', description: 'i / i*2 / 10+i*5 / 0,1,3', default: '' });
