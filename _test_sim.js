@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.59.0', api.VERSION, '0.59.0');
+eq('版本是 0.61.5', api.VERSION, '0.61.5');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -511,6 +511,70 @@ const pathExporter = api.createExporter();
 eq('纹理引用使用实际命名空间和目录', pathExporter.textureRef(pathTexture), 'sqsp:item/inker/jet_rifle/sac.full');
 eq('纹理输出路径保留原目录', pathExporter.textures[0].path, 'item/inker/jet_rifle/sac.full');
 eq('纹理输出命名空间用 sqsp', pathExporter.textures[0].namespace, 'sqsp');
+
+/* ---------- 框选改选分组 ---------- */
+console.log('\n[框选改选分组]');
+const boxGroup = new global.Group({ name: 'boxGroup' });
+const boxCube1 = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
+const boxCube2 = new global.Cube({ from: [3, 0, 0], to: [5, 2, 2], origin: [4, 1, 1], rotation: [0, 0, 0] });
+const detachBox = function () { this.selected = false; const at = global.Outliner.selected.indexOf(this); if (at >= 0) global.Outliner.selected.splice(at, 1); };
+boxCube1.parent = boxGroup; boxCube2.parent = boxGroup; boxGroup.children.push(boxCube1, boxCube2); boxCube1.unselect = detachBox; boxCube2.unselect = detachBox;
+boxGroup.markAsSelected = function () { this.selected = true; if (global.Outliner.selected.indexOf(this) < 0) global.Outliner.selected.push(this); for (const child of this.children) { child.selected = true; if (global.Outliner.selected.indexOf(child) < 0) global.Outliner.selected.push(child); } };
+api.setBoxSelectGroups(true);
+global.Outliner.selected.push(boxCube1, boxCube2);
+api.guardBoxSelection();
+eq('多选方块时改为选中父分组', global.Outliner.selected.indexOf(boxGroup) >= 0, true);
+eq('分组及其元素一起被选中', global.Outliner.selected.indexOf(boxCube1) >= 0 && global.Outliner.selected.indexOf(boxCube2) >= 0, true);
+api.guardBoxSelection();
+eq('再次触发不会再把子元素取消', global.Outliner.selected.indexOf(boxCube1) >= 0 && global.Outliner.selected.indexOf(boxGroup) >= 0, true);
+global.Outliner.selected.length = 0; boxCube1.selected = true; global.Outliner.selected.push(boxCube1);
+api.guardBoxSelection();
+eq('只选一个方块时不处理', global.Outliner.selected.indexOf(boxCube1) >= 0, true);
+api.setBoxSelectGroups(false); global.Outliner.selected.length = 0;
+
+/* ---------- 框选规则：强制开启 / 内建模型例外 ---------- */
+console.log('\n[框选规则]');
+api.setBoxSelectGroups(false);
+boxGroup.selected = false;
+global.Outliner.selected.length = 0;
+boxCube1.selected = true; boxCube2.selected = true;
+global.Outliner.selected.push(boxCube1, boxCube2);
+api.guardBoxSelection();
+eq('装配格式内强制开启（不靠设置）', global.Outliner.selected.indexOf(boxGroup) >= 0, true);
+const boxInlineGroup = new global.Group({ name: 'boxInlineGroup', imm_type: 'inline' });
+const boxInlineCube1 = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
+const boxInlineCube2 = new global.Cube({ from: [3, 0, 0], to: [5, 2, 2], origin: [4, 1, 1], rotation: [0, 0, 0] });
+boxInlineCube1.parent = boxInlineGroup; boxInlineCube2.parent = boxInlineGroup;
+boxInlineCube1.unselect = detachBox; boxInlineCube2.unselect = detachBox;
+boxInlineGroup.markAsSelected = function () { this.selected = true; if (global.Outliner.selected.indexOf(this) < 0) global.Outliner.selected.push(this); };
+global.Outliner.selected.length = 0; boxInlineCube1.selected = true; boxInlineCube2.selected = true;
+global.Outliner.selected.push(boxInlineCube1, boxInlineCube2);
+api.guardBoxSelection();
+eq('只选内建模型元素时保持原样', global.Outliner.selected.indexOf(boxInlineCube1) >= 0 && global.Outliner.selected.indexOf(boxInlineGroup) < 0, true);
+const refGroup = new global.Group({ name: 'refGroup', imm_type: 'model', imm_model: 'ns:item/ref' });
+const refCube1 = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
+const refCube2 = new global.Cube({ from: [3, 0, 0], to: [5, 2, 2], origin: [4, 1, 1], rotation: [0, 0, 0] });
+refCube1.parent = refGroup; refCube2.parent = refGroup; refGroup.children.push(refCube1, refCube2); refCube1.unselect = detachBox; refCube2.unselect = detachBox;
+refGroup.markAsSelected = function () { this.selected = true; if (global.Outliner.selected.indexOf(this) < 0) global.Outliner.selected.push(this); for (const child of this.children) { child.selected = true; if (global.Outliner.selected.indexOf(child) < 0) global.Outliner.selected.push(child); } };
+global.Outliner.selected.length = 0; refCube1.selected = true; refCube2.selected = true;
+global.Outliner.selected.push(refCube1, refCube2);
+api.guardBoxSelection();
+eq('引用模型分组不享受例外', global.Outliner.selected.indexOf(refGroup) >= 0 && global.Outliner.selected.indexOf(refCube1) >= 0, true);
+
+const savedFormatId = global.Format.id; global.Format.id = 'other';
+global.Outliner.selected.length = 0; boxCube1.selected = true; boxCube2.selected = true;
+global.Outliner.selected.push(boxCube1, boxCube2);
+api.guardBoxSelection();
+eq('其它格式默认关闭', global.Outliner.selected.indexOf(boxCube1) >= 0 && global.Outliner.selected.indexOf(boxGroup) < 0, true);
+global.Format.id = savedFormatId; global.Outliner.selected.length = 0;
+
+/* ---------- 分组已选中但子项未选中的展开 ---------- */
+console.log('\n[分组展开]');
+boxGroup.selected = true; boxCube1.selected = false; boxCube2.selected = false;
+global.Outliner.selected.length = 0; global.Outliner.selected.push(boxCube1, boxCube2);
+api.guardBoxSelection();
+eq('分组已选中但子项未选时仍展开子项', global.Outliner.selected.indexOf(boxCube1) >= 0 && global.Outliner.selected.indexOf(boxCube2) >= 0, true);
+global.Outliner.selected.length = 0;
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
