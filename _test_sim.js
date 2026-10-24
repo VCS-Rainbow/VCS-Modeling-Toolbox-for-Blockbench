@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.52.1', api.VERSION, '0.52.1');
+eq('版本是 0.52.2', api.VERSION, '0.52.2');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -438,6 +438,20 @@ eq('不生成 tints 时 buildTints 为 null', tintExporter.buildTints({ imm_tint
 eq('none 时 buildTints 为 null', tintExporter.buildTints({ imm_tint_type: 'none', imm_tint_index: 0 }), null);
 eq('custom_model_data 时 buildTints 有值', Array.isArray(tintExporter.buildTints({ imm_tint_type: 'custom_model_data', imm_tint_index: 2 })), true);
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRoot4);
+const parentTint = new global.Group({ name: 'parentTint', imm_type: 'range_dispatch', imm_tint_type: 'custom_model_data', imm_tint_index: '0' });
+const childTint = new global.Group({ name: 'childTint', imm_type: 'model' });
+childTint.parent = parentTint; parentTint.children.push(childTint);
+const childCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0], export: true });
+childCube.faces = { north: { tint: 0 } };
+childCube.parent = childTint; childTint.children.push(childCube);
+childCube.mesh = { material: { map: { name: 'ct' } } };
+const savedRoot5 = global.Outliner.root.splice(0, global.Outliner.root.length, parentTint);
+simState2.inputs.colors[0] = 0xFF00FF00 | 0;
+api.simApplyTints();
+eq('着色配置从父分组继承', childCube.mesh.material.color.v, 0x00ff00);
+simState2.inputs.colors.length = 0;
+api.simApplyTints();
+global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRoot5);
 
 /* ---------- 批量分组属性 ---------- */
 console.log('\n[批量分组属性]');
@@ -447,6 +461,32 @@ const batchResult = { imm_type: 'inline', imm_tint_type: '', imm_tint_index: 0 }
 api.assignGroupMapProps(batchA, batchResult);
 api.assignGroupMapProps(batchB, batchResult);
 eq('同一结果应用到多个分组', batchA.imm_type === 'inline' && batchB.imm_type === 'inline' && batchA.imm_tint_type === 'none' && batchB.imm_tint_type === 'none', true);
+
+/* ---------- 未活跃模式下的着色 ---------- */
+console.log('\n[未活跃模式下着色]');
+const ghostRange = new global.Group({ name: 'ghostRange', imm_type: 'range_dispatch', imm_property: 'minecraft:custom_model_data', imm_index: 0 });
+const gLow = new global.Group({ name: 'gLow', imm_type: 'model', imm_model: 'ns:item/glow', imm_tint_type: 'custom_model_data', imm_tint_index: '0' });
+const gHigh = new global.Group({ name: 'gHigh', imm_type: 'model', imm_model: 'ns:item/ghigh', imm_tint_type: 'custom_model_data', imm_tint_index: '0' });
+const gLowCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0], export: true });
+gLowCube.faces = { north: { tint: 0 } }; gLowCube.parent = gLow; gLow.children.push(gLowCube); gLowCube.mesh = { material: { map: { name: 'gl' } } };
+const gHighCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0], export: true });
+gHighCube.faces = { north: { tint: 0 } }; gHighCube.parent = gHigh; gHigh.children.push(gHighCube); gHighCube.mesh = { material: { map: { name: 'gh' } } };
+gLow.mesh = { visible: true }; gHigh.mesh = { visible: true };
+ghostRange.children.push(gLow, gHigh);
+const savedRoot6 = global.Outliner.root.splice(0, global.Outliner.root.length, ghostRange);
+const floats2 = simUi.rows.floats, colors2 = simUi.rows.colors;
+floats2.slots[0].els.val.value = '5'; floats2.slots[0].els.val.fire('input');
+colors2.slots[0].els.val.value = String(0xFF0000FF >>> 0); colors2.slots[0].els.val.fire('input');
+api.simInvalidate(); api.simTick();
+eq('off：活跃分支着色', gHighCube.mesh.material.color && gHighCube.mesh.material.color.v, 0x0000ff);
+api.simSetViewMode('ghost'); api.simTick();
+eq('ghost：活跃分支仍着色', gHighCube.mesh.material.color && gHighCube.mesh.material.color.v, 0x0000ff);
+eq('ghost：未活跃分支半透明', Math.abs((gLowCube.mesh.material.opacity || 1) - 0.28) < 1e-9, true);
+api.simSetViewMode('hide'); api.simTick();
+eq('hide：活跃分支仍着色', gHighCube.mesh.material.color && gHighCube.mesh.material.color.v, 0x0000ff);
+eq('hide：未活跃分支不可见', gLow.mesh.visible, false);
+api.simSetViewMode('off'); api.simTick();
+global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRoot6);
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
