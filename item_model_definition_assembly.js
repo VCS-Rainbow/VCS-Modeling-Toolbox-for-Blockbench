@@ -883,25 +883,44 @@ async function mergeIntoPack() {
 	});
 }
 
+/** 诊断：列出每个分组的 origin / rotation / 四元数 / 算出来的 translation */
 function checkAssembly() {
 	if (typeof Project === 'undefined' || !Project) return;
 	const lines = [];
 	const root = (typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : [];
+	const fmt = (v) => '[' + v.map(x => (Math.round(x * 1000) / 1000)).join(', ') + ']';
+
+	const debugTransform = (group) => {
+		try {
+			const quaternion = readLocalQuaternion(group);
+			if (!quaternion) return 'q=?';
+			const q = '[' + [quaternion.x, quaternion.y, quaternion.z, quaternion.w]
+				.map(v => (Math.round(v * 1000) / 1000)).join(', ') + ']';
+			const exporter = new AssemblyExporter({ namespace: 'x', item_id: 'x', center_pivot: false });
+			const transformation = exporter.buildTransformation(group);
+			const t = transformation ? fmt(transformation.translation) : '[0, 0, 0]';
+			const angle = 2 * Math.acos(Math.min(1, Math.abs(quaternion.w))) * 180 / Math.PI;
+			return 'q=' + q + ' 角=' + angle.toFixed(1) + '° t=' + t;
+		} catch (error) { return 'q=ERR'; }
+	};
+
 	const walk = (nodes, depth) => {
 		for (const node of nodes) {
 			if (!node) continue;
 			if (isGroup(node)) {
 				const type = String(node.imm_type || 'composite').replace(/^minecraft:/, '');
-				lines.push('  '.repeat(depth) + '• ' + labelOf(node) + '  [' + type + ']'
-					+ (node.imm_model ? '  → ' + node.imm_model : '')
-					+ (type === 'range_dispatch' ? '  threshold=' + (node.imm_threshold || 0) : ''));
+				const own = (node.children || []).filter(child => isCube(child)).length;
+				lines.push('  '.repeat(depth) + '• ' + labelOf(node) + '  [' + type + '] cubes=' + own
+					+ (node.imm_model ? ' → ' + node.imm_model : ''));
+				lines.push('  '.repeat(depth + 1) + 'origin=' + fmt(node.origin || [0, 0, 0])
+					+ ' rot=' + fmt(node.rotation || [0, 0, 0]) + ' ' + debugTransform(node));
 				walk(node.children || [], depth + 1);
 			}
 		}
 	};
 	walk(root, 0);
 	Blockbench.showMessageBox({
-		title: '装配结构检查',
+		title: '装配结构 / 变换诊断',
 		message: lines.length ? lines.join('\n') : '（没有分组）',
 		icon: 'info',
 	});
