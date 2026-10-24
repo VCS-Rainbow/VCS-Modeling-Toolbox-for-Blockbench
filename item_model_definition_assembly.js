@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.31.4';
+const VERSION = '0.32.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1473,7 +1473,7 @@ function buildSimPanel(show_panel) {
 		if (kind !== 'bool' || (key !== 'selected' && key !== 'using_item')) head.appendChild(cell('索引', idx, '64px'));
 		head.appendChild(cell('值', val, '92px'));
 		const usageEl = mk('div', {}, 'font-size:10px;opacity:.6;white-space:pre-wrap;line-height:1.35;padding:2px 0 4px 0');
-		const body = mk('div', {}, 'display:flex;flex-wrap:nowrap;gap:6px;padding:6px 0 4px 0;align-items:flex-end;overflow:hidden');
+		const body = mk('div', {}, 'display:flex;flex-wrap:wrap;gap:12px;padding:6px 0 4px 0;align-items:flex-end');
 		const autoC = mk('input', { type: 'checkbox' }); const autoL = mk('label', { textContent: '自动' }, 'display:flex;gap:3px;align-items:center'); autoL.appendChild(autoC);
 		const period = mk('input', { type: 'number', value: '0.2', step: '0.1' }, 'width:100%;min-width:0');
 		const step = mk('input', { type: 'number', value: '0.5', step: '0.1' }, 'width:100%;min-width:0');
