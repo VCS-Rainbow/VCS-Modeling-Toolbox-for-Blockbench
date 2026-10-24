@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.63.3';
+const VERSION = '0.63.4';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2450,6 +2450,8 @@ function guardBoxSelection() {
 	const selectedCubes = Outliner.selected.filter(isCube);
 	if (!selectedCubes.length) return;
 	const parents = [];
+	// 方块所属父分组已经选中：说明是点选分组/拖 gizmo，守卫让路
+	if (parents.length && parents.every(parent => parent.selected)) return;
 	for (const cube of selectedCubes) {
 		const parent = cube && cube.parent;
 		if (isGroup(parent) && parents.indexOf(parent) < 0) parents.push(parent);
