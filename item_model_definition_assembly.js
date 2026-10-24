@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.20.12';
+const VERSION = '0.21.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1110,7 +1110,18 @@ function editGroupProps() {
 				group.imm_type = result.imm_type;
 				const new_type = resetTypeSpecificProps(group, result.imm_type);
 				if (new_type !== 'range_dispatch' && new_type !== 'condition' && new_type !== 'select') stripChildPrefixes(group);
+				const previous_model = String(group.imm_model || '').trim();
 				if (result.imm_model !== undefined) group.imm_model = result.imm_model;
+				const next_model = String(result.imm_model || '').trim();
+				if (next_model && next_model !== previous_model) {
+					setTimeout(() => {
+						Blockbench.showMessageBox({
+							title: '导入引用模型',
+							message: '将清空分组 “' + labelOf(group) + '” 下的所有子项与方块，并从资源包工程导入：\n' + next_model,
+							buttons: ['取消', '导入'], confirm: 1, cancel: 0,
+						}, (button) => { if (button === 1) importModelReference(group); });
+					}, 100);
+				}
 				if (result.imm_property !== undefined) group.imm_property = result.imm_property;
 				if (result.imm_component !== undefined) group.imm_component = result.imm_component;
 				if (result.imm_ignore_default !== undefined) group.imm_ignore_default = !!result.imm_ignore_default;
@@ -1208,6 +1219,120 @@ function checkStructure() {
 	};
 	walk(root, 0);
 	Blockbench.showMessageBox({ title: '装配结构 / 变换诊断', message: lines.join('\n') || '（没有分组）', icon: 'info' });
+}
+
+/* ============================== 引用模型导入 ============================== */
+
+function readJSONFile(pathmod, fsmod, abs) {
+	if (!fsmod.existsSync(abs)) return null;
+	try { return JSON.parse(fsmod.readFileSync(abs, 'utf8')); } catch (e) { return null; }
+}
+
+/** 解析 ns:path 形式的模型 id -> 磁盘路径 */
+function modelPathOf(pathmod, root, reference) {
+	const id = String(reference || '').trim().replace(/^minecraft:/, 'minecraft:');
+	const parts = id.split(':');
+	const ns = parts.length > 1 ? parts[0] : 'minecraft';
+	const path = parts.length > 1 ? parts[1] : parts[0];
+	return pathmod.join(root, 'assets', ns, 'models', path + '.json');
+}
+
+/** 沿 parent 链合并 elements / textures（子模型优先） */
+function resolveJavaModel(pathmod, fsmod, root, reference) {
+	let current = String(reference || '').trim();
+	const seen = {};
+	let elements = null;
+	const textureRefs = {};
+	for (let depth = 0; depth < 12 && current; depth++) {
+		if (seen[current]) break;
+		seen[current] = true;
+		const json = readJSONFile(pathmod, fsmod, modelPathOf(pathmod, root, current));
+		if (!json) return { error: '找不到模型文件：' + current };
+		if (!elements && Array.isArray(json.elements)) elements = json.elements;
+		for (const key of Object.keys(json.textures || {})) {
+			if (!(key in textureRefs)) textureRefs[key] = json.textures[key];
+		}
+		current = typeof json.parent === 'string' ? json.parent : '';
+	}
+	if (!elements || !elements.length) return { error: '该模型没有 elements（可能是纯引用模型）' };
+	return { elements, textures: textureRefs };
+}
+
+/** 把 Java 模型转成方块并放进分组；成功后才清空原有子项 */
+function importModelReference(group) {
+	if (!group) return false;
+	const reference = String(group.imm_model || '').trim();
+	if (!reference) return false;
+	const root = String(projectValue('imm_pack_path', '') || '').trim();
+	if (!root) {
+		Blockbench.showMessageBox({ title: '缺少资源包工程路径', message: '请先在项目设置里指定资源包工程路径（pack.mcmeta 所在目录）。', icon: 'warning' });
+		return false;
+	}
+	const pathmod = getPath();
+	const fsmod = getScopedFs(root);
+	if (!pathmod || !fsmod) { Blockbench.showMessageBox({ title: '不支持读取', message: '需要桌面版 Blockbench。', icon: 'warning' }); return false; }
+	const resolved = resolveJavaModel(pathmod, fsmod, root, reference);
+	if (resolved.error) { Blockbench.showMessageBox({ title: '导入失败', message: resolved.error, icon: 'error' }); return false; }
+	const elements = resolved.elements;
+	try {
+		Undo.initEdit({ groups: [group], elements: (group.children || []).filter(isCube) });
+		// 清空原有子项与方块
+		for (const child of (group.children || []).slice()) {
+			try { child.remove(false); } catch (e) { /* ignore */ }
+		}
+		const created = [];
+	elements.forEach((el, index) => {
+		if (!el || !Array.isArray(el.from) || !Array.isArray(el.to)) return;
+		const cube = new Cube({
+			name: 'part_' + index,
+			from: [Number(el.from[0]) || 0, Number(el.from[1]) || 0, Number(el.from[2]) || 0],
+			to: [Number(el.to[0]) || 0, Number(el.to[1]) || 0, Number(el.to[2]) || 0],
+		}).addTo(group);
+		if (el.shade === false) cube.shade = false;
+		if (el.rotation && el.rotation.origin && el.rotation.axis) {
+			const axis = ['x', 'y', 'z'].indexOf(String(el.rotation.axis));
+			if (axis >= 0) {
+				cube.origin = [Number(el.rotation.origin[0]) || 0, Number(el.rotation.origin[1]) || 0, Number(el.rotation.origin[2]) || 0];
+				const rot = [0, 0, 0];
+				rot[axis] = Number(el.rotation.angle) || 0;
+				cube.rotation = rot;
+			}
+		}
+		for (const dir of Object.keys(el.faces || {})) {
+			const src = el.faces[dir];
+			if (!src || !cube.faces[dir]) continue;
+			const uv = Array.isArray(src.uv) ? src.uv : [0, 0, 0, 0];
+			cube.faces[dir].uv = [Number(uv[0]) || 0, Number(uv[1]) || 0, Number(uv[2]) || 0, Number(uv[3]) || 0];
+			if (src.rotation) cube.faces[dir].rotation = Number(src.rotation) || 0;
+			if (src.cullface) cube.faces[dir].cullface = String(src.cullface);
+		}
+		created.push(cube);
+	});
+		// 自动对齐：把模型包围盒中点移到 (8,8,8)，偏移写进本层 translation
+		if (projectValue('imm_align_center', false) === true && created.length) {
+			const min = [Infinity, Infinity, Infinity];
+			const max = [-Infinity, -Infinity, -Infinity];
+			for (const cube of created) {
+				for (let a = 0; a < 3; a++) {
+					const lo = Math.min(cube.from[a], cube.to[a]);
+					const hi = Math.max(cube.from[a], cube.to[a]);
+					if (lo < min[a]) min[a] = lo;
+					if (hi > max[a]) max[a] = hi;
+				}
+			}
+			group.imm_offset = [0, 1, 2].map(a => (min[a] + max[a]) / 2 - 8);
+		} else {
+			group.imm_offset = [0, 0, 0];
+		}
+		Undo.finishEdit('导入引用模型');
+		try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+		Blockbench.showQuickMessage('已导入 ' + created.length + ' 个方块（' + reference + '）', 4000);
+		return true;
+	} catch (error) {
+		console.error('[装配] 导入失败', error);
+		Blockbench.showMessageBox({ title: '导入失败', message: String((error && error.message) || error), icon: 'error' });
+		return false;
+	}
 }
 
 /* ============================== 模拟输入面板 ============================== */
