@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-24 · 当前版本 **0.37.0**（tag `v0.37.0`）
+> 生成时间：2026-10-24 · 当前版本 **0.38.0**（tag `v0.38.0`）
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 
 ---
@@ -74,7 +74,7 @@
 - 项目设置项「资源包工程路径（pack.mcmeta 所在目录）」。
 - `File → 选择资源包工程路径…`（系统原生文件夹选择框，`Blockbench.pickDirectory`）。
 - 合并前校验 `pack.mcmeta`；缺失时给「选择… / 创建 pack.mcmeta」。
-- 创建时按**目标版本**写格式字段：`File → 目标 Minecraft 版本…`（下拉，项目设置 `imm_pack_version`，默认 `26.2`）。
+- 创建时按**目标版本**写格式字段；目标版本在**项目设置**里下拉选择（`imm_pack_version`，默认 `26.2`）——Blockbench 会把带 `options` 的项目属性渲染成 select，不要另做菜单对话框。
   - 版本表 `PACK_VERSIONS` 已按 minecraft.wiki 校对（26.3=97.1、**26.2=88.0**、26.1=84.0、1.21.11=75.0、1.21.9/10=69.0、1.21.8=64、1.21.6=63、1.21.5=55、1.21.4=46）。
   - **1.21.9 起**（25w31a，65.0+）写 `min_format`/`max_format`；更早写 `pack_format`。minor≠0 时写 `[major,minor]`。
 - 「合并到资源包…」：列出将覆盖/新建/删除的文件，写入后用 `.imm-assembly-manifest.json` 清理过期文件。
@@ -90,17 +90,20 @@
 ### 2.7 模拟输入面板（视图 → 面板 → 模拟输入）
 
 - 面板 id `imm_sim_panel`，内容挂 `panel.node`（不是 `nodes` 数组）。
-- 每类输入独立一行，勾选启用；`floats` / `colors` 有 **0/1/2 三个索引槽**（标题 `索引 [i]`），每槽可改索引与值。
-- `floats` 保留自动变化（自动 / 脉冲周期（间隔，秒，默认 0.2）/ 步长 / 往复|循环 / 上下限）；`colors`/`strings`/`flags` 隐藏自动变化。
-- 参数分三簇：`索引+值` / `自动+周期+步长` / `规则+下限+上限`；窄时按簇换行、宽时并排。
+- 每类输入独立一行，勾选启用；**标题与输入始终可见，不要再用 `<details>` 包裹输入**（0.36.x 的组装把名称/索引/值移进折叠 body，`<summary>` 里只剩「索引 0/1/2」，看起来像标题——0.38.0 已改掉，并加了结构单测锁住）。
+- `floats` / `colors` 三个可见槽「槽 1/2/3（索引 + 值）」；`strings` / `flags` 在标题行直接给索引 + 值；`selected` / `using_item` / `damage` / `count` / `time` 只有值。
+- `floats` 保留自动变化（自动 / 周期（秒，默认 0.2）/ 步长 / 往复|循环 / 上下限），自动时三个槽一起变；其它输入没有自动变化。
+- 未勾选的行整体变淡（`opacity .7`）。
 - 关联分组：容器（如 `bone7`）在上、直属子分支全列出；不活跃折叠进 `<details>`；活跃子分支加粗标蓝（容器始终灰色、无 `[!]`）。
 - 活跃判定：`activeIndex = max{ k | k ≤ 当前值 }`（k 来自子分组名 `[k]` 前缀）。
+- 关联信息由 `refreshUsage()` **统一持有**（`simTick` 只调用它）：按每个槽自己的 `pi/pv` 取下标与值，不要再从 `details` 的 DOM 顺序去猜目标节点。
 
 ---
 
 ## 3. 版本历史（近期，git tag）
 
 ```
+0.38.0  目标版本移入项目设置下拉；模拟面板每行「标题+输入」常显（去掉折叠）
 0.37.0  pack_format 修正（26.2=88.0）+ 目标版本下拉；恢复 simEvaluate 并补 select/condition 求值
 0.36.2  floats/colors 三下标槽 UI（带标题）
 0.36.1  （锚点失败，未改动）
@@ -136,7 +139,7 @@
 ## 4. 待办 / 已知问题（优先级从高到低）
 
 1. **结果区折叠树**：目前结果区是纯文本；计划改成 `<details>` 树，显示每层 `range_dispatch` 的取值与命中/未命中。
-2. **关联分组活跃判定的通用化**：`strings`/`flags` 行目前没有按 case/flag 判定，只列分组；另外 `refreshUsage` 里 `row.value.split(',')[row.index - (row.index)]` 恒取第 0 项，多下标槽的活跃判定不准。
+2. **关联分组活跃判定的通用化**：`strings`/`flags` 行目前只列分组，没有按 case/flag 判定命中（`floats` 已按阈值判定；多下标槽恒取第 0 项的问题已在 0.38.0 修掉）。
 3. **UV 缩放按 PNG 真实尺寸**：现在用 `texture.uv_width`，若与 PNG 实际尺寸不一致 UV 会偏。
 4. **模型 `groups` 字段未用于还原层级**：导入的是扁平方块。
 5. **「装配属性」常驻面板**：尚未实现（原计划 Panel + 随选择刷新）。
@@ -206,5 +209,5 @@ Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_d
 
 ### 6.1 新增的求值/版本钩子
 
-- `_test_sim.js` 通过 `globalThis.__IMM_TEST__ = {}`（require 之前设置）拿到 `api = { simEvaluate, simValue, packMcmetaData, packFormatLabel, packMcmetaFormat, PACK_VERSIONS, VERSION }`；生产环境不设这个全局就没有副作用。
+- `_test_sim.js` 通过 `globalThis.__IMM_TEST__ = {}`（require 之前设置）拿到 `api = { simEvaluate, simValue, packMcmetaData, packFormatLabel, packMcmetaFormat, PACK_VERSIONS, VERSION, buildSimPanel, getSimUi, getSimPanel }`；生产环境不设这个全局就没有副作用。它还 mock 了极简 `document` / `Panel`，用来断言面板结构（输入不能在 `<details>` 里）。
 - `packMcmetaData(description, versionId)` 是 `pack.mcmeta` 的唯一生成入口；改版本表只改 `PACK_VERSIONS`。

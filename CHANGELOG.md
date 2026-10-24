@@ -2,10 +2,19 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.38.0
+- **目标版本移入项目设置**：`项目设置 → 目标 Minecraft 版本（pack.mcmeta 格式）` 改为下拉（Blockbench 对带 `options` 的属性渲染为 select）；删除 File 菜单里的「目标 Minecraft 版本…」（它是重复入口，且当时只是个对话框）。老项目没有该字段时自动补 `26.2`，避免下拉落到第一项 `26.3`。
+- **模拟输入面板重排**：每行改为「标题 + 输入始终可见」，不再用 `<details>` 把 `cmdata.floats` / 索引 / 值折叠起来——旧组装在最后把名称与输入整簇移进了可折叠的 body，`<summary>` 里只剩下「索引 0/1/2」，看起来像标题。
+  - 第一行：勾选 + 名称 + 中文提示（如 `cmdata.floats · range_dispatch 数值`）；`floats` / `colors` 下面是三个可见的「槽 1/2/3（索引 + 值）」。
+  - 「自动变化」只保留在 `floats`；自动变化时三个槽一起动，能直接看到数值在变。
+  - 关联分组按**每个槽自己的下标与值**渲染，并统一交给 `refreshUsage` 写入（`simTick` 不再和它抢 DOM），顺手修掉恒取第 0 项的老问题。
+  - 去掉重复的关联信息容器和依赖 `details` 顺序的 DOM 查询。
+- 单测扩到 **53 项**，新增「面板结构」断言：标题与输入必须在行内、不得位于 `<details>` 里。
+
 ## 0.37.0
 - **修正 `pack.mcmeta` 的格式号**：26.2 的资源包格式是 **88.0**（旧代码写死 71，那是 1.21.5 的值）。版本表按 minecraft.wiki 校对到 26.3。
 - **1.21.9 起改用 `min_format` / `max_format`**（25w31a 起 `pack_format` 变为可选）；按目标版本自动决定写哪一组字段，`minor ≠ 0` 时写 `[major, minor]`。
-- 新增 **`File → 目标 Minecraft 版本…` 下拉**与项目设置 `imm_pack_version`，可选 1.21.4 – 26.3；新建资源包工程按所选版本写 `pack.mcmeta`。
+- 新增 `imm_pack_version` 项目属性（0.38.0 起在项目设置里是下拉），可选 1.21.4 – 26.3；新建资源包工程按所选版本写 `pack.mcmeta`。
 - **恢复 0.30.1 被误删的 `simEvaluate` / `simValue`**：模拟面板此前点「运行 / 停止」会抛 `ReferenceError: simEvaluate is not defined`。
 - **补全模拟求值**：`select` 按 `strings[index]` 匹配 `cases[].when`（首个命中优先，否则 `fallback`）；`condition` 支持 `custom_model_data → flags[index]`、`using_item`、`damaged`。
 - 修正 `range_dispatch` 的 fallback 条件写反（有命中阈值时不该再用 fallback）。

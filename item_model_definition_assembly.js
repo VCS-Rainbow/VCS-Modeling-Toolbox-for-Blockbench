@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.37.0';
+const VERSION = '0.38.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -820,6 +820,13 @@ function packMcmetaFormat(mcmeta) {
 	return null;
 }
 
+/** 老项目没有 imm_pack_version 时补默认值，避免项目设置的下拉落到第一项（26.3） */
+function ensurePackVersion() {
+	try {
+		if (typeof Project !== 'undefined' && Project && !Project.imm_pack_version) Project.imm_pack_version = DEFAULT_PACK_VERSION;
+	} catch (e) { /* ignore */ }
+}
+
 function readPackMcmeta(fsmod, pathmod, root) {
 	try {
 		const p = pathmod.join(root, 'pack.mcmeta');
@@ -848,36 +855,6 @@ function createPackProject(root) {
 		Blockbench.showMessageBox({ title: '创建失败', message: String((error && error.message) || error), icon: 'error' });
 		return false;
 	}
-}
-
-function pickPackVersion() {
-	if (typeof Dialog === 'undefined') return;
-	const current = String(projectValue('imm_pack_version', DEFAULT_PACK_VERSION) || DEFAULT_PACK_VERSION);
-	const options = {};
-	for (const version of PACK_VERSIONS) {
-		options[version.id] = version.id + '（资源包格式 ' + packFormatLabel(version)
-			+ (version.major >= PACK_MODERN_MIN_MAJOR ? '，min_format/max_format' : '，pack_format') + '）';
-	}
-	new Dialog({
-		id: 'imm_pack_version_dialog',
-		title: '目标 Minecraft 版本（pack.mcmeta）',
-		width: 560,
-		form: {
-			version: {
-				label: '目标版本',
-				type: 'select',
-				value: options[current] ? current : DEFAULT_PACK_VERSION,
-				options,
-				description: '决定 pack.mcmeta 写 min_format/max_format 还是 pack_format，以及格式号。\n新建资源包工程时使用该版本。',
-			},
-		},
-		onConfirm(result) {
-			const id = String(result.version || DEFAULT_PACK_VERSION);
-			try { Project.imm_pack_version = id; Project.saved = false; } catch (e) { /* ignore */ }
-			const built = packMcmetaData('preview', id);
-			Blockbench.showQuickMessage('目标版本 ' + id + '（资源包格式 ' + packFormatLabel(built.version) + '）', 4000);
-		},
-	}).show();
 }
 
 async function pickPackPath() {
@@ -1539,96 +1516,103 @@ function buildSimPanel(show_panel) {
 	const mk = (tag, props, style) => { const el = document.createElement(tag); Object.assign(el, props || {}); if (style) el.style.cssText = style; return el; };
 	const cell = (labelText, inputEl, width) => { const wrap = mk('label', {}, 'display:flex;flex-direction:column;gap:2px;font-size:10px;opacity:.75;white-space:nowrap;min-width:0;flex:1 1 0' + (width ? (';flex:0 0 ' + width) : '') + ';overflow:hidden'); wrap.appendChild(mk('span', { textContent: labelText })); wrap.appendChild(inputEl); return wrap; };
 	const SPECS = [
-		['floats', 'cmdata.floats', 'number'],
-		['colors', 'cmdata.colors', 'number'],
-		['strings', 'cmdata.strings', 'text'],
-		['flags', 'cmdata.flags', 'bool'],
-		['selected', 'selected', 'bool'],
-		['damage', 'damage', 'number'],
-		['count', 'count', 'number'],
-		['time', 'time', 'number'],
-		['using_item', 'using_item', 'bool'],
+		['floats', 'cmdata.floats', 'number', 'range_dispatch 数值'],
+		['colors', 'cmdata.colors', 'number', '染色'],
+		['strings', 'cmdata.strings', 'text', 'select 文本'],
+		['flags', 'cmdata.flags', 'bool', 'condition 布尔'],
+		['selected', 'selected', 'bool', ''],
+		['damage', 'damage', 'number', ''],
+		['count', 'count', 'number', ''],
+		['time', 'time', 'number', ''],
+		['using_item', 'using_item', 'bool', ''],
 	];
 	sim_ui = { rows: {}, out: null };
-	for (const [key, label, kind] of SPECS) {
+	for (const spec of SPECS) {
+		const key = spec[0], label = spec[1], kind = spec[2], hint = spec[3] || '';
 		const row = { key, kind, enabled: false, index: 0, value: kind === 'bool' ? 'false' : (kind === 'text' ? '' : '0'), auto: false, period: 200, step: 0.5, rule: 'pingpong', min: 0, max: 4, dir: 1 };
-		const box = mk('details', {}, 'border-top:1px solid rgba(128,128,128,.25);padding-top:3px');
-		const head = mk('summary', {}, 'cursor:pointer;display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;list-style:none;padding:3px 0');
-		const enable = mk('input', { type: 'checkbox' });
-		const nameEl = mk('span', { textContent: label }, 'flex:1 1 100%;font-weight:600;opacity:.95');
-		const idx = mk('input', { type: 'number', value: '0' }, 'width:52px;display:' + (kind === 'bool' && (key === 'selected' || key === 'using_item') ? 'none' : 'inline-block'));
 		const multi = (key === 'floats' || key === 'colors');
-		const val = mk('input', { type: (kind === 'text' || kind === 'bool' || multi) ? 'text' : 'number', value: row.value, placeholder: multi ? '0, 0.5, 1 → 连续下标' : '' }, 'width:78px');
-		// floats / colors：0/1/2 三个下标槽（各有标题）
+		const indexed = multi || key === 'strings' || key === 'flags';
+		const box = mk('div', {}, 'border-top:1px solid rgba(128,128,128,.25);padding:5px 0;display:flex;flex-direction:column;gap:4px');
+		const enable = mk('input', { type: 'checkbox' });
+		const nameEl = mk('span', { textContent: label }, 'font-weight:600;font-size:11px');
+		const idx = mk('input', { type: 'number', value: '0' }, 'width:46px');
+		const val = mk('input', { type: (kind === 'text' || kind === 'bool') ? 'text' : 'number', value: row.value }, 'width:76px');
+		// 第一行永远可见：勾选 + 名称（+ 单值行的索引/值）
+		const header = mk('div', {}, 'display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap');
+		const enableWrap = mk('label', {}, 'display:flex;align-items:center;gap:4px;cursor:pointer');
+		enableWrap.appendChild(enable);
+		enableWrap.appendChild(nameEl);
+		if (hint) enableWrap.appendChild(mk('span', { textContent: hint }, 'font-size:10px;opacity:.55'));
+		header.appendChild(enableWrap);
 		row.pairs = [];
-		if (key === 'floats' || key === 'colors') {
+		let slotsRow = null;
+		if (multi) {
 			idx.style.display = 'none';
 			val.style.display = 'none';
-			const pairsBox = mk('div', {}, 'display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap');
-			for (let k2 = 0; k2 < 3; k2++) {
-				const pi = mk('input', { type: 'number', value: String(k2) }, 'width:44px');
-				const pv = mk('input', { type: 'text', value: '0' }, 'width:70px');
-				const box2 = mk('div', {}, 'display:flex;flex-direction:column;gap:2px;font-size:10px;opacity:.75');
-				box2.appendChild(mk('span', { textContent: '索引 [' + k2 + ']' }));
-				const row2 = mk('div', {}, 'display:flex;gap:3px');
-				row2.appendChild(pi); row2.appendChild(pv);
-				box2.appendChild(row2);
-				pairsBox.appendChild(box2);
+			slotsRow = mk('div', {}, 'display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;padding-left:18px');
+			for (let slot = 0; slot < 3; slot++) {
+				const pi = mk('input', { type: 'number', value: String(slot) }, 'width:44px');
+				const pv = mk('input', { type: 'text', value: '0' }, 'width:64px');
+				const pairCell = mk('div', {}, 'display:flex;flex-direction:column;gap:2px;font-size:10px;opacity:.8');
+				pairCell.appendChild(mk('span', { textContent: '槽 ' + (slot + 1) }));
+				const pairLine = mk('div', {}, 'display:flex;gap:3px;align-items:center');
+				pairLine.appendChild(mk('span', { textContent: '索引' }, 'opacity:.6'));
+				pairLine.appendChild(pi);
+				pairLine.appendChild(mk('span', { textContent: '值' }, 'opacity:.6'));
+				pairLine.appendChild(pv);
+				pairCell.appendChild(pairLine);
+				slotsRow.appendChild(pairCell);
 				row.pairs.push({ pi, pv });
-				pv.addEventListener('change', () => { try { simTick(); } catch (e) { /* ignore */ } });
-				pi.addEventListener('change', () => { try { simTick(); } catch (e) { /* ignore */ } });
+				pv.addEventListener('change', () => { try { read(); simTick(); } catch (e) { /* ignore */ } });
+				pi.addEventListener('change', () => { try { read(); simTick(); } catch (e) { /* ignore */ } });
 			}
-			head.appendChild(pairsBox);
+		} else if (indexed) {
+			header.appendChild(cell('索引', idx, '58px'));
+			header.appendChild(cell('值', val, '84px'));
+		} else {
+			idx.style.display = 'none';
+			header.appendChild(cell('值', val, '84px'));
 		}
-		const enableWrap = mk('label', {}, 'display:flex;align-items:center;gap:4px;font-size:11px');
-		enableWrap.appendChild(enable); enableWrap.appendChild(mk('span', { textContent: label }));
-		head.appendChild(nameEl);
-		if (kind !== 'bool' || (key !== 'selected' && key !== 'using_item')) head.appendChild(cell('索引', idx, '64px'));
-		head.appendChild(cell('值', val, '92px'));
-		const usageEl = mk('div', {}, 'font-size:10px;opacity:.6;white-space:pre-wrap;line-height:1.35;padding:2px 0 4px 0');
-		const body = mk('div', {}, 'display:flex;flex-wrap:wrap;gap:12px;padding:6px 0 4px 0;align-items:flex-end');
-		const autoC = mk('input', { type: 'checkbox' }); const autoL = mk('label', { textContent: '自动' }, 'display:flex;gap:3px;align-items:center'); autoL.appendChild(autoC);
+		// 自动变化（只有 floats 用得上）
+		const autoC = mk('input', { type: 'checkbox' });
 		const period = mk('input', { type: 'number', value: '0.2', step: '0.1' }, 'width:100%;min-width:0');
 		const step = mk('input', { type: 'number', value: '0.5', step: '0.1' }, 'width:100%;min-width:0');
-		const rule = mk('select', {}, 'width:100%;min-width:0'); [['pingpong', '往复'], ['wrap', '循环']].forEach(([v, t]) => rule.appendChild(mk('option', { value: v, textContent: t })));
+		const rule = mk('select', {}, 'width:100%;min-width:0');
+		[['pingpong', '往复'], ['wrap', '循环']].forEach(([v, t]) => rule.appendChild(mk('option', { value: v, textContent: t })));
 		const minI = mk('input', { type: 'number', value: '0' }, 'width:100%;min-width:0');
 		const maxI = mk('input', { type: 'number', value: '4' }, 'width:100%;min-width:0');
-		const autoInline = mk('label', {}, 'display:flex;align-items:center;gap:4px;font-size:10px;opacity:.75;padding-bottom:3px;white-space:nowrap');
-		autoInline.appendChild(autoC); autoInline.appendChild(mk('span', { textContent: '自动' }));
-		body.appendChild(autoInline);
-		body.appendChild(cell('脉冲周期（间隔）', period));
-		body.appendChild(cell('步长', step));
-		body.appendChild(cell('规则', rule));
-		body.appendChild(cell('下限', minI));
-		body.appendChild(cell('上限', maxI));
-		// 组装成三簇：索引+值 / 自动+周期+步长 / 规则+下限+上限（在所有控件创建之后做，顺序安全）
-		const regroupInto = (parent, startIndex) => {
-			const cluster = mk('div', {}, 'display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap');
-			while (parent.children.length > startIndex) cluster.appendChild(parent.children[startIndex]);
-			return cluster;
-		};
-		if (head.children.length > 1) head.appendChild(regroupInto(head, 1));
-		const bodyB = regroupInto(body, 3);
-		const bodyC = mk('div', {}, 'display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap');
-		while (body.children.length) bodyC.appendChild(body.children[0]);
-// 把簇A（索引+值）也放进 body，三簇才能在同一行并排
-		if (head.children.length > 1) { const clusterA = head.children[head.children.length - 1]; body.insertBefore(clusterA, body.firstChild); }
-		body.appendChild(bodyB);
-		body.appendChild(bodyC);
-// 关联信息确保留在 body 之后、独占一行（重组可能把它卷进簇里导致不可见）
+		const autoInline = mk('label', {}, 'display:flex;align-items:center;gap:4px;font-size:10px;opacity:.8;padding-bottom:3px;white-space:nowrap;cursor:pointer');
+		autoInline.appendChild(autoC);
+		autoInline.appendChild(mk('span', { textContent: '自动变化' }));
+		const autoRow = mk('div', {}, 'display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;padding-left:18px');
+		autoRow.appendChild(autoInline);
+		autoRow.appendChild(cell('周期（秒）', period, '66px'));
+		autoRow.appendChild(cell('步长', step, '60px'));
+		autoRow.appendChild(cell('规则', rule, '78px'));
+		autoRow.appendChild(cell('下限', minI, '60px'));
+		autoRow.appendChild(cell('上限', maxI, '60px'));
+		const usageEl = mk('div', {}, 'font-size:10px;line-height:1.45;white-space:pre-wrap;padding:1px 0 0 18px');
+		box.appendChild(header);
+		if (multi && slotsRow) box.appendChild(slotsRow);
+		if (key === 'floats') box.appendChild(autoRow);
 		box.appendChild(usageEl);
-		box.appendChild(head); box.appendChild(body); box.appendChild(usageEl); root.appendChild(box);
-		const usageFresh = mk('div', {}, 'font-size:10px;opacity:.65;white-space:pre-wrap;line-height:1.4;padding:3px 0 5px 0;border-top:1px dashed rgba(128,128,128,.2)');
-		box.appendChild(usageFresh);
-		row.el = { enable, idx, val, auto: autoC, period, step, rule, min: minI, max: maxI, usage: usageFresh };
-		const read = () => { row.enabled = enable.checked; row.index = Number(idx.value) || 0; row.value = val.value; row.auto = autoC.checked; row.period = Math.max(50, (Number(period.value) || 0.2) * 1000); row.step = Number(step.value) || 0.5; row.rule = rule.value; row.min = Number(minI.value) || 0; row.max = Number(maxI.value) || 4; };
-		[enable, idx, val, autoC, period, step, rule, minI, maxI].forEach(el => el.addEventListener('change', () => { read(); simTick(); }));
+		root.appendChild(box);
+		row.el = { enable, idx, val, auto: autoC, period, step, rule, min: minI, max: maxI, usage: usageEl };
+		const read = () => {
+			row.enabled = enable.checked;
+			row.index = Number(idx.value) || 0;
+			row.value = val.value;
+			row.auto = autoC.checked;
+			row.period = Math.max(50, (Number(period.value) || 0.2) * 1000);
+			row.step = Number(step.value) || 0.5;
+			row.rule = rule.value;
+			row.min = Number(minI.value) || 0;
+			row.max = Number(maxI.value) || 4;
+		};
+		const markDisabled = () => { box.style.opacity = enable.checked ? '1' : '.7'; };
+		[enable, idx, val, autoC, period, step, rule, minI, maxI].forEach(el => el.addEventListener('change', () => { read(); markDisabled(); simTick(); }));
+		markDisabled();
 		row.order = Object.keys(sim_ui.rows).length;
-		if (key === 'colors' || key === 'strings' || key === 'flags') {
-			autoInline.style.display = 'none';
-			if (period.parentElement) period.parentElement.style.display = 'none';
-			if (step.parentElement) step.parentElement.style.display = 'none';
-		}
 		sim_ui.rows[key] = row;
 	}
 	const runBtn = mk('button', { textContent: '运行 / 停止' }, 'padding:4px 8px;margin-top:4px');
@@ -1679,14 +1663,9 @@ function refreshUsage(hits) {
 	if (!sim_ui || !sim_ui.rows) return;
 	try {
 		const usageMap = collectInputUsage();
-		const boxes = (typeof document !== 'undefined') ? document.querySelectorAll('#panel_imm_sim_panel details') : [];
 		const prefixOf = (name) => { const m = String(name || '').match(/^\[(-?\d+(?:\.\d+)?)\]/); return m ? Number(m[1]) : null; };
-		for (const key of Object.keys(sim_ui.rows)) {
-			const row = sim_ui.rows[key];
-			const groups = usageMap[key + '#' + row.index] || [];
-			const value = num(String(row.value).split(',')[row.index - (row.index)] || row.value);
-			const html = ['<div style="opacity:.75;margin-bottom:2px">关联分组：</div>'];
-			if (!groups.length) html.push('<div style="opacity:.5">（无）</div>');
+		const groupsHtml = (groups, value) => {
+			const html = [];
 			groups.forEach((g, gi) => {
 				if (gi > 0) html.push('<hr style="border:none;border-top:1px solid rgba(128,128,128,.25);margin:4px 0">');
 				// 按“阈值 <= 当前值”里最大的那个，判定活跃子分支
@@ -1697,23 +1676,38 @@ function refreshUsage(hits) {
 					if (k <= value && (activeIndex === null || k > activeIndex)) activeIndex = k;
 				}
 				const isActiveChild = (child) => { const k = prefixOf(child); return k !== null && k === activeIndex; };
-				const anyActive = g.children.some(isActiveChild);
 				html.push('<div style="opacity:.8">· ' + g.parent + '</div>');
-				const act = g.children.filter(isActiveChild);
+				for (const c of g.children.filter(isActiveChild)) html.push('<div style="font-weight:700;color:#7fd0ff">' + c + '</div>');
 				const inact = g.children.filter(c => !isActiveChild(c));
-				for (const c of act) html.push('<div style="font-weight:700;color:#7fd0ff">' + c + '</div>');
 				if (inact.length) {
 					html.push('<details><summary style="cursor:pointer;opacity:.55;font-size:10px">未活跃 ' + inact.length + ' 项（点开查看）</summary>');
 					for (const c of inact) html.push('<div style="opacity:.45;padding-left:6px">· ' + c + '</div>');
 					html.push('</details>');
 				}
 			});
-			const target = boxes[row.order] ? boxes[row.order].lastElementChild : null;
-			if (target) target.innerHTML = html.join('');
+			return html;
+		};
+		for (const key of Object.keys(sim_ui.rows)) {
+			const row = sim_ui.rows[key];
+			const usageEl = row.el && row.el.usage;
+			if (!usageEl) continue;
+			const html = [];
+			const slots = (row.pairs && row.pairs.length)
+				? row.pairs.map(pair => ({ index: Number(pair.pi.value) || 0, value: num(pair.pv.value) }))
+				: [{ index: row.index, value: num(row.value) }];
+			let any = false;
+			for (const slot of slots) {
+				const groups = usageMap[key + '#' + slot.index] || [];
+				if (!groups.length) continue;
+				if (slots.length > 1) html.push('<div style="opacity:.5;margin-top:2px">索引 ' + slot.index + '（值 ' + slot.value + '）</div>');
+				html.push(...groupsHtml(groups, slot.value));
+				any = true;
+			}
+			if (!any) html.push('<div style="opacity:.45">关联分组：（无）</div>');
+			usageEl.innerHTML = html.join('');
 		}
 	} catch (error) { console.error('[装配] refreshUsage error', error); }
 }
-
 /* ============================== 模拟求值 ============================== */
 
 /** range_dispatch 的数值来源：custom_model_data → floats[index]；其余走物品属性 */
@@ -1852,29 +1846,12 @@ function simTick() {
 	}
 	const items = simEvaluate(mapping.model, inputs);
 	const hits = items.filter(item => item.hit && item.node.model).map(item => item.node.model);
-	const usageMap = collectInputUsage();
-	console.log('[装配] sim usage keys=', Object.keys(usageMap), '| rows=', Object.keys(sim_ui.rows).length);
-	for (const key of Object.keys(sim_ui.rows)) {
-		const row = sim_ui.rows[key];
-		if (!row.el) continue;
-		const list = usageMap[key + '#' + row.index] || [];
-		const norm = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, '_');
-		const shown = list.map(name => {
-			const tokens = String(name).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-			const active = tokens.length > 0 && hits.some(h => tokens.every(t => String(h).toLowerCase().includes(t)));
-			return (active ? '✔ ' : '· ') + name;
-		});
-		const boxes = (typeof document !== 'undefined') ? document.querySelectorAll('#panel_imm_sim_panel details') : [];
-		const target = boxes[row.order] ? boxes[row.order].lastElementChild : null;
-		console.log('[装配] row', key + '#' + row.index, 'list=', list.length, 'target=', !!target);
-		if (target) target.textContent = '关联分组：' + (shown.length ? '' : '（无）') + (shown.length ? '\n' + shown.join('\n') : '');
-	}
-
 	lines.push('');
 	lines.push('命中 ' + hits.length + ' / 分支 ' + items.length);
 	lines.push('');
 	for (const item of items) lines.push((item.hit ? '  ✔ ' : '  ✘ ') + (item.node.model || item.node.type));
 	sim_ui.out.textContent = lines.join('\n');
+	try { refreshUsage(hits); } catch (e) { /* ignore */ }
 }
 
 function toggleSim() {
@@ -1895,6 +1872,7 @@ function toggleSim() {
 				else { if (value > row.max) { value = row.max; row.dir = -1; } if (value < row.min) { value = row.min; row.dir = 1; } }
 				row.value = String(value);
 				if (row.el && row.el.val) row.el.val.value = row.value;
+				if (row.pairs) for (const pair of row.pairs) pair.pv.value = row.value;
 			}
 			simTick();
 		} catch (error) { /* ignore */ }
@@ -1976,7 +1954,18 @@ function registerProperties() {
 	P(ModelProject, 'boolean', 'imm_block_display', { label: '模型附带方块 display 变换', default: true });
 	P(ModelProject, 'boolean', 'imm_hide_unavailable', { label: '隐藏当前条件下不可用的分组', default: true });
 	P(ModelProject, 'string', 'imm_pack_path', { label: '资源包工程路径（pack.mcmeta 所在目录）', default: '' });
-	P(ModelProject, 'string', 'imm_pack_version', { label: '目标 Minecraft 版本（pack.mcmeta 格式，可用「目标版本…」下拉）', default: DEFAULT_PACK_VERSION });
+	P(ModelProject, 'string', 'imm_pack_version', {
+		label: '目标 Minecraft 版本（pack.mcmeta 格式）',
+		default: DEFAULT_PACK_VERSION,
+		options: () => {
+			const list = {};
+			for (const version of PACK_VERSIONS) {
+				list[version.id] = version.id + '（资源包格式 ' + packFormatLabel(version)
+					+ (version.major >= PACK_MODERN_MIN_MAJOR ? '，min/max_format' : '，pack_format') + '）';
+			}
+			return list;
+		},
+	});
 
 	// 面着色：Blockbench 的 UV 编辑器“着色”开关绑定 Face.properties.tint（默认 -1 表示未着色）
 	P(Face, 'number', 'tint', { label: '着色 index', default: -1 });
@@ -2037,6 +2026,7 @@ Plugin.register('item_model_definition_assembly', {
 			catch (error) { console.warn('[装配] 菜单挂载失败：' + path, error); }
 		};
 		try { registerProperties(); } catch (error) { console.error('[装配] 属性注册失败', error); }
+		ensurePackVersion();
 
 		format_object = new ModelFormat(FORMAT_ID, {
 			id: FORMAT_ID,
@@ -2130,13 +2120,11 @@ Plugin.register('item_model_definition_assembly', {
 		actions.check = new Action('imm_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
 		actions.pack = new Action('imm_pick_pack', { name: '选择资源包工程路径…', description: '打开系统文件夹选择框，设为资源包工程目录', icon: 'folder_open', category: 'file', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: pickPackPath });
 		actions.sim = new Action('imm_simulate', { name: '模拟输入…', description: '按 custom_model_data / selected 预览分支命中', icon: 'play_circle', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const panel = buildSimPanel(false); if (panel) { panel.show(); return; } openSimulator(); } });
-		actions.packVersion = new Action('imm_pack_version', { name: '目标 Minecraft 版本…', description: '选择 pack.mcmeta 使用的资源包格式版本（下拉）', icon: 'memory', category: 'file', condition, click: pickPackVersion });
 		actions.props = new Action('imm_group_props', { name: '编辑分组映射属性…', description: '映射类型 / 引用模型 / property 等', icon: 'tune', category: 'tools', condition, click: editGroupProps });
 
 		addMenu(actions.zip, 'file.export');
 		addMenu(actions.merge, 'file.export');
 		placeInFileMenu(actions.pack, ['save_model', 'export', 'import']);
-		placeInFileMenu(actions.packVersion, [actions.pack.id, 'save_model', 'export', 'import']);
 		
 		addMenu(actions.check, 'tools');
 		addMenu(actions.import, 'tools');
@@ -2150,9 +2138,12 @@ Plugin.register('item_model_definition_assembly', {
 		for (const event of ['select_project', 'finished_loading_project', 'update_selection']) {
 			try { Blockbench.on(event, attachGroupMenu); } catch (e) { /* ignore */ }
 		}
+		for (const event of ['select_project', 'finished_loading_project']) {
+			try { Blockbench.on(event, ensurePackVersion); } catch (e) { /* ignore */ }
+		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, simValue, simEvaluate };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

@@ -40,7 +40,7 @@
 - **1.21.9 起**（25w31a，资源包格式 65.0+）用 `min_format` / `max_format`，`pack_format` 变为可选；
 - **1.21.8 及更早**用 `pack_format`。
 
-`File → 目标 Minecraft 版本…` 打开下拉（也会写进项目设置 `imm_pack_version`）。内置表（数值来自 minecraft.wiki，2026-10-24 校对）：
+`项目设置 →「目标 Minecraft 版本（pack.mcmeta 格式）」`是下拉框（Blockbench 会把带 `options` 的项目属性渲染成 select），保存在项目属性 `imm_pack_version`。内置表（数值来自 minecraft.wiki，2026-10-24 校对）：
 
 | 版本 | 资源包格式 | 写法 |
 | --- | --- | --- |
@@ -79,15 +79,16 @@
 | `变换原点用物品中心 (8,8,8)`（`imm_center_pivot`） | 开 | Minecraft 的物品模型变换以物品中心为原点，建议保持开启 |
 | `模型附带方块 display 变换`（`imm_block_display`） | 开 | 给生成的模型补原版 `block/block` 的 display |
 | `资源包工程路径`（`imm_pack_path`） | 空 | 合并目标目录（`pack.mcmeta` 所在目录），由「选择资源包工程路径…」写入 |
-| `目标 Minecraft 版本`（`imm_pack_version`） | `26.2` | 决定 `pack.mcmeta` 的格式字段，见上文；用 `File → 目标 Minecraft 版本…` 下拉修改 |
+| `目标 Minecraft 版本`（`imm_pack_version`） | `26.2` | 决定 `pack.mcmeta` 的格式字段，见上文；在项目设置里直接下拉选择 |
 
 ## 模拟输入面板（`视图 → 面板 → 模拟输入`）
 
 按 `custom_model_data` / 物品属性预览「当前装配会命中哪些模型」：
 
 - 每类输入独立一行、勾选启用：`floats`（range_dispatch）、`strings`（select）、`flags`（condition）、`colors`、`selected` / `using_item` / `damage` / `count` / `time`；
-- `floats` / `colors` 有 0/1/2 三个下标槽（每槽可改索引与值）；
-- `floats` 保留自动变化（自动 / 脉冲周期 / 步长 / 往复|循环 / 上下限），其它输入隐藏自动变化；
+- **每行的标题和输入都直接可见**（不再点开折叠层）：第一行是「勾选 + 名称 + 提示」，`floats` / `colors` 下面是三个可见的「槽 1/2/3（索引 + 值）」，未勾选的行整体变淡；
+- `floats` 保留自动变化（自动 / 周期（秒） / 步长 / 往复|循环 / 上下限），其它输入没有自动变化；开着自动时三个槽的值一起变；
+- 每个槽下面按**该槽自己的下标与值**列出关联分组（活跃子分支按 `[编号]` 前缀最大的阈值高亮），未活跃的收进小折叠列表；
 - 结果区列出每个分支的 ✔/✘ 与命中数。
 
 求值规则（`_test_sim.js` 覆盖）：

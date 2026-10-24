@@ -8,6 +8,23 @@ const PLUGIN = 'C:\\Users\\Rainbow_\\blockbench_item_model_mapping_isolated\\ite
 class Quaternion { constructor() { this.x = 0; this.y = 0; this.z = 0; this.w = 1; } setFromEuler() { return this; } normalize() { return this; } lengthSq() { return 1; } copy() { return this; } }
 class Euler { constructor(x = 0, y = 0, z = 0, order = 'XYZ') { Object.assign(this, { x, y, z, order }); } }
 
+/* 极简 DOM：够 buildSimPanel 组装结构，便于断言“控件没有被塞进 <details>” */
+class FakeEl {
+	constructor(tag) { this.tagName = String(tag).toUpperCase(); this.children = []; this.style = { cssText: '' }; this._text = ''; this._html = ''; this.parentElement = null; }
+	appendChild(child) { child.parentElement = this; this.children.push(child); return child; }
+	insertBefore(child, ref) { child.parentElement = this; const at = this.children.indexOf(ref); this.children.splice(at < 0 ? this.children.length : at, 0, child); return child; }
+	addEventListener() { }
+	get firstChild() { return this.children[0] || null; }
+	get lastElementChild() { return this.children[this.children.length - 1] || null; }
+	set textContent(value) { this._text = String(value); this.children = []; }
+	get textContent() { return this._text + this.children.map(child => child.textContent).join(''); }
+	set innerHTML(value) { this._html = String(value); if (value === '') this.children = []; }
+	get innerHTML() { return this._html; }
+	querySelectorAll() { return []; }
+}
+global.document = { createElement: (tag) => new FakeEl(tag) };
+global.Panel = class { constructor(id, options) { this.id = id; this.node = new FakeEl('div'); this.options = options || {}; } show() { } delete() { } };
+
 global.THREE = { Quaternion, Euler };
 global.Texture = class { constructor(o) { Object.assign(this, o); } }; Texture.all = [];
 global.Cube = class { constructor(o) { Object.assign(this, o); } }; global.Cube.all = [];
@@ -16,7 +33,6 @@ global.Outliner = { root: [], selected: [] };
 global.Project = { name: 'test', imm_pack_version: '26.2' };
 global.Properties = [];
 global.Property = class { constructor(target, type, name, options) { global.Properties.push({ target, type, name, options }); } };
-global.Properties[0] = null;
 global.Format = { id: 'item_model_definition_assembly' };
 global.ModelProject = class { };
 global.Face = class { };
@@ -50,8 +66,22 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.37.0', api.VERSION, '0.37.0');
+eq('版本是 0.38.0', api.VERSION, '0.38.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
+
+/* ---------- 项目设置里的目标版本（应为下拉） ---------- */
+console.log('\n[项目设置]');
+const packProp = (global.Properties || []).find(p => p && p.name === 'imm_pack_version');
+eq('注册了 imm_pack_version', !!packProp, true);
+eq('带 options（Blockbench 据此渲染下拉）', typeof (packProp && packProp.options && packProp.options.options), 'function');
+const versionOptions = (packProp && packProp.options && packProp.options.options) ? packProp.options.options() : {};
+eq('下拉含 26.2', Object.prototype.hasOwnProperty.call(versionOptions, '26.2'), true);
+eq('下拉含 26.3', Object.prototype.hasOwnProperty.call(versionOptions, '26.3'), true);
+eq('26.2 选项带格式号 88', /88/.test(String(versionOptions['26.2'])), true);
+eq('1.21.5 选项标注 pack_format', /pack_format/.test(String(versionOptions['1.21.5'])), true);
+global.Project.imm_pack_version = '';
+api.ensurePackVersion();
+eq('老项目空值自动补 26.2（下拉不会落到第一项）', global.Project.imm_pack_version, '26.2');
 
 /* ---------- pack.mcmeta 版本表 ---------- */
 console.log('\n[pack.mcmeta]');
@@ -125,6 +155,28 @@ const composite = { type: 'minecraft:composite', models: [leaf('base'), select] 
 eq('composite 展开（base + 命中的 case）', HIT(api.simEvaluate(composite, sInputs('a'))), ['base', 'm1']);
 eq('empty 不产生任何项', api.simEvaluate({ type: 'minecraft:empty' }, sInputs('a')).length, 0);
 eq('null 节点安全', api.simEvaluate(null, sInputs('a')).length, 0);
+
+/* ---------- 面板结构：输入控件必须直接可见，不能被塞进 <details> ---------- */
+console.log('\n[面板结构]');
+const simUi = api.getSimUi();
+const containsText = (el, text) => !!el && (String(el._text || '').includes(text) || (el.children || []).some(child => containsText(child, text)));
+const insideDetails = (el) => { let node = el; while (node) { if (node.tagName === 'DETAILS') return true; node = node.parentElement; } return false; };
+eq('面板已创建', !!simUi, true);
+const floatsRow = simUi && simUi.rows && simUi.rows.floats;
+eq('floats 行存在', !!floatsRow, true);
+const floatsBox = floatsRow && floatsRow.el.usage.parentElement;
+eq('行容器不是 <details>', floatsBox && floatsBox.tagName, 'DIV');
+eq('标题行可见 cmdata.floats 且不在折叠层', containsText(floatsBox.children[0], 'cmdata.floats') && !insideDetails(floatsBox.children[0]), true);
+eq('三个槽', floatsRow.pairs.length, 3);
+eq('槽 1 在行内（不在折叠层）', containsText(floatsBox.children[1], '槽 1') && !insideDetails(floatsRow.pairs[0].pv), true);
+eq('floats 值输入不在折叠层', insideDetails(floatsRow.el.val), false);
+eq('floats 有自动变化行', (floatsBox.children || []).some(c => containsText(c, '自动变化')), true);
+const stringsBox = simUi.rows.strings.el.usage.parentElement;
+eq('strings 标题在标题行', containsText(stringsBox.children[0], 'cmdata.strings'), true);
+eq('strings 的索引/值在标题行内', containsText(stringsBox.children[0], '索引') && containsText(stringsBox.children[0], '值'), true);
+eq('strings 行没有 <details>', stringsBox.children.some(c => c.tagName === 'DETAILS'), false);
+eq('没有任何行用 <details> 包裹输入', Object.keys(simUi.rows).every(k => !simUi.rows[k].el.usage.parentElement.children.some(c => c.tagName === 'DETAILS')), true);
+eq('colors 不显示自动变化', simUi.rows.colors.el.usage.parentElement.children.some(c => containsText(c, '自动变化')), false);
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
