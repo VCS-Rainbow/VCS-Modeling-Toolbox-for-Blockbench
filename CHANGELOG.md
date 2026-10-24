@@ -2,6 +2,10 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.65.1
+- **时间轴逐帧导出复用静态模型几何**：`addModel` 增加按方块集合的模型缓存；`buildTimelineNode` 先无姿态构建一次，再逐帧用缓存模型 + 每帧 transformation，不再给每帧重新生成/居中 from/to。
+- 模型文件名不再带 `_fN` 后缀，逐帧只有 transformation 不同。
+
 ## 0.65.0
 - 时间轴采样抽成可测试的 `sampleTimelinePoses(animation, fps, frameCount)`：逐帧读取带关键帧分组的 rotation / position 增量，恢复动画时间；`bakeTimelineToCallTags()` 复用它。
 - 单测扩到 **155 项**（采样帧数、rotation 叠加、position、时间恢复）。

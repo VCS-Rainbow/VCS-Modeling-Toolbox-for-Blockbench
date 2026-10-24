@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.65.0';
+const VERSION = '0.65.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -204,6 +204,7 @@ class Exporter {
 		this.textureNames = new Set();
 		this.negativeCount = 0;
 		this.timelinePoses = null; // uuid → {rotation, origin, position}（逐帧导出时临时覆盖）
+		this.modelCache = new Map(); // 方块集合 → {reference, shift}，时间轴逐帧复用同一模型文件
 	}
 
 	warn(msg) { if (msg && this.warnings.indexOf(msg) < 0 && this.warnings.length < 40) this.warnings.push(msg); }
@@ -342,6 +343,8 @@ class Exporter {
 	}
 
 	addModel(cubes, hint) {
+		const __modelKey = cubes.map(cube => (cube && (cube.uuid || cube.name)) || '?').join('|');
+		if (this.modelCache.has(__modelKey)) return this.modelCache.get(__modelKey);
 		const order = new Map();
 		const elements = [];
 		for (const cube of cubes) {
@@ -374,7 +377,9 @@ class Exporter {
 
 		const name = this.unique(sanitizePath(this.stem + '_' + (hint || 'part'), 'model'), this.modelNames);
 		this.models.push({ name, data: model });
-		return { reference: this.namespace + ':item/' + name, shift };
+		const __modelResult = { reference: this.namespace + ':item/' + name, shift };
+		this.modelCache.set(__modelKey, __modelResult);
+		return __modelResult;
 	}
 
 	/**
@@ -753,12 +758,16 @@ class Exporter {
 		const sorted = Array.from(frames.keys()).sort((a, b) => a - b);
 		if (!sorted.length) { this.warn('时间轴分组 “' + labelOf(group) + '” 没有带 imm_frame/imm_pose 的复调用标签，已跳过。'); return null; }
 		const roots = ((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []).filter(n => isGroup(n) && n !== group && n.export !== false);
+		// 先按无姿态构建一次：几何模型文件与静态导出一致，逐帧只覆盖 transformation
+		this.timelinePoses = null;
+		for (const rootGroup of roots) { try { this.buildNode(rootGroup, hint, parent_shift); } catch (e) { /* ignore */ } }
+
 		const entries = [];
 		for (const frame of sorted) {
 			this.timelinePoses = frames.get(frame);
 			const nodes = [];
 			for (const rootGroup of roots) {
-				const node = this.buildNode(rootGroup, hint + '_f' + frame, parent_shift);
+				const node = this.buildNode(rootGroup, hint, parent_shift);
 				if (node) nodes.push(node);
 			}
 			this.timelinePoses = null;
