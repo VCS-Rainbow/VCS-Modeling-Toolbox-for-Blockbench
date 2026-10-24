@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.62.6', api.VERSION, '0.62.6');
+eq('版本是 0.62.7', api.VERSION, '0.62.7');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -619,8 +619,8 @@ const dispCube = new global.Cube({ from: [0, 0, 0], to: [4, 4, 4], origin: [2, 2
 dispCube.faces = { north: { texture: 'tex-disp', uv: [0, 0, 16, 16] } };
 const dispExporter = api.createExporter();
 dispExporter.addModel([dispCube], 'displayTest');
-eq('GUI display scale = 1', dispExporter.models[0].data.display.gui.scale, [1, 1, 1]);
-eq('地面 display scale = 0.5', dispExporter.models[0].data.display.ground.scale, [0.5, 0.5, 0.5]);
+eq('GUI display scale = 0.625（block/block）', dispExporter.models[0].data.display.gui.scale, [0.625, 0.625, 0.625]);
+eq('地面 display scale = 0.25（block/block）', dispExporter.models[0].data.display.ground.scale, [0.25, 0.25, 0.25]);
 
 /* ---------- transformation 单位 ---------- */
 console.log('\n[transformation 单位]');
@@ -628,12 +628,6 @@ const unitExporter = api.createExporter();
 const unitTransformation = unitExporter.buildTransformation({ origin: [0, 0, 0], rotation: [0, 0, 0] }, [16, 0, 0], [0, 0, 0]);
 eq('translation 以格为单位（16px = 1）', unitTransformation.translation, [1, 0, 0]);
 
-/* ---------- 整体缩放 ---------- */
-console.log('\n[整体缩放]');
-global.Project.imm_export_scale = 2;
-const scaledMapping = api.createExporter().buildMapping();
-eq('整体缩放写入根 transformation', scaledMapping.model.transformation.scale, [2, 2, 2]);
-delete global.Project.imm_export_scale;
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));

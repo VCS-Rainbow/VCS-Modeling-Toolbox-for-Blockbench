@@ -77,8 +77,7 @@
 | --- | --- | --- |
 | `命名空间`（`imm_namespace`） | `custom` | 决定 `assets/<ns>/...` |
 | `变换原点用物品中心 (8,8,8)`（`imm_center_pivot`） | 开 | Minecraft 的物品模型变换以物品中心为原点，建议保持开启 |
-| `模型附带 item/generated display 变换`（`imm_block_display`） | 开 | 给生成的模型补原版 `item/generated` 的 display（GUI scale 1.0、地面 0.5） |
-| `整体缩放`（`imm_export_scale`） | 1 | 写入根 `transformation.scale`，整体放大/缩小装配 |
+| `模型附带方块 display 变换`（`imm_block_display`） | 开 | 给生成的模型补原版 `block/block` 的 display（与 0.20 一致） |
 | `资源包工程路径`（`imm_pack_path`） | 空 | 合并目标目录（`pack.mcmeta` 所在目录），由「选择资源包工程路径…」写入 |
 | `目标 Minecraft 版本`（`imm_pack_version`） | `26.2` | 决定 `pack.mcmeta` 的格式字段，见上文；在项目设置里直接下拉选择 |
 

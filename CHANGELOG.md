@@ -2,6 +2,11 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.62.7
+- **display 恢复为 0.20 的 `block/block` 预设**（GUI 0.625 / 地面 0.25 / 手持 0.375），与 0.20 正常版本的输出一致。
+- 移除 0.62.6 的 `imm_export_scale` 整体缩放（已否决）。
+- 对比确认：0.20 与 0.62.2 的 `centerShift` / `compileElement` / `addModel` / `buildTransformation` 完全相同，几何与缩放逻辑未变。
+
 ## 0.62.6
 - 新增项目属性 **整体缩放**（`imm_export_scale`，默认 1）：写入根 `transformation.scale`，用于整体放大/缩小装配（纯 transformation 层面，不动 from/to）。
 - 检查导出 mapping：所有 `left_rotation` 四元数范数均为 1，不存在四元数隐性缩放。
