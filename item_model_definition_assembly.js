@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.32.7';
+const VERSION = '0.33.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1523,6 +1523,7 @@ function buildSimPanel(show_panel) {
 	try { if (typeof Panels !== 'undefined' && Panels) Panels[sim_panel.id] = sim_panel; } catch (e) { /* ignore */ }
 	if (show_panel !== false) sim_panel.show();
 	try { simTick(); } catch (e) { /* ignore */ }
+	try { refreshUsage(); } catch (e) { /* ignore */ }
 	return sim_panel;
 }
 
@@ -1558,6 +1559,30 @@ function collectInputUsage() {
 	};
 	walk((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []);
 	return map;
+}
+
+/* 独立刷新每行的“关联分组”，不依赖映射构建是否成功 */
+function refreshUsage(hits) {
+	if (!sim_ui || !sim_ui.rows) return;
+	try {
+		const usageMap = collectInputUsage();
+		const boxes = (typeof document !== 'undefined') ? document.querySelectorAll('#panel_imm_sim_panel details') : [];
+		for (const key of Object.keys(sim_ui.rows)) {
+			const row = sim_ui.rows[key];
+			const list = usageMap[key + '#' + row.index] || [];
+			const items = list.map(name => {
+				let active = false;
+				if (Array.isArray(hits) && hits.length) {
+					const tokens = String(name).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+					active = tokens.length > 0 && hits.some(h => tokens.every(t => String(h).toLowerCase().includes(t)));
+				}
+				return (active ? '✔ ' : '· ') + name;
+			});
+			const target = boxes[row.order] ? boxes[row.order].lastElementChild : null;
+			if (target) target.textContent = '关联分组：' + (items.length ? ('\n' + items.join('\n')) : '（无）');
+		}
+		console.log('[装配] usage refreshed, keys=', Object.keys(usageMap).length);
+	} catch (error) { console.error('[装配] refreshUsage error', error); }
 }
 
 function simTick() {
