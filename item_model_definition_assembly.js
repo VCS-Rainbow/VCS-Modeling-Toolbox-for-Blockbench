@@ -1015,6 +1015,8 @@ function editGroupProps() {
 			try {
 				Undo.initEdit({ groups: [group] });
 				group.imm_type = result.imm_type;
+				const new_type = resetTypeSpecificProps(group, result.imm_type);
+				if (new_type !== 'range_dispatch' && new_type !== 'condition' && new_type !== 'select') stripChildPrefixes(group);
 				if (result.imm_model !== undefined) group.imm_model = result.imm_model;
 				if (result.imm_property !== undefined) group.imm_property = result.imm_property;
 				if (result.imm_component !== undefined) group.imm_component = result.imm_component;
