@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.61.0', api.VERSION, '0.61.0');
+eq('版本是 0.61.1', api.VERSION, '0.61.1');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -549,6 +549,16 @@ global.Outliner.selected.length = 0; boxInlineCube1.selected = true; boxInlineCu
 global.Outliner.selected.push(boxInlineCube1, boxInlineCube2);
 api.guardBoxSelection();
 eq('只选内建模型元素时保持原样', global.Outliner.selected.indexOf(boxInlineCube1) >= 0 && global.Outliner.selected.indexOf(boxInlineGroup) < 0, true);
+const refGroup = new global.Group({ name: 'refGroup', imm_type: 'model', imm_model: 'ns:item/ref' });
+const refCube1 = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
+const refCube2 = new global.Cube({ from: [3, 0, 0], to: [5, 2, 2], origin: [4, 1, 1], rotation: [0, 0, 0] });
+refCube1.parent = refGroup; refCube2.parent = refGroup; refCube1.unselect = detachBox; refCube2.unselect = detachBox;
+refGroup.markAsSelected = function () { this.selected = true; if (global.Outliner.selected.indexOf(this) < 0) global.Outliner.selected.push(this); };
+global.Outliner.selected.length = 0; refCube1.selected = true; refCube2.selected = true;
+global.Outliner.selected.push(refCube1, refCube2);
+api.guardBoxSelection();
+eq('引用模型分组不享受例外', global.Outliner.selected.indexOf(refGroup) >= 0 && global.Outliner.selected.indexOf(refCube1) < 0, true);
+
 const savedFormatId = global.Format.id; global.Format.id = 'other';
 global.Outliner.selected.length = 0; boxCube1.selected = true; boxCube2.selected = true;
 global.Outliner.selected.push(boxCube1, boxCube2);

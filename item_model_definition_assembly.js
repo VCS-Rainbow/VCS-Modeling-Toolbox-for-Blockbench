@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.61.0';
+const VERSION = '0.61.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2293,12 +2293,12 @@ function setBoxSelectGroups(value) {
 	if (immBoxSetting) immBoxSetting.value = !!value;
 	return boxGroupsEnabled();
 }
-/** 内建模型：inline 分组，或祖先里有引用模型（model）的分组 */
+/** 内建模型：仅 inline（内联模型）分组；引用模型（model）不算例外 */
 function isBuiltInModelGroup(group) {
 	let node = group;
 	while (node && isGroup(node)) {
 		const type = String(node.imm_type || '').replace(/^minecraft:/, '');
-		if (type === 'inline' || type === 'model') return true;
+		if (type === 'inline') return true;
 		node = node.parent;
 	}
 	return false;
