@@ -67,7 +67,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.42.0', api.VERSION, '0.42.0');
+eq('版本是 0.43.0', api.VERSION, '0.43.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -249,17 +249,26 @@ slot0.els.val.value = '5';
 slot0.els.val.fire('input');
 api.simTick();
 const simState = api.getSimState();
-simState.viewMode = 'ghost';
+api.simSetViewMode('ghost');
 api.simTick();
 eq('半透明：未命中的 low 变透明', lowCube.mesh.material.transparent === true && Math.abs(lowCube.mesh.material.opacity - 0.28) < 1e-9, true);
 eq('半透明：命中的 high 保持不透明', highCube.mesh.material.transparent, false);
-simState.viewMode = 'hide';
+eq('开启联动后有周期重贴', !!simState.viewTimer, true);
+const ghostMaterial = lowCube.mesh.material;
+lowCube.mesh.material = lowGroup.children[0].mesh.__immGhost.original; // 模拟 Blockbench 重置材质
+api.simApplyGroupVisual([{ group: lowGroup, active: false }], 'ghost');
+eq('材质被重置后能自动重贴', lowCube.mesh.material !== ghostMaterial && lowCube.mesh.material.transparent === true, true);
+api.simSetViewMode('hide');
 api.simTick();
 eq('隐藏：未命中的 low 分组不可见', lowGroup.mesh.visible, false);
 eq('隐藏：命中的 high 仍可见', highGroup.mesh.visible, true);
-simState.viewMode = 'off';
+lowGroup.mesh.visible = true; // 模拟 Blockbench 重置可见性
+api.simApplyGroupVisual([{ group: lowGroup, active: false }], 'hide');
+eq('可见性被重置后能自动重贴', lowGroup.mesh.visible, false);
+api.simSetViewMode('off');
 api.simTick();
 eq('关闭联动后恢复材质与可见性', lowCube.mesh.material.transparent === false && lowGroup.mesh.visible === true, true);
+eq('关闭后停止周期重贴', simState.viewTimer, null);
 
 /* ---------- 分支前缀清理 ---------- */
 console.log('\n[分支前缀清理]');

@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-24 · 当前版本 **0.42.0**（tag `v0.42.0`）
+> 生成时间：2026-10-24 · 当前版本 **0.43.0**（tag `v0.43.0`）
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 
 ---
@@ -106,6 +106,8 @@
   - 完全隐藏：`group.mesh.visible = false`（运行时），`mesh.__immHidden` 记原值；不改 `group.visibility`。
   - 映射节点到分组靠 `Exporter.groupNodes`（旁路表，不参与导出）；`simGetMapping()` 里缓存为 `sim.groupNodes`。
   - 恢复时机：模式改回不处理、映射失败、切换项目、卸载插件；映射里消失的分组也会在下次 tick 恢复，避免残留幽灵。
+- **重贴**：Blockbench 的 `updateSelection` 会把 `mesh.material` 换回纹理材质、`updateVisibility` 会把 `mesh.visible` 换回 `element.visibility`；0.43.0 在联动开启时每 250ms 重贴，并检测被重置后重新克隆。
+- **诊断**：`Tools → 诊断：模拟视图联动` 弹窗显示 模式 / groupNodes 数 / 分支数 / 匹配分组数 / 未命中分组的方块与材质数量；“没反应”先看这里是否匹配到 0 个分组。
 
 ### 2.8 枢轴归位（Tools → 枢轴归位…）
 
@@ -122,6 +124,7 @@
 ## 3. 版本历史（近期，git tag）
 
 ```
+0.43.0  视图联动改为开启时每 250ms 重贴（Blockbench 会重置材质/可见性）+ 诊断入口
 0.42.0  不活跃分支视图联动：不处理 / 半透明 / 完全隐藏（只动运行时材质）
 0.41.0  分支前缀自动清理；枢轴归位（嵌套旋转补偿，外观不变）
 0.40.0  槽级开关；未活跃改自绘折叠（原生 details 打不开）；映射/用量缓存 + 输入防抖 + ⟳ 刷新
@@ -217,7 +220,7 @@
 $node = 'C:\Users\Rainbow_\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 & $node --check 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js'
 & $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_assembly.js'   # 离线冒烟
-& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图单测（87 项）
+& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图单测（91 项）
 Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js' `
   'C:\Users\Rainbow_\AppData\Roaming\Blockbench\plugins\item_model_definition_assembly.js' -Force
 ```
@@ -233,5 +236,5 @@ Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_d
 
 ### 6.1 新增的求值/版本钩子
 
-- `_test_sim.js` 通过 `globalThis.__IMM_TEST__ = {}`（require 之前设置）拿到 `api = { simEvaluate, simValue, simTick, packMcmetaData, packFormatLabel, packMcmetaFormat, PACK_VERSIONS, VERSION, buildSimPanel, getSimUi, getSimPanel, stripStrayBranchPrefixes, fixGroupPivot, simApplyGroupVisual, simRestoreView, pivotContentPoints, rotateAroundQuat, readQuaternion }`；生产环境不设这个全局就没有副作用。它还 mock 了极简 `document` / `Panel`，用来断言面板结构（输入不能在 `<details>` 里）。
+- `_test_sim.js` 通过 `globalThis.__IMM_TEST__ = {}`（require 之前设置）拿到 `api = { simEvaluate, simValue, simTick, packMcmetaData, packFormatLabel, packMcmetaFormat, PACK_VERSIONS, VERSION, buildSimPanel, getSimUi, getSimPanel, stripStrayBranchPrefixes, fixGroupPivot, simApplyGroupVisual, simRestoreView, simSetViewMode, pivotContentPoints, rotateAroundQuat, readQuaternion }`；生产环境不设这个全局就没有副作用。它还 mock 了极简 `document` / `Panel`，用来断言面板结构（输入不能在 `<details>` 里）。
 - `packMcmetaData(description, versionId)` 是 `pack.mcmeta` 的唯一生成入口；改版本表只改 `PACK_VERSIONS`。
