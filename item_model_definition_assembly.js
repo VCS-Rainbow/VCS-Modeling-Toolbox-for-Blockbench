@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.32.4';
+const VERSION = '0.32.5';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1533,9 +1533,12 @@ function collectInputUsage() {
 		for (const node of nodes || []) {
 			if (!node || !isGroup(node)) continue;
 			const type = String(node.imm_type || '').replace(/^minecraft:/, '');
-			const prop = String(node.imm_property || '').replace(/^minecraft:/, '');
+			const propRaw = String(node.imm_property || '').replace(/^minecraft:/, '').trim();
+			const prop = propRaw || (type === 'range_dispatch' || type === 'select' || type === 'condition' ? 'custom_model_data' : '');
 			const index = Number(node.imm_index) || 0;
 			const name = labelOf(node);
+			const prefixMatch = String(name || '').match(/^\[(\d+)\]/);
+			if (prefixMatch) push('floats', Number(prefixMatch[1]), name);
 			if (type === 'range_dispatch' && prop === 'custom_model_data') {
 				push('floats', index, name);
 				// 子分支名形如 [0] xxx / [2] xxx，按前缀归到对应 float 下标
