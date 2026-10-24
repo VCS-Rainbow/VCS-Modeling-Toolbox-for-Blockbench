@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.43.0';
+const VERSION = '0.44.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -487,6 +487,7 @@ class Exporter {
 		const built = this.addModel([cube], hint + '_' + sanitizePath(labelOf(cube), 'cube'));
 		if (!built) return null;
 		const node = { type: 'minecraft:model', model: built.reference };
+		if (cube && cube.parent && isGroup(cube.parent)) this.groupNodes.set(node, cube.parent);
 		const transformation = this.buildTransformation(cube, built.shift, parent_shift);
 		if (transformation) node.transformation = transformation;
 		return node;
@@ -537,7 +538,7 @@ class Exporter {
 				node.cases.push({ when: this.parseWhen(child.imm_case_when), model: childNode });
 			}
 			const fallback = built ? { type: 'minecraft:model', model: built.reference } : (extras[0] || null);
-			if (fallback) node.fallback = fallback;
+			if (fallback) { this.groupNodes.set(fallback, group); node.fallback = fallback; }
 			if (!node.cases.length && !node.fallback) return null;
 			return node;
 		}
@@ -576,7 +577,7 @@ class Exporter {
 				branch_index++;
 			}
 			const fallback = built ? { type: 'minecraft:model', model: built.reference } : (extras[0] || null);
-			if (fallback) node.fallback = fallback;
+			if (fallback) { this.groupNodes.set(fallback, group); node.fallback = fallback; }
 			if (!node.entries.length && !node.fallback) return null;
 			return node;
 		}
@@ -586,6 +587,7 @@ class Exporter {
 				if (built) {
 					const model_node = { type: 'minecraft:model', model: built.reference };
 					if (tints) model_node.tints = tints;
+					this.groupNodes.set(model_node, group);
 					models.push(model_node);
 				} else if (tints) {
 					this.warn('分组 "' + labelOf(group) + '" 设置了 tints 但没有自己的模型，已忽略。');
@@ -2248,9 +2250,10 @@ function simEvaluate(node, inputs) {
 		return result;
 	}
 	if (type === 'condition') {
-		// 被选中的那一支就是生效分支：ok=false 时走 on_false，同样算命中
+		// 被选中的那一支算命中；另一支也求值但标 hit=false（结果区与视图联动都要知道它没生效）
 		const ok = simConditionValue(node, inputs);
 		for (const item of simEvaluate(ok ? node.on_true : node.on_false, inputs)) result.push(item);
+		for (const item of simEvaluate(ok ? node.on_false : node.on_true, inputs)) result.push({ node: item.node, hit: false });
 		return result;
 	}
 	if (type === 'model') { result.push({ node, hit: true }); return result; }
@@ -2633,7 +2636,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, simApplyGroupVisual, simRestoreView, simSetViewMode, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, simApplyGroupVisual, simRestoreView, simSetViewMode, createExporter, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

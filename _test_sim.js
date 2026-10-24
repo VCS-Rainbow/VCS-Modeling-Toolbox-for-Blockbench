@@ -67,7 +67,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.43.0', api.VERSION, '0.43.0');
+eq('版本是 0.44.0', api.VERSION, '0.44.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -149,6 +149,9 @@ eq('selected=true → on_true', HIT(api.simEvaluate(cond('minecraft:selected', 0
 eq('selected 缺省 → on_false', HIT(api.simEvaluate(cond('minecraft:selected', 0), { floats: [], strings: [], flags: [] })), ['f']);
 eq('using_item=true → on_true', HIT(api.simEvaluate(cond('minecraft:using_item', 0), { floats: [], strings: [], flags: [], using_item: true })), ['t']);
 eq('damage=3 → damaged 为真', HIT(api.simEvaluate(cond('minecraft:damaged', 0), { floats: [], strings: [], flags: [], damage: 3 })), ['t']);
+const condBoth = api.simEvaluate(cond('minecraft:selected', 0), { floats: [], strings: [], flags: [], selected: true });
+eq('condition 两个分支都列出', condBoth.length, 2);
+eq('未选中的分支标为未命中', HIT(condBoth), ['t']);
 
 /* ---------- composite 嵌套 ---------- */
 console.log('\n[composite]');
@@ -327,6 +330,20 @@ eq('恢复可见', viewGroup.mesh.visible, true);
 api.simApplyGroupVisual([{ group: viewGroup, active: false }], 'ghost');
 api.simApplyGroupVisual([], 'off');
 eq('关闭联动后全部恢复', viewCube.mesh.material.transparent === false && viewGroup.mesh.visible === true, true);
+
+/* ---------- 映射节点 → 分组覆盖 ---------- */
+console.log('\n[映射节点→分组覆盖]');
+const fakeComposite = new global.Group({ name: 'fakeComposite', imm_type: 'composite' });
+const fakeCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0], export: true });
+fakeComposite.children.push(fakeCube);
+fakeComposite.mesh = { visible: true };
+const savedRoot = global.Outliner.root.splice(0, global.Outliner.root.length, fakeComposite);
+const fakeExporter = api.createExporter();
+fakeExporter.addModel = () => ({ reference: 'ns:item/fake', shift: [0, 0, 0] });
+const fakeMapping = fakeExporter.buildMapping();
+const fakeItems = api.simEvaluate(fakeMapping.model, { floats: [], colors: [], strings: [], flags: [], selected: false, using_item: false, damage: 0, count: 0, time: 0 });
+eq('composite 内联模型节点能反查分组', fakeItems.length > 0 && fakeItems.every(item => fakeExporter.groupNodes.get(item.node) === fakeComposite), true);
+global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRoot);
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));

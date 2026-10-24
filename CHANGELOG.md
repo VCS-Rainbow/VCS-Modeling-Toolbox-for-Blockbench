@@ -2,6 +2,15 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.44.0
+- **修视图联动只匹配到 1 个分组**（诊断里 `映射节点→分组 20`、`匹配到分组 1`）：`simEvaluate` 返回的多是 composite 内部的临时 `model` 节点，它们没有登记到 `groupNodes`。现在这些节点也登记到所属分组：
+  - composite 自己几何生成的 `model_node`；
+  - `range_dispatch` / `select` 的 fallback 节点；
+  - 多轴方块拆出的独立节点（登记到它的父分组）。
+- **condition 的未选中分支也参与求值**（标 `hit=false`）：结果区会把它列为 ✘，视图联动也能把未生效的分支隐藏/半透明；命中数不变。
+- 用真实 `assembly.bbmodel` 离线核对：`groupNodes 25 / 分支 10 / 匹配 10`（此前 composite 叶子全部匹配不到）。
+- 单测扩到 **94 项**：新增 condition 两分支、composite 内联节点反查分组。
+
 ## 0.43.0
 - **修视图联动“改了没反应”**：Blockbench 在选中/更新时会重置 `mesh.material`（`updateSelection` 里按 `texture.getMaterial()` 重设）与 `mesh.visible`（`updateVisibility`），0.42.0 只贴一次，很容易被盖回去。
   - 现在联动开启时每 **250ms 重贴**一次；检测到材质/可见性被重置会自动重新克隆/隐藏；
