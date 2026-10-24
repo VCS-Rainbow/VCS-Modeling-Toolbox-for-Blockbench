@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.56.1', api.VERSION, '0.56.1');
+eq('版本是 0.57.0', api.VERSION, '0.57.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -307,6 +307,15 @@ const beforePivot = cubeCenterWorld();
 api.fixGroupPivot(outer);
 api.fixGroupPivot(inner);
 const afterPivot = cubeCenterWorld();
+const parentCenter = [5, 6, 7];
+const rebaseCube = new global.Cube({ from: [0, 0, 0], to: [2, 4, 6], origin: [10, 20, 30], rotation: [0, 0, 45] });
+const rebaseCenterBefore = [(rebaseCube.from[0] + rebaseCube.to[0]) / 2, (rebaseCube.from[1] + rebaseCube.to[1]) / 2, (rebaseCube.from[2] + rebaseCube.to[2]) / 2];
+const rebaseWorldBefore = api.rotateAroundQuat(api.readQuaternion(rebaseCube), rebaseCube.origin, rebaseCenterBefore);
+api.centerCubePivot(rebaseCube, parentCenter);
+const rebaseCenterAfter = [(rebaseCube.from[0] + rebaseCube.to[0]) / 2, (rebaseCube.from[1] + rebaseCube.to[1]) / 2, (rebaseCube.from[2] + rebaseCube.to[2]) / 2];
+const rebaseWorldAfter = api.rotateAroundQuat(api.readQuaternion(rebaseCube), rebaseCube.origin, rebaseCenterAfter);
+eq('方块枢轴移到父级中心', JSON.stringify(rebaseCube.origin), JSON.stringify(parentCenter));
+eq('方块枢轴移动后世界位置不变（误差 < 1e-6）', dist3(rebaseWorldBefore, rebaseWorldAfter) < 1e-6, true);
 eq('改枢轴后方块世界位置不变（误差 < 1e-6）', dist3(beforePivot, afterPivot) < 1e-6, true);
 const outerPoints = api.pivotContentPoints(outer);
 const outerQ = api.readQuaternion(outer);

@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.56.1';
+const VERSION = '0.57.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1261,6 +1261,22 @@ function pivotTranslateContents(group, delta) {
 	}
 }
 
+/** 把方块的 rotation 枢轴（origin）移到它自己的 from/to 几何中心；返回移动距离 */
+/** 把方块的 rotation 枢轴移到 target（父分组的几何中心），并补偿 from/to 保持外观不变 */
+function centerCubePivot(cube, target) {
+	if (!cube || !Array.isArray(cube.from) || !Array.isArray(cube.to) || !Array.isArray(target)) return 0;
+	const old = Array.isArray(cube.origin) ? cube.origin.slice() : [0, 0, 0];
+	const moved = Math.hypot(target[0] - num(old[0]), target[1] - num(old[1]), target[2] - num(old[2]));
+	if (moved <= 1e-9) { cube.origin = target.slice(); return 0; }
+	const d = [num(old[0]) - target[0], num(old[1]) - target[1], num(old[2]) - target[2]];
+	const back = rotVec(quatMatrix(pivotConj(pivotQuat(cube))), d);
+	const shift = [back[0] - d[0], back[1] - d[1], back[2] - d[2]];
+	addVec(cube.from, shift);
+	addVec(cube.to, shift);
+	cube.origin = target.slice();
+	return moved;
+}
+
 /** 把枢轴移到“自身 + 后代方块”的几何中心；方块同步补偿，外观不变。返回枢轴移动距离 */
 function fixGroupPivot(group) {
 	const points = pivotContentPoints(group);
@@ -1304,9 +1320,16 @@ function applyPivotFix(selectedOnly) {
 	walkGroups(targets, g => { groups.push(g); for (const c of (g.children || [])) if (isCube(c)) cubes.push(c); });
 	try { Undo.initEdit({ groups, elements: cubes }); } catch (e) { /* ignore */ }
 	let fixed = 0, total = 0, max = 0;
+	let cubesFixed = 0, cubeTotal = 0, cubeMax = 0;
 	const run = (g) => {
 		const moved = fixGroupPivot(g);
 		if (moved > 0.001) { fixed++; total += moved; if (moved > max) max = moved; }
+		// 分组枢轴已到自身内容中心；本层方块的旋转枢轴再归到这个父级中心（带补偿，外观不变）
+		for (const child of (g.children || [])) {
+			if (!isCube(child)) continue;
+			const movedCube = centerCubePivot(child, g.origin);
+			if (movedCube > 0.001) { cubesFixed++; cubeTotal += movedCube; if (movedCube > cubeMax) cubeMax = movedCube; }
+		}
 		for (const child of (g.children || [])) if (isGroup(child)) run(child);
 	};
 	for (const t of targets) run(t);
@@ -1314,9 +1337,9 @@ function applyPivotFix(selectedOnly) {
 	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 	try { Project.saved = false; } catch (e) { /* ignore */ }
 	simInvalidate();
-	Blockbench.showQuickMessage(fixed
-		? ('枢轴归位：' + fixed + ' 个分组，平均 ' + (total / fixed).toFixed(1) + 'px，最大 ' + max.toFixed(1) + 'px')
-		: '所有分组枢轴已经在几何中心附近', 4000);
+	Blockbench.showQuickMessage(((fixed || cubesFixed)
+		? ('枢轴归位：' + fixed + ' 个分组、' + cubesFixed + ' 个方块枢轴已归中' + (cubesFixed ? ('（方块平均 ' + (cubeTotal / cubesFixed).toFixed(1) + 'px，最大 ' + cubeMax.toFixed(1) + 'px）') : ''))
+		: '所有分组和方块枢轴已经在几何中心附近'), 4000);
 }
 
 function diagnoseSimView() {
@@ -1354,7 +1377,7 @@ function openPivotFix() {
 				type: 'select',
 				value: 'all',
 				options: { all: '全部分组', selected: '选中的分组（含子分组）' },
-				description: '把每个分组的 origin 移到它（含子分组）的几何中心；方块坐标会同步补偿，模型外观不变。嵌套旋转也会正确换算。',
+				description: '把每个分组的 origin 归到自身内容中心，再把该组方块的旋转枢轴归到父分组的几何中心；方块坐标同步补偿，外观不变。嵌套旋转也会正确换算。',
 			},
 		},
 		onConfirm(result) { applyPivotFix(result.scope === 'selected'); },
@@ -3104,7 +3127,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
