@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.60.0', api.VERSION, '0.60.0');
+eq('版本是 0.61.0', api.VERSION, '0.61.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -529,6 +529,32 @@ global.Outliner.selected.length = 0; boxCube1.selected = true; global.Outliner.s
 api.guardBoxSelection();
 eq('只选一个方块时不处理', global.Outliner.selected.indexOf(boxCube1) >= 0, true);
 api.setBoxSelectGroups(false); global.Outliner.selected.length = 0;
+
+/* ---------- 框选规则：强制开启 / 内建模型例外 ---------- */
+console.log('\n[框选规则]');
+api.setBoxSelectGroups(false);
+boxGroup.selected = false;
+global.Outliner.selected.length = 0;
+boxCube1.selected = true; boxCube2.selected = true;
+global.Outliner.selected.push(boxCube1, boxCube2);
+api.guardBoxSelection();
+eq('装配格式内强制开启（不靠设置）', global.Outliner.selected.indexOf(boxGroup) >= 0, true);
+const boxInlineGroup = new global.Group({ name: 'boxInlineGroup', imm_type: 'inline' });
+const boxInlineCube1 = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
+const boxInlineCube2 = new global.Cube({ from: [3, 0, 0], to: [5, 2, 2], origin: [4, 1, 1], rotation: [0, 0, 0] });
+boxInlineCube1.parent = boxInlineGroup; boxInlineCube2.parent = boxInlineGroup;
+boxInlineCube1.unselect = detachBox; boxInlineCube2.unselect = detachBox;
+boxInlineGroup.markAsSelected = function () { this.selected = true; if (global.Outliner.selected.indexOf(this) < 0) global.Outliner.selected.push(this); };
+global.Outliner.selected.length = 0; boxInlineCube1.selected = true; boxInlineCube2.selected = true;
+global.Outliner.selected.push(boxInlineCube1, boxInlineCube2);
+api.guardBoxSelection();
+eq('只选内建模型元素时保持原样', global.Outliner.selected.indexOf(boxInlineCube1) >= 0 && global.Outliner.selected.indexOf(boxInlineGroup) < 0, true);
+const savedFormatId = global.Format.id; global.Format.id = 'other';
+global.Outliner.selected.length = 0; boxCube1.selected = true; boxCube2.selected = true;
+global.Outliner.selected.push(boxCube1, boxCube2);
+api.guardBoxSelection();
+eq('其它格式默认关闭', global.Outliner.selected.indexOf(boxCube1) >= 0 && global.Outliner.selected.indexOf(boxGroup) < 0, true);
+global.Format.id = savedFormatId; global.Outliner.selected.length = 0;
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
