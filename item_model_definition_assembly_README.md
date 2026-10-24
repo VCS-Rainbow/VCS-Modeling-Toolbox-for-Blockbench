@@ -241,6 +241,8 @@ Blockbench 5.x 的实现方式有两条，本插件都接上了：
 
 `Tools → 复调用选中的分组`（或分组右键）：在选中分组的**枢轴位置**创建一个 **Locator** 标签（位置/旋转同该分组），属性 `imm_call_target` 指向该分组的 UUID。
 
+右键该 Locator 可选「编辑复调用标签…」，修改目标分组或直接填模型 id（写回 `imm_call_target`）；`Tools → 编辑复调用标签…` 同样可用。
+
 导出时标签会被**替换为目标分组的映射节点**（深拷贝并保留其 `transformation`）：
 
 - 目标若是 `composite` / `range_dispatch` / `select` / `condition`，其分支结构一并复制；
