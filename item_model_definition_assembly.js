@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.22.4';
+const VERSION = '0.22.5';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1116,13 +1116,7 @@ function editGroupProps() {
 				if (result.imm_model !== undefined) group.imm_model = result.imm_model;
 				const next_model = String(result.imm_model || '').trim();
 				if (next_model && next_model !== previous_model) {
-					setTimeout(() => {
-						Blockbench.showMessageBox({
-							title: '导入引用模型',
-							message: '将清空分组 “' + labelOf(group) + '” 下的所有子项与方块，并从资源包工程导入：\n' + next_model,
-							buttons: ['取消', '导入'], confirm: 1, cancel: 0,
-						}, (button) => { if (button === 1) importModelReference(group); });
-					}, 100);
+					Blockbench.showQuickMessage('引用模型已更新，请用 Tools → 导入引用模型（当前分组）导入几何', 4000);
 				}
 				if (result.imm_property !== undefined) group.imm_property = result.imm_property;
 				if (result.imm_component !== undefined) group.imm_component = result.imm_component;
@@ -1290,7 +1284,18 @@ function getOrCreateModelTexture(pathmod, fsmod, root, reference) {
 }
 
 /** 把 Java 模型转成方块并放进分组；成功后才清空原有子项 */
+let importingModel = false;
+let lastImportKey = '';
+let lastImportAt = 0;
+
 function importModelReference(group) {
+	if (importingModel) { console.warn('[装配] 忽略重复导入（进行中）'); return false; }
+	const importKey = String((group && group.uuid) || '') + '|' + String((group && group.imm_model) || '');
+	if (importKey === lastImportKey && (Date.now() - lastImportAt) < 1500) { console.warn('[装配] 忽略重复导入（冷却中）'); return false; }
+	importingModel = true;
+	lastImportKey = importKey;
+	lastImportAt = Date.now();
+	setTimeout(() => { importingModel = false; }, 1200);
 	if (!group) return false;
 	const reference = String(group.imm_model || '').trim();
 	if (!reference) return false;
