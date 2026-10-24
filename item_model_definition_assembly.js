@@ -502,7 +502,7 @@ class Exporter {
 		for (const cube of cubes) (this.needsOwnNode(cube) ? ownCubes : inlineCubes).push(cube);
 
 		let built = null;
-		if (group.imm_model) built = { reference: String(group.imm_model).trim(), shift: [0, 0, 0] };
+		if (type === 'model' && group.imm_model) built = { reference: String(group.imm_model).trim(), shift: [0, 0, 0] };
 		else if (inlineCubes.length) built = this.addModel(inlineCubes, hint);
 
 		const node = { type: 'minecraft:' + type };
@@ -741,6 +741,46 @@ async function pickPack() {
 	}
 	const picked = await Promise.resolve(Blockbench.pickDirectory({ resource_id: 'imm_pack', title: '选择目标资源包根目录' }));
 	return picked || null;
+}
+
+const PACK_FORMATS = { '26.2': 71 };
+const PACK_VERSION_ID = '26.2';
+
+function readPackMcmeta(fsmod, pathmod, root) {
+	try {
+		const p = pathmod.join(root, 'pack.mcmeta');
+		if (!fsmod.existsSync(p)) return null;
+		return JSON.parse(fsmod.readFileSync(p, 'utf8'));
+	} catch (e) { return null; }
+}
+
+function createPackProject(root) {
+	const pathmod = getPath();
+	const fsmod = getScopedFs(root);
+	if (!pathmod || !fsmod) { Blockbench.showMessageBox({ title: '不支持写入', message: '需要桌面版 Blockbench。', icon: 'warning' }); return false; }
+	try {
+		const format = PACK_FORMATS[PACK_VERSION_ID] || 71;
+		const data = { pack: { pack_format: format, description: ((typeof Project !== 'undefined' && Project && Project.name) ? Project.name : 'Resource Pack') + ' · Blockbench' } };
+		fsmod.mkdirSync(root, { recursive: true });
+		Blockbench.writeFile(pathmod.join(root, 'pack.mcmeta'), { content: JSON.stringify(data, null, '\t'), savetype: 'text' });
+		if (typeof Project !== 'undefined' && Project) { Project.imm_pack_path = root; Project.saved = false; }
+		Blockbench.showQuickMessage('已创建资源包工程 pack.mcmeta（pack_format=' + format + '，' + PACK_VERSION_ID + '）', 4000);
+		return true;
+	} catch (error) {
+		Blockbench.showMessageBox({ title: '创建失败', message: String((error && error.message) || error), icon: 'error' });
+		return false;
+	}
+}
+
+function chooseOrCreatePack() {
+	Blockbench.showMessageBox({
+		title: '资源包工程路径',
+		message: '尚未设置「资源包工程路径」。\n请选择一个已有的资源包目录，或创建一个新的。',
+		buttons: ['取消', '选择…', '创建…'], confirm: 2, cancel: 0,
+	}, (button) => {
+		if (button === 1) pickPack().then(picked => { if (picked) { Project.imm_pack_path = picked; runMerge(picked); } });
+		else if (button === 2) pickPack().then(picked => { if (picked && createPackProject(picked)) runMerge(picked); });
+	});
 }
 
 function mergeToPack() {
@@ -1335,7 +1375,7 @@ function registerProperties() {
 	P(ModelProject, 'boolean', 'imm_center_pivot', { label: '旋转枢轴用 (0.5,0.5,0.5)（= 像素 8,8,8）', default: false });
 	P(ModelProject, 'boolean', 'imm_block_display', { label: '模型附带方块 display 变换', default: true });
 	P(ModelProject, 'boolean', 'imm_hide_unavailable', { label: '隐藏当前条件下不可用的分组', default: true });
-	P(ModelProject, 'string', 'imm_pack_path', { label: '合并目标资源包路径', default: '' });
+	P(ModelProject, 'string', 'imm_pack_path', { label: '资源包工程路径（pack.mcmeta 所在目录）', default: '' });
 
 	// 面着色：Blockbench 的 UV 编辑器“着色”开关绑定 Face.properties.tint（默认 -1 表示未着色）
 	P(Face, 'number', 'tint', { label: '着色 index', default: -1 });
