@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.61.2';
+const VERSION = '0.61.3';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2310,6 +2310,8 @@ function guardBoxSelection() {
 	if (typeof Outliner === 'undefined' || !Outliner || !Array.isArray(Outliner.selected)) return;
 	const cubes = Outliner.selected.filter(isCube);
 	if (cubes.length < 2) return;
+	// 方块已经在某个被选中的分组里（单击分组/上一次转换的结果）→ 不再处理
+	if (cubes.every(cube => { let node = cube && cube.parent; while (node) { if (node.selected) return true; node = node.parent; } return false; })) return;
 	const groups = [];
 	for (const cube of cubes) {
 		const parent = cube && cube.parent;
@@ -2330,8 +2332,8 @@ function guardBoxSelection() {
 				else if (typeof group.select === 'function') group.select();
 			} catch (e) { /* ignore */ }
 		}
+		try { if (typeof updateSelection === 'function') updateSelection(); } catch (e) { /* ignore */ }
 	} finally { guardingBox = false; }
-	try { if (typeof updateSelection === 'function') updateSelection(); } catch (e) { /* ignore */ }
 }
 
 let guardingBatch = false;
