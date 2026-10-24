@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.33.2';
+const VERSION = '0.34.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1530,10 +1530,12 @@ function buildSimPanel(show_panel) {
 /* 遍历分组，得到 输入键+下标 -> [分组名] */
 function collectInputUsage() {
 	const map = {};
-	const push = (key, index, name) => {
+	const add = (key, index, parent, children) => {
 		const k = key + '#' + (index || 0);
 		map[k] = map[k] || [];
-		if (map[k].indexOf(name) < 0) map[k].push(name);
+		const exist = map[k].find(entry => entry.parent === parent);
+		if (exist) { for (const c of children) if (exist.children.indexOf(c) < 0) exist.children.push(c); }
+		else map[k].push({ parent, children: children.slice() });
 	};
 	const walk = (nodes) => {
 		for (const node of nodes || []) {
@@ -1543,21 +1545,12 @@ function collectInputUsage() {
 			const prop = propRaw || ((type === 'range_dispatch' || type === 'select' || type === 'condition') ? 'custom_model_data' : '');
 			const index = Number(node.imm_index) || 0;
 			const name = labelOf(node);
-			const branchChildren = (node.children || []).filter(isGroup);
-			if (type === 'range_dispatch' && prop === 'custom_model_data') {
-				push('floats', index, name);
-				for (const child of branchChildren) push('floats', index, labelOf(child));
-			} else if (type === 'select' && prop === 'custom_model_data') {
-				push('strings', index, name);
-				for (const child of branchChildren) push('strings', index, labelOf(child));
-			} else if (type === 'condition' && prop === 'custom_model_data') {
-				push('flags', index, name);
-				for (const child of branchChildren) push('flags', index, labelOf(child));
-			} else if (prop && prop !== 'custom_model_data') {
-				push(prop, 0, name);
-			} else if (prop === 'selected') {
-				push('selected', 0, name);
-			}
+			const branchChildren = (node.children || []).filter(isGroup).map(c => labelOf(c));
+			if (type === 'range_dispatch' && prop === 'custom_model_data') add('floats', index, name, branchChildren);
+			else if (type === 'select' && prop === 'custom_model_data') add('strings', index, name, branchChildren);
+			else if (type === 'condition' && prop === 'custom_model_data') add('flags', index, name, branchChildren);
+			else if (prop && prop !== 'custom_model_data') add(prop, 0, name, []);
+			else if (prop === 'selected') add('selected', 0, name, []);
 			walk(node.children || []);
 		}
 	};
@@ -1569,24 +1562,34 @@ function refreshUsage(hits) {
 	try {
 		const usageMap = collectInputUsage();
 		const boxes = (typeof document !== 'undefined') ? document.querySelectorAll('#panel_imm_sim_panel details') : [];
+		const isActive = (name) => {
+			if (!Array.isArray(hits) || !hits.length) return false;
+			const tokens = String(name).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+			return tokens.length > 0 && hits.some(h => tokens.every(t => String(h).toLowerCase().includes(t)));
+		};
 		for (const key of Object.keys(sim_ui.rows)) {
 			const row = sim_ui.rows[key];
-			const list = usageMap[key + '#' + row.index] || [];
-			const items = list.map(name => {
-				let active = false;
-				if (Array.isArray(hits) && hits.length) {
-					const tokens = String(name).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-					active = tokens.length > 0 && hits.some(h => tokens.every(t => String(h).toLowerCase().includes(t)));
+			const groups = usageMap[key + '#' + row.index] || [];
+			const html = ['<div style="opacity:.75;margin-bottom:2px">关联分组：</div>'];
+			if (!groups.length) html.push('<div style="opacity:.5">（无）</div>');
+			groups.forEach((g, gi) => {
+				if (gi > 0) html.push('<hr style="border:none;border-top:1px solid rgba(128,128,128,.25);margin:4px 0">');
+				const pActive = isActive(g.parent);
+				html.push('<div style="' + (pActive ? 'font-weight:700;color:#7fd0ff' : 'opacity:.8') + '">' + (pActive ? '[!] ' : '· ') + g.parent + '</div>');
+				const act = g.children.filter(c => isActive(c));
+				const inact = g.children.filter(c => !isActive(c));
+				for (const c of act) html.push('<div style="font-weight:700;color:#7fd0ff">[!] ' + c + '</div>');
+				if (inact.length) {
+					html.push('<details><summary style="cursor:pointer;opacity:.55;font-size:10px">未活跃 ' + inact.length + ' 项（点开查看）</summary>');
+					for (const c of inact) html.push('<div style="opacity:.45;padding-left:6px">· ' + c + '</div>');
+					html.push('</details>');
 				}
-				return (active ? '✔ ' : '· ') + name;
 			});
 			const target = boxes[row.order] ? boxes[row.order].lastElementChild : null;
-			if (target) target.textContent = '关联分组：' + (items.length ? ('\n' + items.join('\n')) : '（无）');
+			if (target) target.innerHTML = html.join('');
 		}
-		console.log('[装配] usage refreshed, keys=', Object.keys(usageMap).length);
 	} catch (error) { console.error('[装配] refreshUsage error', error); }
 }
-
 function simTick() {
 	if (!sim_ui || !sim_ui.rows) return;
 	let mapping = null;
