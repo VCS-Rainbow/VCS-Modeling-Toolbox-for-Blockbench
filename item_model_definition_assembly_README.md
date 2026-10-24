@@ -33,6 +33,30 @@
 
 限制：需要**桌面版**（网页版没有本地文件权限，会提示改用 zip）；写入使用 Blockbench 的 `pickDirectory` / `requireNativeModule('fs', {scope})` / `writeFile`，权限对话框由 Blockbench 弹出。
 
+## 目标版本与 `pack.mcmeta`
+
+新建资源包工程（目标目录里没有 `pack.mcmeta` 时选「创建 pack.mcmeta」）会按**目标版本**写格式字段：
+
+- **1.21.9 起**（25w31a，资源包格式 65.0+）用 `min_format` / `max_format`，`pack_format` 变为可选；
+- **1.21.8 及更早**用 `pack_format`。
+
+`File → 目标 Minecraft 版本…` 打开下拉（也会写进项目设置 `imm_pack_version`）。内置表（数值来自 minecraft.wiki，2026-10-24 校对）：
+
+| 版本 | 资源包格式 | 写法 |
+| --- | --- | --- |
+| 26.3 | 97.1 | `min_format` / `max_format` = `[97,1]` |
+| **26.2（默认）** | **88.0** | `min_format` / `max_format` = `88` |
+| 26.1 / 26.1.2 | 84.0 | `min_format` / `max_format` = `84` |
+| 1.21.11 | 75.0 | `min_format` / `max_format` |
+| 1.21.9 – 1.21.10 | 69.0 | `min_format` / `max_format` |
+| 1.21.7 – 1.21.8 | 64 | `pack_format` |
+| 1.21.6 | 63 | `pack_format` |
+| 1.21.5 | 55 | `pack_format` |
+| 1.21.4 | 46 | `pack_format` |
+
+> 旧版本把 26.2 的格式写成 71（那是 1.21.5 的值），已修正。26.2 的正确写法示例：
+> `{"pack":{"description":"…","min_format":88,"max_format":88}}`。
+
 ## 分组属性
 
 > **打开方式**：Blockbench 不会把 `exposed` 的分组属性渲染成面板（官方 Property 文档：`exposed` 目前只对「项目设置」和「关键帧数据点」生效）。所以请先选中分组，再用 **Tools →「编辑分组映射属性…」**（或右键分组，若该版本支持）打开编辑对话框。
@@ -54,6 +78,24 @@
 | `命名空间`（`imm_namespace`） | `custom` | 决定 `assets/<ns>/...` |
 | `变换原点用物品中心 (8,8,8)`（`imm_center_pivot`） | 开 | Minecraft 的物品模型变换以物品中心为原点，建议保持开启 |
 | `模型附带方块 display 变换`（`imm_block_display`） | 开 | 给生成的模型补原版 `block/block` 的 display |
+| `资源包工程路径`（`imm_pack_path`） | 空 | 合并目标目录（`pack.mcmeta` 所在目录），由「选择资源包工程路径…」写入 |
+| `目标 Minecraft 版本`（`imm_pack_version`） | `26.2` | 决定 `pack.mcmeta` 的格式字段，见上文；用 `File → 目标 Minecraft 版本…` 下拉修改 |
+
+## 模拟输入面板（`视图 → 面板 → 模拟输入`）
+
+按 `custom_model_data` / 物品属性预览「当前装配会命中哪些模型」：
+
+- 每类输入独立一行、勾选启用：`floats`（range_dispatch）、`strings`（select）、`flags`（condition）、`colors`、`selected` / `using_item` / `damage` / `count` / `time`；
+- `floats` / `colors` 有 0/1/2 三个下标槽（每槽可改索引与值）；
+- `floats` 保留自动变化（自动 / 脉冲周期 / 步长 / 往复|循环 / 上下限），其它输入隐藏自动变化；
+- 结果区列出每个分支的 ✔/✘ 与命中数。
+
+求值规则（`_test_sim.js` 覆盖）：
+
+- `range_dispatch`：取 `threshold <= 当前值` 中最大的那个；**没有命中阈值时才用 `fallback`**（旧实现条件写反）；
+- `select`：`custom_model_data` 读 `strings[index]`，与 `cases[].when` 逐项比较，**第一个命中**的 case 生效，否则 `fallback`；
+- `condition`：`custom_model_data` 读 `flags[index]`；`selected` / `using_item` / `damaged` 走对应输入；**被选中的分支（含走 `on_false` 时）算命中**。
+
 
 ## 输出结构
 

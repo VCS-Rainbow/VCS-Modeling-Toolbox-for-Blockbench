@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.36.2';
+const VERSION = '0.37.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -766,8 +766,59 @@ async function pickPack() {
 	return picked || null;
 }
 
-const PACK_FORMATS = { '26.2': 71 };
-const PACK_VERSION_ID = '26.2';
+/* 资源包格式表：数值来自 minecraft.wiki（Pack_format / Template:Resource pack format），2026-10-24 校对。
+ * 1.21.9 起（25w31a，resource 65.0）pack.mcmeta 改用 min_format / max_format；更早的版本用 pack_format。
+ * major >= 65 视为新版格式。minor 为 0 时按整数写（等价于 [major,0]）。 */
+const PACK_VERSIONS = [
+	{ id: '26.3', major: 97, minor: 1 },
+	{ id: '26.2', major: 88, minor: 0 },
+	{ id: '26.1.2', major: 84, minor: 0 },
+	{ id: '26.1', major: 84, minor: 0 },
+	{ id: '1.21.11', major: 75, minor: 0 },
+	{ id: '1.21.10', major: 69, minor: 0 },
+	{ id: '1.21.9', major: 69, minor: 0 },
+	{ id: '1.21.8', major: 64, minor: 0 },
+	{ id: '1.21.7', major: 64, minor: 0 },
+	{ id: '1.21.6', major: 63, minor: 0 },
+	{ id: '1.21.5', major: 55, minor: 0 },
+	{ id: '1.21.4', major: 46, minor: 0 },
+];
+const DEFAULT_PACK_VERSION = '26.2';
+const PACK_MODERN_MIN_MAJOR = 65;
+
+function findPackVersion(id) {
+	return PACK_VERSIONS.find(v => v.id === id)
+		|| PACK_VERSIONS.find(v => v.id === DEFAULT_PACK_VERSION)
+		|| PACK_VERSIONS[0];
+}
+
+function packFormatLabel(version) {
+	return version.major + (version.minor ? '.' + version.minor : '');
+}
+
+/** 生成 pack.mcmeta 的 pack 段；versionId 缺省时取项目设置 imm_pack_version */
+function packMcmetaData(description, versionId) {
+	const version = findPackVersion(versionId || projectValue('imm_pack_version', DEFAULT_PACK_VERSION));
+	const pack = { description };
+	if (version.major >= PACK_MODERN_MIN_MAJOR) {
+		const value = version.minor ? [version.major, version.minor] : version.major;
+		pack.min_format = value;
+		pack.max_format = value;
+	} else {
+		pack.pack_format = version.major;
+	}
+	return { version, pack };
+}
+
+/** 读出现有 pack.mcmeta 声明的格式文本（用于提示版本不一致） */
+function packMcmetaFormat(mcmeta) {
+	const pack = (mcmeta && mcmeta.pack) || null;
+	if (!pack) return null;
+	const asText = (v) => (Array.isArray(v) ? v.join('.') : String(v));
+	if (pack.min_format != null || pack.max_format != null) return asText(pack.max_format != null ? pack.max_format : pack.min_format);
+	if (pack.pack_format != null) return asText(pack.pack_format);
+	return null;
+}
 
 function readPackMcmeta(fsmod, pathmod, root) {
 	try {
@@ -782,17 +833,51 @@ function createPackProject(root) {
 	const fsmod = getScopedFs(root);
 	if (!pathmod || !fsmod) { Blockbench.showMessageBox({ title: '不支持写入', message: '需要桌面版 Blockbench。', icon: 'warning' }); return false; }
 	try {
-		const format = PACK_FORMATS[PACK_VERSION_ID] || 71;
-		const data = { pack: { pack_format: format, description: ((typeof Project !== 'undefined' && Project && Project.name) ? Project.name : 'Resource Pack') + ' · Blockbench' } };
+		const description = ((typeof Project !== 'undefined' && Project && Project.name) ? Project.name : 'Resource Pack') + ' · Blockbench';
+		const built = packMcmetaData(description);
+		const data = { pack: built.pack };
 		fsmod.mkdirSync(root, { recursive: true });
 		Blockbench.writeFile(pathmod.join(root, 'pack.mcmeta'), { content: JSON.stringify(data, null, '\t'), savetype: 'text' });
 		if (typeof Project !== 'undefined' && Project) { Project.imm_pack_path = root; Project.saved = false; }
-		Blockbench.showQuickMessage('已创建资源包工程 pack.mcmeta（pack_format=' + format + '，' + PACK_VERSION_ID + '）', 4000);
+		const field = built.pack.min_format != null
+			? ('min_format/max_format=' + packFormatLabel(built.version))
+			: ('pack_format=' + built.pack.pack_format);
+		Blockbench.showQuickMessage('已创建 pack.mcmeta（' + built.version.id + '，' + field + '）', 4000);
 		return true;
 	} catch (error) {
 		Blockbench.showMessageBox({ title: '创建失败', message: String((error && error.message) || error), icon: 'error' });
 		return false;
 	}
+}
+
+function pickPackVersion() {
+	if (typeof Dialog === 'undefined') return;
+	const current = String(projectValue('imm_pack_version', DEFAULT_PACK_VERSION) || DEFAULT_PACK_VERSION);
+	const options = {};
+	for (const version of PACK_VERSIONS) {
+		options[version.id] = version.id + '（资源包格式 ' + packFormatLabel(version)
+			+ (version.major >= PACK_MODERN_MIN_MAJOR ? '，min_format/max_format' : '，pack_format') + '）';
+	}
+	new Dialog({
+		id: 'imm_pack_version_dialog',
+		title: '目标 Minecraft 版本（pack.mcmeta）',
+		width: 560,
+		form: {
+			version: {
+				label: '目标版本',
+				type: 'select',
+				value: options[current] ? current : DEFAULT_PACK_VERSION,
+				options,
+				description: '决定 pack.mcmeta 写 min_format/max_format 还是 pack_format，以及格式号。\n新建资源包工程时使用该版本。',
+			},
+		},
+		onConfirm(result) {
+			const id = String(result.version || DEFAULT_PACK_VERSION);
+			try { Project.imm_pack_version = id; Project.saved = false; } catch (e) { /* ignore */ }
+			const built = packMcmetaData('preview', id);
+			Blockbench.showQuickMessage('目标版本 ' + id + '（资源包格式 ' + packFormatLabel(built.version) + '）', 4000);
+		},
+	}).show();
 }
 
 async function pickPackPath() {
@@ -808,7 +893,13 @@ async function pickPackPath() {
 			buttons: ['好', '创建 pack.mcmeta'], confirm: 1, cancel: 0,
 		}, (button) => { if (button === 1) createPackProject(picked); });
 	} else {
-		Blockbench.showQuickMessage('资源包工程路径：' + picked, 4000);
+		let note = '';
+		if (pathmod && fsmod) {
+			const actual = packMcmetaFormat(readPackMcmeta(fsmod, pathmod, picked));
+			const expected = packFormatLabel(packMcmetaData('', '').version);
+			if (actual) note = '（pack.mcmeta 格式 ' + actual + (actual === expected ? '' : '，目标 ' + expected) + '）';
+		}
+		Blockbench.showQuickMessage('资源包工程路径：' + picked + note, 4000);
 	}
 }
 
@@ -1622,6 +1713,102 @@ function refreshUsage(hits) {
 		}
 	} catch (error) { console.error('[装配] refreshUsage error', error); }
 }
+
+/* ============================== 模拟求值 ============================== */
+
+/** range_dispatch 的数值来源：custom_model_data → floats[index]；其余走物品属性 */
+function simValue(node, inputs) {
+	const prop = String((node && node.property) || '').replace(/^minecraft:/, '');
+	const index = Number(node && node.index) || 0;
+	let value = 0;
+	if (prop === 'custom_model_data') value = Number((inputs.floats || [])[index] || 0);
+	else if (prop === 'selected') value = inputs.selected ? 1 : 0;
+	else if (prop === 'using_item') value = inputs.using_item ? 1 : 0;
+	else if (prop === 'damage') value = Number(inputs.damage || 0);
+	else if (prop === 'count') value = Number(inputs.count || 0);
+	else if (prop === 'time') value = Number(inputs.time || 0);
+	else value = Number(inputs[prop] || 0);
+	if (!isFinite(value)) value = 0;
+	if (node && node.scale) value *= Number(node.scale);
+	return value;
+}
+
+/** select 的取值：custom_model_data → strings[index]；其余走同名输入 */
+function simSelectValue(node, inputs) {
+	const prop = String((node && node.property) || '').replace(/^minecraft:/, '');
+	const index = Number(node && node.index) || 0;
+	if (prop === 'custom_model_data') {
+		const list = inputs.strings || [];
+		return String(list[index] == null ? '' : list[index]);
+	}
+	const raw = inputs[prop];
+	return raw == null ? '' : String(raw);
+}
+
+/** select 的 when：数组里任意一项等于当前值即命中（数字/布尔按字符串比较） */
+function simWhenMatches(when, value) {
+	const list = Array.isArray(when) ? when : [when];
+	if (!list.length) return false;
+	return list.some(entry => String(entry) === String(value));
+}
+
+/** condition 的布尔判定：custom_model_data → flags[index]；selected / using_item / damaged 走对应输入 */
+function simConditionValue(node, inputs) {
+	const prop = String((node && node.property) || 'minecraft:selected').replace(/^minecraft:/, '');
+	const index = Number(node && node.index) || 0;
+	if (prop === 'custom_model_data') return !!(inputs.flags || [])[index];
+	if (prop === 'selected') return !!inputs.selected;
+	if (prop === 'using_item') return !!inputs.using_item;
+	if (prop === 'damaged') return Number(inputs.damage || 0) > 0;
+	return !!inputs[prop];
+}
+
+/** 按输入求值整棵映射树，返回 [{ node, hit }]；hit=false 表示该分支没有被选中 */
+function simEvaluate(node, inputs) {
+	const result = [];
+	if (!node) return result;
+	const type = String(node.type || '').replace(/^minecraft:/, '');
+	if (type === 'composite') {
+		for (const child of node.models || []) result.push(...simEvaluate(child, inputs));
+		return result;
+	}
+	if (type === 'range_dispatch') {
+		const value = simValue(node, inputs);
+		let best = null;
+		for (const entry of node.entries || []) {
+			const threshold = Number(entry && entry.threshold);
+			if (!isFinite(threshold) || threshold > value) continue;
+			if (!best || threshold >= Number(best.threshold)) best = entry;
+		}
+		for (const entry of node.entries || []) {
+			const isBest = best === entry;
+			for (const item of simEvaluate(entry.model, inputs)) result.push({ node: item.node, hit: item.hit && isBest });
+		}
+		// 没有命中的阈值时才用 fallback（原实现条件写反了）
+		if (!best && node.fallback) for (const item of simEvaluate(node.fallback, inputs)) result.push(item);
+		return result;
+	}
+	if (type === 'select') {
+		const value = simSelectValue(node, inputs);
+		let matched = null;
+		for (const item of node.cases || []) {
+			const isMatch = !matched && simWhenMatches(item && item.when, value);
+			if (isMatch) matched = item;
+			for (const model of simEvaluate(item.model, inputs)) result.push({ node: model.node, hit: model.hit && isMatch });
+		}
+		if (!matched && node.fallback) for (const item of simEvaluate(node.fallback, inputs)) result.push(item);
+		return result;
+	}
+	if (type === 'condition') {
+		// 被选中的那一支就是生效分支：ok=false 时走 on_false，同样算命中
+		const ok = simConditionValue(node, inputs);
+		for (const item of simEvaluate(ok ? node.on_true : node.on_false, inputs)) result.push(item);
+		return result;
+	}
+	if (type === 'model') { result.push({ node, hit: true }); return result; }
+	return result;
+}
+
 function simTick() {
 	if (!sim_ui || !sim_ui.rows) return;
 	let mapping = null;
@@ -1789,6 +1976,7 @@ function registerProperties() {
 	P(ModelProject, 'boolean', 'imm_block_display', { label: '模型附带方块 display 变换', default: true });
 	P(ModelProject, 'boolean', 'imm_hide_unavailable', { label: '隐藏当前条件下不可用的分组', default: true });
 	P(ModelProject, 'string', 'imm_pack_path', { label: '资源包工程路径（pack.mcmeta 所在目录）', default: '' });
+	P(ModelProject, 'string', 'imm_pack_version', { label: '目标 Minecraft 版本（pack.mcmeta 格式，可用「目标版本…」下拉）', default: DEFAULT_PACK_VERSION });
 
 	// 面着色：Blockbench 的 UV 编辑器“着色”开关绑定 Face.properties.tint（默认 -1 表示未着色）
 	P(Face, 'number', 'tint', { label: '着色 index', default: -1 });
@@ -1942,11 +2130,13 @@ Plugin.register('item_model_definition_assembly', {
 		actions.check = new Action('imm_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
 		actions.pack = new Action('imm_pick_pack', { name: '选择资源包工程路径…', description: '打开系统文件夹选择框，设为资源包工程目录', icon: 'folder_open', category: 'file', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: pickPackPath });
 		actions.sim = new Action('imm_simulate', { name: '模拟输入…', description: '按 custom_model_data / selected 预览分支命中', icon: 'play_circle', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const panel = buildSimPanel(false); if (panel) { panel.show(); return; } openSimulator(); } });
+		actions.packVersion = new Action('imm_pack_version', { name: '目标 Minecraft 版本…', description: '选择 pack.mcmeta 使用的资源包格式版本（下拉）', icon: 'memory', category: 'file', condition, click: pickPackVersion });
 		actions.props = new Action('imm_group_props', { name: '编辑分组映射属性…', description: '映射类型 / 引用模型 / property 等', icon: 'tune', category: 'tools', condition, click: editGroupProps });
 
 		addMenu(actions.zip, 'file.export');
 		addMenu(actions.merge, 'file.export');
 		placeInFileMenu(actions.pack, ['save_model', 'export', 'import']);
+		placeInFileMenu(actions.packVersion, [actions.pack.id, 'save_model', 'export', 'import']);
 		
 		addMenu(actions.check, 'tools');
 		addMenu(actions.import, 'tools');
@@ -1960,6 +2150,11 @@ Plugin.register('item_model_definition_assembly', {
 		for (const event of ['select_project', 'finished_loading_project', 'update_selection']) {
 			try { Blockbench.on(event, attachGroupMenu); } catch (e) { /* ignore */ }
 		}
+		try {
+			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, simValue, simEvaluate };
+			}
+		} catch (hookError) { /* ignore */ }
 			} catch (error) {
 			console.error('[装配] onload 失败：', error);
 		}

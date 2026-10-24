@@ -2,6 +2,16 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.37.0
+- **修正 `pack.mcmeta` 的格式号**：26.2 的资源包格式是 **88.0**（旧代码写死 71，那是 1.21.5 的值）。版本表按 minecraft.wiki 校对到 26.3。
+- **1.21.9 起改用 `min_format` / `max_format`**（25w31a 起 `pack_format` 变为可选）；按目标版本自动决定写哪一组字段，`minor ≠ 0` 时写 `[major, minor]`。
+- 新增 **`File → 目标 Minecraft 版本…` 下拉**与项目设置 `imm_pack_version`，可选 1.21.4 – 26.3；新建资源包工程按所选版本写 `pack.mcmeta`。
+- **恢复 0.30.1 被误删的 `simEvaluate` / `simValue`**：模拟面板此前点「运行 / 停止」会抛 `ReferenceError: simEvaluate is not defined`。
+- **补全模拟求值**：`select` 按 `strings[index]` 匹配 `cases[].when`（首个命中优先，否则 `fallback`）；`condition` 支持 `custom_model_data → flags[index]`、`using_item`、`damaged`。
+- 修正 `range_dispatch` 的 fallback 条件写反（有命中阈值时不该再用 fallback）。
+- 修正 `condition` 走到 `on_false` 时被标成「未命中」的问题。
+- 新增离线单测 `_test_sim.js`（34 项断言），覆盖 select / range_dispatch / condition / composite / pack 版本表；`_test_assembly.js` 的 mock 补上 `Face`。
+
 ## 0.7.0
 - **补上多轴旋转的回退路径**（对齐旧插件）：多轴旋转的方块不再静默丢旋转，而是拆成独立的 `minecraft:model` 子项，用 `transformation` 表达旋转（枢轴 = 方块 `origin`）；单轴方块仍合并在本分组的模型文件里。
 - `range_dispatch` 的 fallback 现在也能用这种独立子项。

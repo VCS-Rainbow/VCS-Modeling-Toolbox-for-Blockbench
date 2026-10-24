@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-24 · 当前版本 **0.36.2**（tag `v0.36.2`）
+> 生成时间：2026-10-24 · 当前版本 **0.37.0**（tag `v0.37.0`）
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 
 ---
@@ -74,7 +74,9 @@
 - 项目设置项「资源包工程路径（pack.mcmeta 所在目录）」。
 - `File → 选择资源包工程路径…`（系统原生文件夹选择框，`Blockbench.pickDirectory`）。
 - 合并前校验 `pack.mcmeta`；缺失时给「选择… / 创建 pack.mcmeta」。
-- 创建时写 `{"pack":{"pack_format":71,"description":"…"}}`（**71 是按 26.2 估的，未验证**）。
+- 创建时按**目标版本**写格式字段：`File → 目标 Minecraft 版本…`（下拉，项目设置 `imm_pack_version`，默认 `26.2`）。
+  - 版本表 `PACK_VERSIONS` 已按 minecraft.wiki 校对（26.3=97.1、**26.2=88.0**、26.1=84.0、1.21.11=75.0、1.21.9/10=69.0、1.21.8=64、1.21.6=63、1.21.5=55、1.21.4=46）。
+  - **1.21.9 起**（25w31a，65.0+）写 `min_format`/`max_format`；更早写 `pack_format`。minor≠0 时写 `[major,minor]`。
 - 「合并到资源包…」：列出将覆盖/新建/删除的文件，写入后用 `.imm-assembly-manifest.json` 清理过期文件。
 
 ### 2.6 引用模型导入（`Tools → 导入引用模型（当前分组）`）
@@ -99,6 +101,7 @@
 ## 3. 版本历史（近期，git tag）
 
 ```
+0.37.0  pack_format 修正（26.2=88.0）+ 目标版本下拉；恢复 simEvaluate 并补 select/condition 求值
 0.36.2  floats/colors 三下标槽 UI（带标题）
 0.36.1  （锚点失败，未改动）
 0.36.0  按 pair 写入逻辑
@@ -132,14 +135,12 @@
 
 ## 4. 待办 / 已知问题（优先级从高到低）
 
-1. **`pack_format` 未验证**：现在写死 71，需要按 26.2 实际值修正，并把版本表做成下拉。
-2. **`select` 求值不完整**：`simEvaluate` 里 `select` 分支历史上多次插入失败，需确认存在并用 `strings[index]` 比对 `cases[].when`。
-3. **结果区折叠树**：目前结果区是纯文本；计划改成 `<details>` 树，显示每层 `range_dispatch` 的取值与命中/未命中。
-4. **关联分组活跃判定的通用化**：`strings`/`flags` 行目前没有按 case/flag 判定，只列分组。
-5. **UV 缩放按 PNG 真实尺寸**：现在用 `texture.uv_width`，若与 PNG 实际尺寸不一致 UV 会偏。
-6. **模型 `groups` 字段未用于还原层级**：导入的是扁平方块。
-7. **「装配属性」常驻面板**：尚未实现（原计划 Panel + 随选择刷新）。
-8. **模拟结果驱动视图**：未实现“未命中分组隐藏 / 幽灵半透明”（注意：不得改动纹理与 UV，只能动运行时材质）。
+1. **结果区折叠树**：目前结果区是纯文本；计划改成 `<details>` 树，显示每层 `range_dispatch` 的取值与命中/未命中。
+2. **关联分组活跃判定的通用化**：`strings`/`flags` 行目前没有按 case/flag 判定，只列分组；另外 `refreshUsage` 里 `row.value.split(',')[row.index - (row.index)]` 恒取第 0 项，多下标槽的活跃判定不准。
+3. **UV 缩放按 PNG 真实尺寸**：现在用 `texture.uv_width`，若与 PNG 实际尺寸不一致 UV 会偏。
+4. **模型 `groups` 字段未用于还原层级**：导入的是扁平方块。
+5. **「装配属性」常驻面板**：尚未实现（原计划 Panel + 随选择刷新）。
+6. **模拟结果驱动视图**：未实现“未命中分组隐藏 / 幽灵半透明”（注意：不得改动纹理与 UV，只能动运行时材质）。
 
 ---
 
@@ -179,6 +180,8 @@
 - 每次替换后**打印命中情况**（ok/miss），miss 时不要以为改好了。
 - `node --check` 只能验证语法，**验证不了运行时**（曾因“变量在声明前使用”导致面板空白）。
 - 改 UI 组装时注意顺序：**先创建控件 → 再组装 DOM**；否则 `ReferenceError`。
+- 用 `function foo() {` 当单行锚点会命中 `async function foo() {` 的**内部**，替换后 `async` 会落到前一段上（0.37.0 踩过：`async function pickPackPath` 变成 `async function pickPackVersion` + 非 async 的 `pickPackPath`，`await` 直接语法错误）。锚点要带上 `async ` 或改成整行唯一文本。
+- 大改动前用 `git log -S 'symbol'` 查这个函数/字符串是否在某次重构里被误删（`simEvaluate` 就是 0.30.1 删掉了、直到 0.37.0 才发现）。
 - 改坏就 `git checkout -- item_model_definition_assembly.js` 回滚（多处历史版本可 `git checkout v0.xx.y -- 文件`）。
 
 ### 5.5 校验命令
@@ -187,6 +190,7 @@
 $node = 'C:\Users\Rainbow_\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 & $node --check 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js'
 & $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_assembly.js'   # 离线冒烟
+& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值单测（34 项）
 Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js' `
   'C:\Users\Rainbow_\AppData\Roaming\Blockbench\plugins\item_model_definition_assembly.js' -Force
 ```
@@ -197,5 +201,10 @@ Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_d
 
 1. 读本文档 + `CHANGELOG.md` 最后 10 条；
 2. `git log --oneline | head -20` 确认状态；
-3. 从「待办」第 1 项（`pack_format`）或第 2 项（`select` 求值）开始；
+3. 从「待办」第 1 项（结果区折叠树）或第 2 项（关联分组活跃判定）开始；
 4. 改任何 UI 前，先在插件里加 `console.log` 打点，让用户贴日志，**不要盲改 DOM**。
+
+### 6.1 新增的求值/版本钩子
+
+- `_test_sim.js` 通过 `globalThis.__IMM_TEST__ = {}`（require 之前设置）拿到 `api = { simEvaluate, simValue, packMcmetaData, packFormatLabel, packMcmetaFormat, PACK_VERSIONS, VERSION }`；生产环境不设这个全局就没有副作用。
+- `packMcmetaData(description, versionId)` 是 `pack.mcmeta` 的唯一生成入口；改版本表只改 `PACK_VERSIONS`。
