@@ -1,0 +1,97 @@
+{
+	"model": {
+		"type": "minecraft:composite",
+		"models": [
+			{
+				"type": "minecraft:composite",
+				"transformation": {"translation": [0.762564, 0.991925, 1.27226], "left_rotation": [-0.545792, 0.756699, -0.26283, 0.245842], "scale": [1, 1, 1], "right_rotation": [0, 0, 0, 1]},
+				"models": [
+					{
+						"type": "minecraft:composite",
+						"models": [
+							{"type": "minecraft:model", "model": "sqsptst1:item/sac_assembly_sacpack1_ink"}
+						]
+					},
+					{
+						"type": "minecraft:composite",
+						"models": [
+							{"type": "minecraft:model", "model": "sqsptst1:item/sac_assembly_sacpack1_sac"}
+						]
+					}
+				]
+			},
+			{
+				"type": "minecraft:composite",
+				"transformation": {"translation": [-0.007387, -0.225182, 0.317391], "left_rotation": [-0.348445, -0.01367, -0.017808, 0.93706], "scale": [1, 1, 1], "right_rotation": [0, 0, 0, 1]},
+				"models": [
+					{
+						"type": "minecraft:composite",
+						"models": [
+							{"type": "minecraft:model", "model": "sqsptst1:item/sac_assembly_sacpack2_ink2"}
+						]
+					},
+					{
+						"type": "minecraft:composite",
+						"models": [
+							{"type": "minecraft:model", "model": "sqsptst1:item/sac_assembly_sacpack2_sac2"}
+						]
+					}
+				]
+			},
+			{
+				"type": "minecraft:composite",
+				"transformation": {"translation": [-0.24503, 0.129956, 0.361264], "left_rotation": [0.145971, 0.331744, -0.020332, 0.931786], "scale": [1, 1, 1], "right_rotation": [0, 0, 0, 1]},
+				"models": [
+					{
+						"type": "minecraft:composite",
+						"models": [
+							{"type": "minecraft:model", "model": "sqsptst1:item/sac_assembly_sacpack3_ink3"}
+						]
+					},
+					{
+						"type": "minecraft:composite",
+						"models": [
+							{"type": "minecraft:model", "model": "sqsptst1:item/sac_assembly_sacpack3_sac3"}
+						]
+					}
+				]
+			},
+			{
+				"type": "minecraft:composite",
+				"transformation": {"translation": [-0.041968, 0.555783, -0.253565], "left_rotation": [0.382319, 0.009441, -0.042585, 0.923], "scale": [1, 1, 1], "right_rotation": [0, 0, 0, 1]},
+				"models": [
+					{
+						"type": "minecraft:composite",
+						"models": [
+							{"type": "minecraft:model", "model": "sqsptst1:item/sac_assembly_sacpack4_ink4"}
+						]
+					},
+					{
+						"type": "minecraft:composite",
+						"models": [
+							{"type": "minecraft:model", "model": "sqsptst1:item/sac_assembly_sacpack4_sac4"}
+						]
+					}
+				]
+			},
+			{
+				"type": "minecraft:composite",
+				"transformation": {"translation": [1.101308, 0.019589, 0.645584], "left_rotation": [0.020805, -0.95349, -0.00656, 0.300634], "scale": [1, 1, 1], "right_rotation": [0, 0, 0, 1]},
+				"models": [
+					{
+						"type": "minecraft:composite",
+						"models": [
+							{"type": "minecraft:model", "model": "sqsptst1:item/sac_assembly_sacpack5_ink5"}
+						]
+					},
+					{
+						"type": "minecraft:composite",
+						"models": [
+							{"type": "minecraft:model", "model": "sqsptst1:item/sac_assembly_sacpack5_sac5"}
+						]
+					}
+				]
+			}
+		]
+	}
+}
