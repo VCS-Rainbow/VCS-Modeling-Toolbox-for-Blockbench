@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.21.0';
+const VERSION = '0.21.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1271,7 +1271,9 @@ function importModelReference(group) {
 	const pathmod = getPath();
 	const fsmod = getScopedFs(root);
 	if (!pathmod || !fsmod) { Blockbench.showMessageBox({ title: '不支持读取', message: '需要桌面版 Blockbench。', icon: 'warning' }); return false; }
+	console.log('[装配] 导入开始', reference, '->', modelPathOf(pathmod, root, reference));
 	const resolved = resolveJavaModel(pathmod, fsmod, root, reference);
+	console.log('[装配] 解析结果', resolved.error ? ('ERR: ' + resolved.error) : (resolved.elements.length + ' 个 element'));
 	if (resolved.error) { Blockbench.showMessageBox({ title: '导入失败', message: resolved.error, icon: 'error' }); return false; }
 	const elements = resolved.elements;
 	try {
@@ -1703,6 +1705,7 @@ Plugin.register('item_model_definition_assembly', {
 		const condition = () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID);
 		actions.zip = new Action('imm_export_zip', { name: '导出装配资源包 (zip)', description: 'items + models + textures', icon: 'archive', category: 'file', condition, click: exportZip });
 		actions.merge = new Action('imm_merge_pack', { name: '合并到资源包…', description: '直接写入资源包并覆盖旧文件', icon: 'folder_open', category: 'file', condition, click: mergeToPack });
+		actions.import = new Action('imm_import_model', { name: '导入引用模型（当前分组）', description: '按 imm_model 从资源包工程导入 Java 模型为方块', icon: 'file_download', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const g = pickTargetGroup(); if (!g) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } if (!String(g.imm_model || '').trim()) { Blockbench.showMessageBox({ title: '没有引用模型', message: '该分组没有填写 imm_model（引用模型）。', icon: 'info' }); return; } importModelReference(g); } });
 		actions.check = new Action('imm_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
 		actions.pack = new Action('imm_pick_pack', { name: '选择资源包工程路径…', description: '打开系统文件夹选择框，设为资源包工程目录', icon: 'folder_open', category: 'file', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: pickPackPath });
 		actions.sim = new Action('imm_simulate', { name: '模拟输入…', description: '按 custom_model_data / selected 预览分支命中', icon: 'play_circle', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const panel = buildSimPanel(false); if (panel) { panel.show(); return; } openSimulator(); } });
@@ -1713,6 +1716,7 @@ Plugin.register('item_model_definition_assembly', {
 		placeInFileMenu(actions.pack, ['save_model', 'export', 'import']);
 		
 		addMenu(actions.check, 'tools');
+		addMenu(actions.import, 'tools');
 		addMenu(actions.props, 'tools');
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
 		// 面板会自动出现在「视图 → 面板」里，不再占用 Tools 菜单
