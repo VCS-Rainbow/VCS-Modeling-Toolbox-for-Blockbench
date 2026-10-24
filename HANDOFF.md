@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-24 · 当前版本 **0.62.1**（tag `v0.62.1`）
+> 生成时间：2026-10-25 · 当前版本 **0.62.1**（tag `v0.62.1`）
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 
 ---
@@ -10,7 +10,7 @@
 | 用途 | 路径 |
 | --- | --- |
 | 插件源码仓库（git） | `C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\` |
-| 主插件文件 | `item_model_definition_assembly.js`（约 1800 行，单文件） |
+| 主插件文件 | `item_model_definition_assembly.js`（约 3200 行，单文件） |
 | 旧导出器插件（参考实现） | `item_model_mapping.js` |
 | 文档 / 说明 | `item_model_definition_assembly_README.md`、`item_model_mapping_README.md`、`CHANGELOG.md` |
 | **安装目录（生效位置）** | `C:\Users\Rainbow_\AppData\Roaming\Blockbench\plugins\item_model_definition_assembly.js` |
@@ -85,25 +85,28 @@
 - 按 `assets/<ns>/models/<path>.json` 读取，沿 `parent` 链最多 12 层合并 `elements` / `textures`。
 - 元素旋转支持两种格式：Java 原版 `{axis, angle, origin}` 与 Blockbench `{x,y,z,origin}`。
 - 导入前清空该分组原有元素；`Canvas.updateAll()`；确认分组属性时若有元素会先弹确认框。
+- **保留模型内分组（0.53.x）**：递归解析模型 `groups`（`children` 里既可能是元素下标，也可能是子分组对象），每个导入分组标 `inline`（内联模型）；`origin/rotation` 一并写入并按目标分组原点偏移。
+- **着色下发给子分组（0.53.2）**：目标分组的 `imm_tint_type/index/value/tints` 复制给所有导入子分组；导入方块缺失的面补 `face.tint = index`。
+- **保留自带 tintindex（0.53.3）**：面 `tintindex` 原样写入；只要模型里任意一个面已有 tintindex，就不再给所有面整体补 tint。
 - 几何会按分组 `origin` 平移（模型原点与分组位置重合）；分组属性可勾「导入时自动对齐到模型中点」（写 `imm_offsets` → `translation`）。
 - **成功关键**：`new Cube({...}).addTo(group)` 之后必须 `cube.init()`（否则没有 mesh、不进 `Cube.all`、看不见也选不中）；且必须 `addTo` 到**已初始化 mesh 的现有分组**，不要新建分组（新建分组没 init，子元素不渲染）。
 
 ### 2.7 模拟输入面板（视图 → 面板 → 模拟输入）
 
 - 面板 id `imm_sim_panel`，内容挂 `panel.node`（不是 `nodes` 数组）。
-- 结构（0.40.0）：**大类标题行**（折叠箭头 + 复选框 + 名称/提示 +「未启用」）→ 大类 body（默认展开）→ **每个槽一行**（折叠箭头 + **槽复选框** + 槽号 + 索引 + 值 + 命中角标）→ 槽 body（默认折叠）：自动变化控制器 + 关联分组。
+- 结构（0.40.0）：**大类标题行**（折叠箭头 + 复选框 + 名称/提示 +「自动」标记）→ 大类 body（默认展开）→ **每个槽一行**（折叠箭头 + **槽复选框** + 槽号 + 索引 + 值 + 命中角标）→ 槽 body（默认折叠）：自动变化控制器 + 关联分组。
 - 折叠用 `<div>` + 箭头按钮控制 `style.display`，**不要用 `<details>` 包输入**（0.36.x 曾把名称/索引/值移进折叠 body，`<summary>` 里只剩「索引 0/1/2」）。
 - **「未活跃」也不能用 `innerHTML` 里的原生 `<details>`**（0.40.0 修）：面板重渲染点不开。改成自绘按钮 + `data-usage-toggle` / `data-usage-body`，事件委托挂在 usageEl 上，展开状态存在 `sim.usageOpen`，`innerHTML` 重建后保持。
-- 两个开关：**大类复选框**（`row.enabled`）与**槽复选框**（`slot.enabled`，默认开）。两者都开才参与求值；自动变化只挑 `row.enabled && row.kind === 'number' && slot.enabled`。改值/改索引会自动勾上槽和大类。
+- **行首复选框 = 自动变化开关（0.50.0）**：`row.enabled` 只控制是否参与「运行」自动变化；所有 `slot.enabled` 的槽始终参与求值（不勾也用手动值）。改值/改索引只会自动勾上该槽，不会打开自动。自动变化只挑 `row.enabled && row.kind === 'number' && slot.enabled`。
 - 运行状态：`simUpdateRunUi()` 维护按钮文案（▶ 运行 / ■ 停止）+ 高亮 + 右侧「已停止 / 运行中 · N 个自动槽」；没有数值槽时只弹提示、不进入运行态。
 - 改值即时重算（`input` 事件，**40ms 防抖** `simScheduleTick`）。
-- **性能**：`sim.mapping` 缓存 `buildMapping()`、`sim.usage` 缓存 `collectInputUsage()`；结构/属性变化时 `simInvalidate()` 置脏（组事件、分组属性确认、分支改名都会调）。`createExporter().buildMapping()` 很重，**绝不能在每次输入时重建**。另有「⟳ 刷新」按钮兜底。
-- **行首复选框 = 自动变化开关（0.50.0）**：`row.enabled` 只影响 `simAutoSlots()`；`simTick` 里所有 `slot.enabled` 的槽都参与求值（手动值不再被行复选框挡掉）。`colors` 自动用 `slot.presets` 轮换（`SIM_COLOR_PRESETS`），角标显示关联组数。
-- **colors 预览着色（0.48.0）**：`simApplyTints()` 在每个 tick 后遍历分组内方块，取第一个 `face.tint >= 0` 的 tintindex 作为 `colors[index]` 下标，用 `MeshBasicMaterial(map, color)` 替换运行时材质；`simRestoreTints()` 在清空/关闭/切项目/卸载时恢复。幽灵态优先，不叠加。
+- **性能**：`sim.mapping` 缓存 `buildMapping()`、`sim.usage` 缓存 `collectInputUsage()`；结构/属性变化时 `simInvalidate()` 置脏（组事件、分组属性确认、分支改名都会调）。`createExporter().buildMapping()` 很重，**绝不能在每次输入时重建**。另有「⟳ 刷新」按钮兜底。
+- **colors 预览着色（0.48.0）**：`simApplyTints()` 在每个 tick 后遍历分组内方块；颜色索引优先用分组 tints 配置（`custom_model_data` + `imm_tint_index`），沿父链向上继承，完全没有配置时回退到面的 `tintindex`；用 `MeshBasicMaterial(map, color)` 替换运行时材质，`simRestoreTints()` 在清空/关闭/切项目/卸载时恢复。显式「不生成 tints」（`''`/`none`）会阻断。幽灵态优先，不叠加。
+- **colors 预设色（0.52.1）**：默认 16 个 Minecraft 染料色（ARGB，alpha=0xFF）；`colors` 自动变化在预设色之间轮换（周期 + 逗号分隔预设），不再用步长/上下限。
 - 关联分组：容器（如 `bone7`）在上、直属子分支全列出；活跃子分支加粗标蓝（容器始终灰色、无 `[!]`）。
 - 活跃判定：`activeIndex = max{ k | k ≤ 当前值 }`（k 来自子分组名 `[k]` 前缀）。
 - 关联信息由 `refreshUsage()` **统一持有**（`simTick` 只调用它）：按每个槽自己的 `idx/val` 取下标与值，不要再从 DOM 顺序去猜目标节点。
-- **不活跃分支视图联动（0.42.0）**：控制条右侧「不活跃分支：不处理 / 半透明 / 完全隐藏」。
+- **不活跃分支视图联动（0.42.0 / 0.54.0）**：控制条右侧「不处理 / 半透明 / 半透明并锁定 / 完全隐藏 / 完全隐藏并锁定」。锁定模式对未活跃分组及其子项运行时 `locked=true`，并配合选择守卫（0.55.1）让锁定元素无法保持选中；切换/关闭/切项目/卸载时恢复原锁定状态。
   - 半透明：克隆**运行时材质**（`transparent` + `opacity 0.28` + `depthWrite false`），`mesh.__immGhost` 记原材质；**不碰纹理/UV/元素数据/项目/撤销**。
   - 完全隐藏：`group.mesh.visible = false`（运行时），`mesh.__immHidden` 记原值；不改 `group.visibility`。
   - 映射节点到分组靠 `Exporter.groupNodes`（旁路表，不参与导出）；`simGetMapping()` 里缓存为 `sim.groupNodes`。
@@ -117,12 +120,14 @@
 ### 2.8 枢轴归位（Tools → 枢轴归位…）
 
 - 问题：嵌套旋转下，分组 `origin` 常常离几何中心 17–48px；旋转/移动工具的手柄飘在远处，Blockbench 自带「枢纽居中」在多层旋转上会歪。
-- 做法：把每个分组的 `origin` 移到它（**含所有后代**）方块中心的平均值，同时平移内容补偿，外观不变。
-  - 补偿：`d = (I − R⁻¹)(O′ − O)`（分组本地坐标）；子分组递归 `R_c⁻¹ d`。
-  - 注意：**不能用「世界坐标写回 origin」**——origin 在父坐标系，嵌套旋转必须递归换算。
-- 实现：`pivotContentPoints()`（递归收集后代方块中心）、`pivotTranslateContents()`（递归补偿）、`fixGroupPivot()`；`applyPivotFix(selectedOnly)` 走 Undo + `Canvas.updateAll()` + `simInvalidate()`。
-- 验证：`pivot_lab2.js`（临时脚本）在真实 `assembly.bbmodel` 上逐组/整树修正，153 个角点误差 0。
-- 单测：`_test_sim.js` 用两层旋转分组断言「世界坐标不变 + 枢轴落在内容中心」。
+- 做法（0.57.0 起，分组 + 元素两层）：
+  1. **分组**：`origin` 移到它（含所有后代）方块渲染中心的平均值，同时平移内容补偿，外观不变；
+  2. **元素**：本层每个方块的旋转枢轴（`origin`）移到**父分组的几何中心**（即分组归位后的 `origin`），并补偿 `from/to`，世界外观不变；
+  3. 嵌套分组逐层处理（先分组、后元素），提示分别统计分组数与方块数。
+- 补偿：`d = (I − R⁻¹)(O′ − O)`（分组本地坐标）；子分组递归 `R_c⁻¹ d`；方块补偿为 `R_cube⁻¹ d − d`。
+- 注意：**不能用「世界坐标写回 origin」**——origin 在父坐标系，嵌套旋转必须递归换算。
+- 实现：`pivotContentPoints()`、`pivotTranslateContents()`、`fixGroupPivot()`、`centerCubePivot(cube, target)`；`applyPivotFix(selectedOnly)` 走 Undo + `Canvas.updateAll()` + `simInvalidate()`。
+- 验证：`_test_sim.js` 断言「分组枢轴落在内容中心」「方块枢轴 = 父级中心」「世界位置不变（误差 < 1e-6）」。
 
 ### 2.9 内联模型 / 从分组创建模型
 
@@ -136,6 +141,17 @@
 - 目标也可以写模型 id（含 `:`）→ 直接输出 `minecraft:model`。
 - 标签只建议放在 composite / inline 分组；其他类型会警告并忽略。
 ---
+### 2.11 选择辅助（锁定 / 批量 / 框选）
+
+- **锁定分支不可选中（0.55.1）**：幽灵/隐藏的锁定模式下，未活跃分组及子项运行时 `locked=true`；`guardLockedSelection()` 在 `update_selection` 时把锁定元素踢出选择，锁定瞬间也会取消已选中。
+- **批量选组守卫（0.58.0，默认关）**：`Setting imm_batch_groups_only` / `Tools → 开关：批量选择时取消单个元素`。同时选中 ≥2 个分组时，取消一起选中的方块/定位点。
+- **框选/单击元素改选分组（0.60.0–0.62.1）**：`Setting imm_box_select_groups` / `Tools → 开关：框选方块时改选所属分组`。
+  - 装配格式内**强制开启**，其它格式按开关（默认关）；
+  - 选中任意元素（哪怕 1 个）→ 选中其父分组 + **同层全部元素**，再向上递归（祖父子项全选才选祖父）；
+  - `inline`（内联模型）元素例外：全是 inline 分组元素时保持原样，便于直接编辑引用模型内部；`model` 引用模型不例外。
+  - 实现：`guardBoxSelection()` 后序遍历 `Outliner.root`，`isSelected` 同时认 `selected` 标记与 `Outliner.selected`；`multiSelect/markAsSelected` 展开子项；`updateSelection` 在守卫内调用防二次触发。
+
+
 
 ## 3. 版本历史（近期，git tag）
 
@@ -217,7 +233,7 @@
 4. **模型 `groups` 字段未用于还原层级**：导入的是扁平方块。
 5. **「装配属性」常驻面板**：尚未实现（原计划 Panel + 随选择刷新）。
 
-> 已实现：模拟结果驱动视图（0.42.0，`不处理 / 半透明 / 完全隐藏`）。
+> 已实现：模拟结果驱动视图（0.42.0，`不处理 / 半透明 / 完全隐藏`）；锁定模式与选择守卫（0.54–0.62）；纹理真实路径（0.59.0）；引用模型嵌套 groups / 着色下发（0.53.x）；分组与元素枢轴归中（0.57.0）。
 
 ---
 
@@ -230,6 +246,7 @@
 - **面板重复**：重载时旧 `Panel` 若不销毁会累积；`onunload` 已 `sim_panel.delete()`，加载时优先复用 `Panels['imm_sim_panel']`。
 - `animated_java` 的 **Blockbench Patch Manager** 会在启动时卸载/重载插件，可能把本插件留在未加载状态；必要时禁用它。
 - `about.md` 的 404 是 CDN 取不到，纯噪音，不影响功能。
+- **选择辅助/Setting 相关改动后建议完全退出 Blockbench 再启动**：Reload Plugins 可能残留旧的事件监听与 Setting 实例，出现“部署了但行为还是旧版”的假象（0.61.x 排查时踩过）。
 
 ### 5.2 Blockbench API 事实（已实测）
 
@@ -285,3 +302,16 @@ Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_d
 
 - `_test_sim.js` 通过 `globalThis.__IMM_TEST__ = {}`（require 之前设置）拿到 `api = { simEvaluate, simValue, simTick, packMcmetaData, packFormatLabel, packMcmetaFormat, PACK_VERSIONS, VERSION, buildSimPanel, getSimUi, getSimPanel, stripStrayBranchPrefixes, fixGroupPivot, simApplyGroupVisual, simRestoreView, simSetViewMode, pivotContentPoints, rotateAroundQuat, readQuaternion }`；生产环境不设这个全局就没有副作用。它还 mock 了极简 `document` / `Panel`，用来断言面板结构（输入不能在 `<details>` 里）。
 - `packMcmetaData(description, versionId)` 是 `pack.mcmeta` 的唯一生成入口；改版本表只改 `PACK_VERSIONS`。
+
+---
+
+## 7. 2026-10-25 夜间工作摘要（0.53 → 0.62.1）
+
+- **引用模型导入**：递归 groups → `inline` 分组；着色配置下发；保留自带 `tintindex`；修嵌套分组拍平。
+- **格式限制**：移除 -16~32 方块坐标限制（0.56.0）；导出对越界元素给警告（0.56.1）。
+- **纹理**：引用/输出路径按贴图真实 `assets/<ns>/textures/<path>.png` 解析（0.59.0）。
+- **枢轴**：分组 + 元素枢轴同时归中，元素枢轴归到父级几何中心并保持外观（0.57.0）。
+- **模拟面板**：colors 16 染料预设、行首复选框=自动变化、colors 关联组数角标、不活跃分支锁定模式。
+- **选择辅助**：锁定守卫、批量选组守卫、框选向上递归选组（装配强制开启、inline 例外）。
+- **菜单**：复调用标签右键编辑；分组菜单「创建模型 / 复调用 / 编辑分组」+ 分割线（0.55.0）。
+- **文档**：版本 0.62.1，单测 143 项，全部通过。
