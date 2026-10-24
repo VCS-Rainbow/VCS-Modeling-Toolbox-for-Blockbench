@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.9.2';
+const VERSION = '0.10.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -394,6 +394,22 @@ class Exporter {
 		return MAPPING_TYPES.indexOf(t) >= 0 ? t : 'composite';
 	}
 
+	/** 按来源类型构造 tints；imm_tints 的原始 JSON 优先 */
+	buildTints(group) {
+		const raw = this.parseTints(group.imm_tints);
+		if (raw) return raw;
+		const type = String(group.imm_tint_type || '').replace(/^minecraft:/, '').trim();
+		if (!type || type === 'none') return null;
+		const index = num(group.imm_tint_index);
+		const value_text = String(group.imm_tint_value == null ? '' : group.imm_tint_value).trim();
+		if (type === 'custom_model_data') return [{ type: 'custom_model_data', index, default: index }];
+		if (type === 'constant') return [{ type: 'constant', value: value_text.length ? Number(value_text) : 0 }];
+		if (type === 'grass') return [{ type: 'grass' }];
+		const entry = { type };
+		if (value_text.length) entry.default = Number(value_text) || 0;
+		return [entry];
+	}
+
 	parseTints(value) {
 		if (!value) return null;
 
@@ -445,7 +461,7 @@ class Exporter {
 			const ref = built ? built.reference : (extras[0] ? extras[0].model : null);
 			if (!ref) { this.warn('分组 “' + labelOf(group) + '” 是 model 类型但没有可用模型，已跳过。'); return null; }
 			node.model = ref;
-			const tints = this.parseTints(group.imm_tints);
+			const tints = this.buildTints(group);
 			if (tints) node.tints = tints;
 			return node;
 		}
@@ -468,7 +484,7 @@ class Exporter {
 		}
 
 		const models = [];
-		const tints = this.parseTints(group.imm_tints);
+		const tints = this.buildTints(group);
 				if (built) {
 					const model_node = { type: 'minecraft:model', model: built.reference };
 					if (tints) model_node.tints = tints;
@@ -839,6 +855,9 @@ function registerProperties() {
 	P(Group, 'number', 'imm_index', { label: 'index（仅 range_dispatch：custom_model_data 下标）', default: 0 });
 	P(Group, 'number', 'imm_threshold', { label: 'threshold', default: 0 });
 	P(Group, 'number', 'imm_scale', { label: 'scale', default: 1 });
+	P(Group, 'string', 'imm_tint_type', { label: 'tints 来源类型', default: '', enum_values: ['', 'custom_model_data', 'constant', 'dye', 'potion', 'grass', 'team'] });
+	P(Group, 'number', 'imm_tint_index', { label: 'tints 来源 index（custom_model_data）', default: 0 });
+	P(Group, 'string', 'imm_tint_value', { label: 'tints 来源值（constant 的 ARGB / 其它 default）', default: '' });
 	P(Group, 'string', 'imm_tints', { label: 'tints（JSON，仅 model / composite 自带模型）', default: '' });
 }
 
