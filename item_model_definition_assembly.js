@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.38.0';
+const VERSION = '0.39.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1506,6 +1506,39 @@ function importModelReference(group) {
 let sim_panel = null;
 let sim_ui = null;
 
+/* 模拟状态：0.30.1 重构面板时和 simEvaluate 一起被误删，0.39.0 恢复 */
+const sim = {
+	timer: null,
+	dir: 1,
+	inputs: { floats: [], colors: [], strings: [], flags: [], selected: false, using_item: false, damage: 0, count: 0, time: 0 },
+};
+
+function simBlankInputs() {
+	return { floats: [], colors: [], strings: [], flags: [], selected: false, using_item: false, damage: 0, count: 0, time: 0 };
+}
+
+/** 把一个槽的值写进 inputs（key = floats / colors / strings / flags / selected / …） */
+function simApplySlot(inputs, key, slot) {
+	const value = String(slot.value);
+	switch (key) {
+		case 'floats': inputs.floats[slot.index] = num(value); break;
+		case 'colors': inputs.colors[slot.index] = num(value) | 0; break;
+		case 'strings': inputs.strings[slot.index] = value; break;
+		case 'flags': inputs.flags[slot.index] = (value === 'true' || value === '1'); break;
+		case 'selected':
+		case 'using_item': inputs[key] = (value === 'true' || value === '1' || num(value) > 0); break;
+		default: inputs[key] = num(value);
+	}
+}
+
+function simSlotLabel(key, slot) {
+	if (key === 'floats' || key === 'colors') return key + '[' + slot.index + '] = ' + slot.value;
+	if (key === 'strings') return 'strings[' + slot.index + '] = "' + slot.value + '"';
+	if (key === 'flags') return 'flags[' + slot.index + '] = ' + slot.value;
+	return key + ' = ' + slot.value;
+}
+
+
 function buildSimPanel(show_panel) {
 	if (!sim_panel) { try { if (typeof Panels !== 'undefined' && Panels['imm_sim_panel']) sim_panel = Panels['imm_sim_panel']; } catch (e) { /* ignore */ } }
 	if (sim_panel) { if (show_panel !== false) sim_panel.show(); return sim_panel; }
@@ -1526,100 +1559,125 @@ function buildSimPanel(show_panel) {
 		['time', 'time', 'number', ''],
 		['using_item', 'using_item', 'bool', ''],
 	];
-	sim_ui = { rows: {}, out: null };
+	sim_ui = { rows: {}, out: null, runBtn: null, status: null };
 	for (const spec of SPECS) {
 		const key = spec[0], label = spec[1], kind = spec[2], hint = spec[3] || '';
-		const row = { key, kind, enabled: false, index: 0, value: kind === 'bool' ? 'false' : (kind === 'text' ? '' : '0'), auto: false, period: 200, step: 0.5, rule: 'pingpong', min: 0, max: 4, dir: 1 };
 		const multi = (key === 'floats' || key === 'colors');
-		const indexed = multi || key === 'strings' || key === 'flags';
-		const box = mk('div', {}, 'border-top:1px solid rgba(128,128,128,.25);padding:5px 0;display:flex;flex-direction:column;gap:4px');
+		const row = { key, label, kind, hint, enabled: false, open: true, slots: [] };
+		const box = mk('div', {}, 'border-top:1px solid rgba(128,128,128,.25);padding:4px 0');
+		const header = mk('div', {}, 'display:flex;align-items:center;gap:6px;flex-wrap:wrap');
+		const rowToggle = mk('button', { textContent: '▾', title: '折叠 / 展开' }, 'border:none;background:transparent;cursor:pointer;padding:0;font-size:11px;line-height:1;width:12px;opacity:.7');
 		const enable = mk('input', { type: 'checkbox' });
-		const nameEl = mk('span', { textContent: label }, 'font-weight:600;font-size:11px');
-		const idx = mk('input', { type: 'number', value: '0' }, 'width:46px');
-		const val = mk('input', { type: (kind === 'text' || kind === 'bool') ? 'text' : 'number', value: row.value }, 'width:76px');
-		// 第一行永远可见：勾选 + 名称（+ 单值行的索引/值）
-		const header = mk('div', {}, 'display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap');
 		const enableWrap = mk('label', {}, 'display:flex;align-items:center;gap:4px;cursor:pointer');
 		enableWrap.appendChild(enable);
-		enableWrap.appendChild(nameEl);
+		enableWrap.appendChild(mk('span', { textContent: label }, 'font-weight:600;font-size:11px'));
 		if (hint) enableWrap.appendChild(mk('span', { textContent: hint }, 'font-size:10px;opacity:.55'));
+		const stateEl = mk('span', { textContent: '未启用' }, 'font-size:10px;color:#e0a040');
+		header.appendChild(rowToggle);
 		header.appendChild(enableWrap);
-		row.pairs = [];
-		let slotsRow = null;
-		if (multi) {
-			idx.style.display = 'none';
-			val.style.display = 'none';
-			slotsRow = mk('div', {}, 'display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;padding-left:18px');
-			for (let slot = 0; slot < 3; slot++) {
-				const pi = mk('input', { type: 'number', value: String(slot) }, 'width:44px');
-				const pv = mk('input', { type: 'text', value: '0' }, 'width:64px');
-				const pairCell = mk('div', {}, 'display:flex;flex-direction:column;gap:2px;font-size:10px;opacity:.8');
-				pairCell.appendChild(mk('span', { textContent: '槽 ' + (slot + 1) }));
-				const pairLine = mk('div', {}, 'display:flex;gap:3px;align-items:center');
-				pairLine.appendChild(mk('span', { textContent: '索引' }, 'opacity:.6'));
-				pairLine.appendChild(pi);
-				pairLine.appendChild(mk('span', { textContent: '值' }, 'opacity:.6'));
-				pairLine.appendChild(pv);
-				pairCell.appendChild(pairLine);
-				slotsRow.appendChild(pairCell);
-				row.pairs.push({ pi, pv });
-				pv.addEventListener('change', () => { try { read(); simTick(); } catch (e) { /* ignore */ } });
-				pi.addEventListener('change', () => { try { read(); simTick(); } catch (e) { /* ignore */ } });
-			}
-		} else if (indexed) {
-			header.appendChild(cell('索引', idx, '58px'));
-			header.appendChild(cell('值', val, '84px'));
-		} else {
-			idx.style.display = 'none';
-			header.appendChild(cell('值', val, '84px'));
-		}
-		// 自动变化（只有 floats 用得上）
-		const autoC = mk('input', { type: 'checkbox' });
-		const period = mk('input', { type: 'number', value: '0.2', step: '0.1' }, 'width:100%;min-width:0');
-		const step = mk('input', { type: 'number', value: '0.5', step: '0.1' }, 'width:100%;min-width:0');
-		const rule = mk('select', {}, 'width:100%;min-width:0');
-		[['pingpong', '往复'], ['wrap', '循环']].forEach(([v, t]) => rule.appendChild(mk('option', { value: v, textContent: t })));
-		const minI = mk('input', { type: 'number', value: '0' }, 'width:100%;min-width:0');
-		const maxI = mk('input', { type: 'number', value: '4' }, 'width:100%;min-width:0');
-		const autoInline = mk('label', {}, 'display:flex;align-items:center;gap:4px;font-size:10px;opacity:.8;padding-bottom:3px;white-space:nowrap;cursor:pointer');
-		autoInline.appendChild(autoC);
-		autoInline.appendChild(mk('span', { textContent: '自动变化' }));
-		const autoRow = mk('div', {}, 'display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;padding-left:18px');
-		autoRow.appendChild(autoInline);
-		autoRow.appendChild(cell('周期（秒）', period, '66px'));
-		autoRow.appendChild(cell('步长', step, '60px'));
-		autoRow.appendChild(cell('规则', rule, '78px'));
-		autoRow.appendChild(cell('下限', minI, '60px'));
-		autoRow.appendChild(cell('上限', maxI, '60px'));
-		const usageEl = mk('div', {}, 'font-size:10px;line-height:1.45;white-space:pre-wrap;padding:1px 0 0 18px');
-		box.appendChild(header);
-		if (multi && slotsRow) box.appendChild(slotsRow);
-		if (key === 'floats') box.appendChild(autoRow);
-		box.appendChild(usageEl);
-		root.appendChild(box);
-		row.el = { enable, idx, val, auto: autoC, period, step, rule, min: minI, max: maxI, usage: usageEl };
-		const read = () => {
-			row.enabled = enable.checked;
-			row.index = Number(idx.value) || 0;
-			row.value = val.value;
-			row.auto = autoC.checked;
-			row.period = Math.max(50, (Number(period.value) || 0.2) * 1000);
-			row.step = Number(step.value) || 0.5;
-			row.rule = rule.value;
-			row.min = Number(minI.value) || 0;
-			row.max = Number(maxI.value) || 4;
+		header.appendChild(stateEl);
+		const body = mk('div', {}, 'display:flex;flex-direction:column;gap:4px;padding:4px 0 0 16px');
+		const refreshRowState = () => {
+			box.style.opacity = row.enabled ? '1' : '.65';
+			stateEl.style.display = row.enabled ? 'none' : 'inline';
 		};
-		const markDisabled = () => { box.style.opacity = enable.checked ? '1' : '.7'; };
-		[enable, idx, val, autoC, period, step, rule, minI, maxI].forEach(el => el.addEventListener('change', () => { read(); markDisabled(); simTick(); }));
-		markDisabled();
-		row.order = Object.keys(sim_ui.rows).length;
+		const setRowOpen = (open) => {
+			row.open = open;
+			body.style.display = open ? 'flex' : 'none';
+			rowToggle.textContent = open ? '▾' : '▸';
+		};
+		rowToggle.addEventListener('click', (event) => { if (event && event.preventDefault) event.preventDefault(); setRowOpen(!row.open); });
+		const slotCount = multi ? 3 : 1;
+		for (let slotIndex = 0; slotIndex < slotCount; slotIndex++) {
+			const slot = { index: slotIndex, value: kind === 'bool' ? 'false' : (kind === 'text' ? '' : '0'), period: 200, step: 0.5, rule: 'pingpong', min: 0, max: 4, dir: 1, lastTick: 0, open: false };
+			const slotBox = mk('div', {}, 'border:1px solid rgba(128,128,128,.18);border-radius:3px;padding:3px 5px;display:flex;flex-direction:column;gap:3px');
+			const slotHead = mk('div', {}, 'display:flex;align-items:center;gap:6px;flex-wrap:wrap');
+			const slotToggle = mk('button', { textContent: '▸', title: '展开自动变化 / 关联分组' }, 'border:none;background:transparent;cursor:pointer;padding:0;font-size:11px;line-height:1;width:12px;opacity:.7');
+			const slotName = mk('span', { textContent: multi ? ('槽 ' + (slotIndex + 1)) : '取值' }, 'font-size:10px;opacity:.65;min-width:26px');
+			const idx = mk('input', { type: 'number', value: String(slotIndex) }, 'width:44px');
+			const val = mk('input', { type: (kind === 'text' || kind === 'bool') ? 'text' : 'number', value: slot.value }, 'width:72px');
+			const badge = mk('span', { textContent: '' }, 'font-size:10px;color:#7fd0ff');
+			slotHead.appendChild(slotToggle);
+			slotHead.appendChild(slotName);
+			slotHead.appendChild(cell('索引', idx, '52px'));
+			slotHead.appendChild(cell('值', val, '78px'));
+			slotHead.appendChild(badge);
+			const slotBody = mk('div', {}, 'display:none;flex-direction:column;gap:4px;padding:3px 0 2px 16px');
+			const period = mk('input', { type: 'number', value: '0.2', step: '0.1' }, 'width:100%;min-width:0');
+			const step = mk('input', { type: 'number', value: '0.5', step: '0.1' }, 'width:100%;min-width:0');
+			const rule = mk('select', {}, 'width:100%;min-width:0');
+			[['pingpong', '往复'], ['wrap', '循环']].forEach(([v, t]) => rule.appendChild(mk('option', { value: v, textContent: t })));
+			const minI = mk('input', { type: 'number', value: '0' }, 'width:100%;min-width:0');
+			const maxI = mk('input', { type: 'number', value: '4' }, 'width:100%;min-width:0');
+			const autoTitle = mk('span', { textContent: '自动变化（点上方「运行」生效）' }, 'font-size:10px;opacity:.6;padding-bottom:2px;white-space:nowrap');
+			const usageEl = mk('div', {}, 'font-size:10px;line-height:1.45;white-space:pre-wrap');
+			if (kind === 'number') {
+				const autoRow = mk('div', {}, 'display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap');
+				autoRow.appendChild(autoTitle);
+				autoRow.appendChild(cell('周期（秒）', period, '62px'));
+				autoRow.appendChild(cell('步长', step, '56px'));
+				autoRow.appendChild(cell('规则', rule, '72px'));
+				autoRow.appendChild(cell('下限', minI, '56px'));
+				autoRow.appendChild(cell('上限', maxI, '56px'));
+				slotBody.appendChild(autoRow);
+			} else {
+				slotBody.appendChild(mk('div', { textContent: '（文本 / 布尔输入不支持自动变化）' }, 'font-size:10px;opacity:.5'));
+			}
+			slotBody.appendChild(usageEl);
+			slotBox.appendChild(slotHead);
+			slotBox.appendChild(slotBody);
+			body.appendChild(slotBox);
+			const readSlot = () => {
+				slot.index = Number(idx.value) || 0;
+				slot.value = val.value;
+				slot.period = Math.max(50, (Number(period.value) || 0.2) * 1000);
+				slot.step = Number(step.value) || 0.5;
+				slot.rule = rule.value;
+				slot.min = Number(minI.value) || 0;
+				slot.max = Number(maxI.value) || 4;
+			};
+			const setSlotOpen = (open) => {
+				slot.open = open;
+				slotBody.style.display = open ? 'flex' : 'none';
+				slotToggle.textContent = open ? '▾' : '▸';
+			};
+			slotToggle.addEventListener('click', (event) => { if (event && event.preventDefault) event.preventDefault(); setSlotOpen(!slot.open); });
+			// 在未启用的大类里改值，说明就是想用它：自动勾上，避免“改了没反应”的错觉
+			const ensureRowEnabled = () => {
+				if (row.enabled) return;
+				row.enabled = true;
+				enable.checked = true;
+				refreshRowState();
+			};
+			val.addEventListener('input', () => { ensureRowEnabled(); readSlot(); simTick(); });
+			val.addEventListener('change', () => { ensureRowEnabled(); readSlot(); simTick(); });
+			idx.addEventListener('input', () => { ensureRowEnabled(); readSlot(); simTick(); });
+			[period, step, rule, minI, maxI].forEach(el => el.addEventListener('change', () => { readSlot(); simUpdateRunUi(); simTick(); }));
+			slot.els = { toggle: slotToggle, body: slotBody, idx, val, badge, usage: usageEl, period, step, rule, min: minI, max: maxI };
+			setSlotOpen(false);
+			row.slots.push(slot);
+		}
+		box.appendChild(header);
+		box.appendChild(body);
+		root.appendChild(box);
+		row.els = { enable, state: stateEl, toggle: rowToggle, body };
+		enable.addEventListener('change', () => { row.enabled = enable.checked; refreshRowState(); simTick(); });
+		refreshRowState();
+		setRowOpen(true);
 		sim_ui.rows[key] = row;
 	}
-	const runBtn = mk('button', { textContent: '运行 / 停止' }, 'padding:4px 8px;margin-top:4px');
+	const controlRow = mk('div', {}, 'display:flex;align-items:center;gap:8px;margin-top:4px');
+	const runBtn = mk('button', { textContent: '▶ 运行' }, 'padding:4px 10px;');
+	const statusEl = mk('span', { textContent: '已停止' }, 'font-size:10px;opacity:.75');
+	controlRow.appendChild(runBtn);
+	controlRow.appendChild(statusEl);
 	const out = mk('div', {}, 'white-space:pre-wrap;font-family:monospace;font-size:11px;opacity:.85;flex:1 1 auto;overflow:auto;border-top:1px solid rgba(128,128,128,.3);padding-top:6px;margin-top:4px');
 	sim_ui.out = out;
+	sim_ui.runBtn = runBtn;
+	sim_ui.status = statusEl;
 	runBtn.addEventListener('click', () => toggleSim());
-	root.appendChild(runBtn); root.appendChild(out);
+	root.appendChild(controlRow); root.appendChild(out);
+	simUpdateRunUi();
 	sim_panel.node.innerHTML = '';
 	sim_panel.node.appendChild(root);
 	try { if (typeof Panels !== 'undefined' && Panels) Panels[sim_panel.id] = sim_panel; } catch (e) { /* ignore */ }
@@ -1659,7 +1717,7 @@ function collectInputUsage() {
 	walk((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []);
 	return map;
 }
-function refreshUsage(hits) {
+function refreshUsage() {
 	if (!sim_ui || !sim_ui.rows) return;
 	try {
 		const usageMap = collectInputUsage();
@@ -1689,26 +1747,17 @@ function refreshUsage(hits) {
 		};
 		for (const key of Object.keys(sim_ui.rows)) {
 			const row = sim_ui.rows[key];
-			const usageEl = row.el && row.el.usage;
-			if (!usageEl) continue;
-			const html = [];
-			const slots = (row.pairs && row.pairs.length)
-				? row.pairs.map(pair => ({ index: Number(pair.pi.value) || 0, value: num(pair.pv.value) }))
-				: [{ index: row.index, value: num(row.value) }];
-			let any = false;
-			for (const slot of slots) {
+			for (const slot of row.slots) {
+				const usageEl = slot.els && slot.els.usage;
+				if (!usageEl) continue;
 				const groups = usageMap[key + '#' + slot.index] || [];
-				if (!groups.length) continue;
-				if (slots.length > 1) html.push('<div style="opacity:.5;margin-top:2px">索引 ' + slot.index + '（值 ' + slot.value + '）</div>');
-				html.push(...groupsHtml(groups, slot.value));
-				any = true;
+				if (!groups.length) { usageEl.innerHTML = '<div style="opacity:.45">关联分组：（无）</div>'; continue; }
+				usageEl.innerHTML = groupsHtml(groups, num(slot.value)).join('');
 			}
-			if (!any) html.push('<div style="opacity:.45">关联分组：（无）</div>');
-			usageEl.innerHTML = html.join('');
 		}
 	} catch (error) { console.error('[装配] refreshUsage error', error); }
 }
-/* ============================== 模拟求值 ============================== */
+/* ============================== 模拟求值/* ============================== 模拟求值 ============================== */
 
 /** range_dispatch 的数值来源：custom_model_data → floats[index]；其余走物品属性 */
 function simValue(node, inputs) {
@@ -1806,79 +1855,103 @@ function simEvaluate(node, inputs) {
 function simTick() {
 	if (!sim_ui || !sim_ui.rows) return;
 	let mapping = null;
-	try { mapping = createExporter().buildMapping(); } catch (error) { sim_ui.out.textContent = '无法生成映射：' + ((error && error.message) || error); return; }
+	try { mapping = createExporter().buildMapping(); } catch (error) { if (sim_ui.out) sim_ui.out.textContent = '无法生成映射：' + ((error && error.message) || error); return; }
+	// 清空后再按启用的行/槽写入（禁用 = 不参与求值）
 	const inputs = sim.inputs;
-	inputs.floats = inputs.floats || [];
-	inputs.colors = inputs.colors || [];
-	inputs.strings = inputs.strings || [];
-	inputs.flags = inputs.flags || [];
+	inputs.floats.length = 0;
+	inputs.colors.length = 0;
+	inputs.strings.length = 0;
+	inputs.flags.length = 0;
+	inputs.selected = false;
+	inputs.using_item = false;
+	inputs.damage = 0;
+	inputs.count = 0;
+	inputs.time = 0;
 	const lines = [];
 	for (const key of Object.keys(sim_ui.rows)) {
 		const row = sim_ui.rows[key];
 		if (!row.enabled) continue;
-		const v = String(row.value);
-		switch (key) {
-			case 'floats': case 'colors': {
-				if (row.pairs && row.pairs.length) {
-					for (const pair of row.pairs) {
-						const idx2 = Number(pair.pi.value) || 0;
-						const raw2 = pair.pv.value;
-						if (key === 'floats') { inputs.floats[idx2] = num(raw2); lines.push('floats[' + idx2 + '] = ' + num(raw2)); }
-						else { inputs.colors[idx2] = num(raw2) | 0; lines.push('colors[' + idx2 + '] = #' + (num(raw2) >>> 0).toString(16).padStart(8, '0')); }
-					}
-					break;
-				}
-				const parts = String(v).split(',').map(t => t.trim()).filter(t => t !== '');
-				if (!parts.length) parts.push('0');
-				parts.forEach((part, i) => {
-					const idx = row.index + i;
-					if (key === 'floats') { inputs.floats[idx] = num(part); lines.push('floats[' + idx + '] = ' + num(part)); }
-					else { inputs.colors[idx] = num(part) | 0; lines.push('colors[' + idx + '] = #' + (num(part) >>> 0).toString(16).padStart(8, '0')); }
-				});
-				break;
-			}
-			case 'colors': inputs.colors[row.index] = num(v) | 0; lines.push('colors[' + row.index + '] = #' + (num(v) >>> 0).toString(16).padStart(8, '0')); break;
-			case 'strings': inputs.strings[row.index] = v; lines.push('strings[' + row.index + '] = "' + v + '"'); break;
-			case 'flags': inputs.flags[row.index] = (v === 'true' || v === '1'); lines.push('flags[' + row.index + '] = ' + inputs.flags[row.index]); break;
-			case 'selected': case 'using_item': inputs[key] = (v === 'true' || v === '1' || num(v) > 0); lines.push(key + ' = ' + inputs[key]); break;
-			default: inputs[key] = num(v); lines.push(key + ' = ' + num(v));
+		for (const slot of row.slots) {
+			simApplySlot(inputs, key, slot);
+			lines.push(simSlotLabel(key, slot));
 		}
 	}
 	const items = simEvaluate(mapping.model, inputs);
 	const hits = items.filter(item => item.hit && item.node.model).map(item => item.node.model);
+	// 每个槽单独求值一次，得到它自己的命中数（角标）
+	for (const key of Object.keys(sim_ui.rows)) {
+		const row = sim_ui.rows[key];
+		for (const slot of row.slots) {
+			if (!row.enabled) { if (slot.els) slot.els.badge.textContent = ''; continue; }
+			const solo = simBlankInputs();
+			simApplySlot(solo, key, slot);
+			const count = simEvaluate(mapping.model, solo).filter(item => item.hit && item.node.model).length;
+			if (slot.els) slot.els.badge.textContent = count ? ('命中 ' + count) : '';
+		}
+	}
 	lines.push('');
 	lines.push('命中 ' + hits.length + ' / 分支 ' + items.length);
 	lines.push('');
 	for (const item of items) lines.push((item.hit ? '  ✔ ' : '  ✘ ') + (item.node.model || item.node.type));
-	sim_ui.out.textContent = lines.join('\n');
-	try { refreshUsage(hits); } catch (e) { /* ignore */ }
+	if (sim_ui.out) sim_ui.out.textContent = lines.join('\n');
+	try { refreshUsage(); } catch (e) { /* ignore */ }
+}
+function simAutoSlots() {
+	const list = [];
+	if (!sim_ui || !sim_ui.rows) return list;
+	for (const key of Object.keys(sim_ui.rows)) {
+		const row = sim_ui.rows[key];
+		// 大类复选框就是开关；只有数值类能自动变化（文本/布尔没有“下一个值”）
+		if (!row.enabled || row.kind !== 'number') continue;
+		for (const slot of row.slots) list.push({ key, slot });
+	}
+	return list;
+}
+
+function simUpdateRunUi() {
+	if (!sim_ui || !sim_ui.runBtn) return;
+	const running = !!sim.timer;
+	sim_ui.runBtn.textContent = running ? '■ 停止' : '▶ 运行';
+	sim_ui.runBtn.style.background = running ? 'rgba(127,208,255,.25)' : '';
+	sim_ui.runBtn.style.borderColor = running ? 'rgba(127,208,255,.8)' : '';
+	if (sim_ui.status) {
+		const count = simAutoSlots().length;
+		sim_ui.status.textContent = running ? ('运行中 · ' + count + ' 个自动槽') : '已停止';
+		sim_ui.status.style.color = running ? '#7fd0ff' : '';
+	}
 }
 
 function toggleSim() {
-	if (sim.timer) { clearInterval(sim.timer); sim.timer = null; sim_ui.out.textContent += '\n(已停止自动变化)'; return; }
-	simTick();
-	const autoRows = Object.keys(sim_ui.rows).map(k => sim_ui.rows[k]).filter(r => r.enabled && r.auto);
-	if (!autoRows.length) return;
-	const period = Math.min.apply(null, autoRows.map(r => r.period));
+	if (sim.timer) { clearInterval(sim.timer); sim.timer = null; simUpdateRunUi(); simTick(); return; }
+	const autos = simAutoSlots();
+	if (!autos.length) {
+		Blockbench.showQuickMessage('没有可自动变化的数值槽：先勾选上方某个数值大类（如 cmdata.floats），再点运行', 3500);
+		simUpdateRunUi();
+		return;
+	}
+	const period = Math.min.apply(null, autos.map(item => item.slot.period));
 	sim.timer = setInterval(() => {
 		try {
+			// 每拍重算：中途勾选/取消大类时自动跟随，全部关掉就停下
+			const current = simAutoSlots();
+			if (!current.length) { clearInterval(sim.timer); sim.timer = null; simUpdateRunUi(); return; }
 			const now = Date.now();
-			for (const row of autoRows) {
-				if (!row.lastTick) row.lastTick = now;
-				if (now - row.lastTick < row.period) continue;
-				row.lastTick = now;
-				let value = num(row.value) + row.step * row.dir;
-				if (row.rule === 'wrap') { if (value > row.max) value = row.min; }
-				else { if (value > row.max) { value = row.max; row.dir = -1; } if (value < row.min) { value = row.min; row.dir = 1; } }
-				row.value = String(value);
-				if (row.el && row.el.val) row.el.val.value = row.value;
-				if (row.pairs) for (const pair of row.pairs) pair.pv.value = row.value;
+			for (const item of current) {
+				const slot = item.slot;
+				if (!slot.lastTick) slot.lastTick = now;
+				if (now - slot.lastTick < slot.period) continue;
+				slot.lastTick = now;
+				let value = num(slot.value) + slot.step * slot.dir;
+				if (slot.rule === 'wrap') { if (value > slot.max) value = slot.min; }
+				else { if (value > slot.max) { value = slot.max; slot.dir = -1; } if (value < slot.min) { value = slot.min; slot.dir = 1; } }
+				slot.value = String(value);
+				if (slot.els && slot.els.val) slot.els.val.value = slot.value;
 			}
 			simTick();
 		} catch (error) { /* ignore */ }
 	}, period);
+	simUpdateRunUi();
 }
-
 function openSimulator() {
 	if (typeof Project === 'undefined' || !Project) return;
 	const inputs = sim.inputs;
@@ -2151,6 +2224,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 	},
 	onunload() {
+		try { if (sim.timer) { clearInterval(sim.timer); sim.timer = null; } } catch (e) { /* ignore */ }
 		try { if (sim_panel && typeof sim_panel.delete === 'function') sim_panel.delete(); } catch (e) { /* ignore */ }
 		sim_panel = null;
 		sim_ui = null;

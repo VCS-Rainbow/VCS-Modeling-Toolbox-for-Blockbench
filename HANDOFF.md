@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-24 · 当前版本 **0.38.0**（tag `v0.38.0`）
+> 生成时间：2026-10-24 · 当前版本 **0.39.0**（tag `v0.39.0`）
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 
 ---
@@ -90,19 +90,21 @@
 ### 2.7 模拟输入面板（视图 → 面板 → 模拟输入）
 
 - 面板 id `imm_sim_panel`，内容挂 `panel.node`（不是 `nodes` 数组）。
-- 每类输入独立一行，勾选启用；**标题与输入始终可见，不要再用 `<details>` 包裹输入**（0.36.x 的组装把名称/索引/值移进折叠 body，`<summary>` 里只剩「索引 0/1/2」，看起来像标题——0.38.0 已改掉，并加了结构单测锁住）。
-- `floats` / `colors` 三个可见槽「槽 1/2/3（索引 + 值）」；`strings` / `flags` 在标题行直接给索引 + 值；`selected` / `using_item` / `damage` / `count` / `time` 只有值。
-- `floats` 保留自动变化（自动 / 周期（秒，默认 0.2）/ 步长 / 往复|循环 / 上下限），自动时三个槽一起变；其它输入没有自动变化。
-- 未勾选的行整体变淡（`opacity .7`）。
+- 结构（0.39.0）：**大类标题行**（折叠箭头 + 复选框 + 名称/提示 +「未启用」）→ 大类 body（默认展开，点箭头折叠）→ **每个槽一行**（折叠箭头 + 槽号 + 索引 + 值 + 命中角标）→ 槽 body（默认折叠）：自动变化控制器（周期/步长/规则/上下限）+ 关联分组。
+- 折叠用 `<div>` + 箭头按钮控制 `style.display`，**不要用 `<details>` 包输入**（0.36.x 曾把名称/索引/值移进折叠 body，`<summary>` 里只剩「索引 0/1/2」；`<summary>` 里的表单控件还容易误触折叠）。
+- 没有独立的「自动变化」复选框：**大类复选框 = 开关**，点「运行」后所有已启用的**数值**槽按各自控制器变化（`simAutoSlots()` 只看 `row.enabled && row.kind === 'number'`）。
+- 运行状态：`simUpdateRunUi()` 维护按钮文案（▶ 运行 / ■ 停止）+ 高亮 + 右侧「已停止 / 运行中 · N 个自动槽」；没有数值槽时只弹提示、不进入运行态。
+- 改值即时重算（`input` 事件），并且**在未启用的大类里改值会自动勾选它**（避免“改了没反应”）。
 - 关联分组：容器（如 `bone7`）在上、直属子分支全列出；不活跃折叠进 `<details>`；活跃子分支加粗标蓝（容器始终灰色、无 `[!]`）。
 - 活跃判定：`activeIndex = max{ k | k ≤ 当前值 }`（k 来自子分组名 `[k]` 前缀）。
-- 关联信息由 `refreshUsage()` **统一持有**（`simTick` 只调用它）：按每个槽自己的 `pi/pv` 取下标与值，不要再从 `details` 的 DOM 顺序去猜目标节点。
+- 关联信息由 `refreshUsage()` **统一持有**（`simTick` 只调用它）：按每个槽自己的 `idx/val` 取下标与值，不要再从 DOM 顺序去猜目标节点。
 
 ---
 
 ## 3. 版本历史（近期，git tag）
 
 ```
+0.39.0  恢复 sim 状态对象（修“值没反应”）；面板：大类/槽双层折叠、每槽控制器+命中角标、运行状态
 0.38.0  目标版本移入项目设置下拉；模拟面板每行「标题+输入」常显（去掉折叠）
 0.37.0  pack_format 修正（26.2=88.0）+ 目标版本下拉；恢复 simEvaluate 并补 select/condition 求值
 0.36.2  floats/colors 三下标槽 UI（带标题）
@@ -184,7 +186,7 @@
 - `node --check` 只能验证语法，**验证不了运行时**（曾因“变量在声明前使用”导致面板空白）。
 - 改 UI 组装时注意顺序：**先创建控件 → 再组装 DOM**；否则 `ReferenceError`。
 - 用 `function foo() {` 当单行锚点会命中 `async function foo() {` 的**内部**，替换后 `async` 会落到前一段上（0.37.0 踩过：`async function pickPackPath` 变成 `async function pickPackVersion` + 非 async 的 `pickPackPath`，`await` 直接语法错误）。锚点要带上 `async ` 或改成整行唯一文本。
-- 大改动前用 `git log -S 'symbol'` 查这个函数/字符串是否在某次重构里被误删（`simEvaluate` 就是 0.30.1 删掉了、直到 0.37.0 才发现）。
+- 大改动前用 `git log -S 'symbol'` 查这个函数/字符串是否在某次重构里被误删（`simEvaluate` 与 `sim` 状态对象就是 0.30.1 一起删掉的：前者 0.37.0 才发现，后者直到 0.39.0 才暴露成“值完全没反应”）。
 - 改坏就 `git checkout -- item_model_definition_assembly.js` 回滚（多处历史版本可 `git checkout v0.xx.y -- 文件`）。
 
 ### 5.5 校验命令
@@ -193,7 +195,7 @@
 $node = 'C:\Users\Rainbow_\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 & $node --check 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js'
 & $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_assembly.js'   # 离线冒烟
-& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值单测（34 项）
+& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板单测（65 项）
 Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js' `
   'C:\Users\Rainbow_\AppData\Roaming\Blockbench\plugins\item_model_definition_assembly.js' -Force
 ```

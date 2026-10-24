@@ -8,12 +8,13 @@ const PLUGIN = 'C:\\Users\\Rainbow_\\blockbench_item_model_mapping_isolated\\ite
 class Quaternion { constructor() { this.x = 0; this.y = 0; this.z = 0; this.w = 1; } setFromEuler() { return this; } normalize() { return this; } lengthSq() { return 1; } copy() { return this; } }
 class Euler { constructor(x = 0, y = 0, z = 0, order = 'XYZ') { Object.assign(this, { x, y, z, order }); } }
 
-/* 极简 DOM：够 buildSimPanel 组装结构，便于断言“控件没有被塞进 <details>” */
+/* 极简 DOM：够 buildSimPanel 组装结构，并能触发 change / input / click 事件 */
 class FakeEl {
-	constructor(tag) { this.tagName = String(tag).toUpperCase(); this.children = []; this.style = { cssText: '' }; this._text = ''; this._html = ''; this.parentElement = null; }
+	constructor(tag) { this.tagName = String(tag).toUpperCase(); this.children = []; this.style = { cssText: '' }; this._text = ''; this._html = ''; this.parentElement = null; this.value = undefined; this.checked = false; this.disabled = false; this.type = ''; this.listeners = []; }
 	appendChild(child) { child.parentElement = this; this.children.push(child); return child; }
 	insertBefore(child, ref) { child.parentElement = this; const at = this.children.indexOf(ref); this.children.splice(at < 0 ? this.children.length : at, 0, child); return child; }
-	addEventListener() { }
+	addEventListener(type, fn) { this.listeners.push({ type, fn }); }
+	fire(type) { for (const listener of this.listeners) if (listener.type === type) listener.fn({ target: this, preventDefault() { } }); }
 	get firstChild() { return this.children[0] || null; }
 	get lastElementChild() { return this.children[this.children.length - 1] || null; }
 	set textContent(value) { this._text = String(value); this.children = []; }
@@ -66,7 +67,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.38.0', api.VERSION, '0.38.0');
+eq('版本是 0.39.0', api.VERSION, '0.39.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -156,27 +157,59 @@ eq('composite 展开（base + 命中的 case）', HIT(api.simEvaluate(composite,
 eq('empty 不产生任何项', api.simEvaluate({ type: 'minecraft:empty' }, sInputs('a')).length, 0);
 eq('null 节点安全', api.simEvaluate(null, sInputs('a')).length, 0);
 
-/* ---------- 面板结构：输入控件必须直接可见，不能被塞进 <details> ---------- */
+/* ---------- 面板结构：大类/槽可折叠，输入直接可见 ---------- */
 console.log('\n[面板结构]');
 const simUi = api.getSimUi();
 const containsText = (el, text) => !!el && (String(el._text || '').includes(text) || (el.children || []).some(child => containsText(child, text)));
 const insideDetails = (el) => { let node = el; while (node) { if (node.tagName === 'DETAILS') return true; node = node.parentElement; } return false; };
 eq('面板已创建', !!simUi, true);
 const floatsRow = simUi && simUi.rows && simUi.rows.floats;
-eq('floats 行存在', !!floatsRow, true);
-const floatsBox = floatsRow && floatsRow.el.usage.parentElement;
-eq('行容器不是 <details>', floatsBox && floatsBox.tagName, 'DIV');
-eq('标题行可见 cmdata.floats 且不在折叠层', containsText(floatsBox.children[0], 'cmdata.floats') && !insideDetails(floatsBox.children[0]), true);
-eq('三个槽', floatsRow.pairs.length, 3);
-eq('槽 1 在行内（不在折叠层）', containsText(floatsBox.children[1], '槽 1') && !insideDetails(floatsRow.pairs[0].pv), true);
-eq('floats 值输入不在折叠层', insideDetails(floatsRow.el.val), false);
-eq('floats 有自动变化行', (floatsBox.children || []).some(c => containsText(c, '自动变化')), true);
-const stringsBox = simUi.rows.strings.el.usage.parentElement;
-eq('strings 标题在标题行', containsText(stringsBox.children[0], 'cmdata.strings'), true);
-eq('strings 的索引/值在标题行内', containsText(stringsBox.children[0], '索引') && containsText(stringsBox.children[0], '值'), true);
-eq('strings 行没有 <details>', stringsBox.children.some(c => c.tagName === 'DETAILS'), false);
-eq('没有任何行用 <details> 包裹输入', Object.keys(simUi.rows).every(k => !simUi.rows[k].el.usage.parentElement.children.some(c => c.tagName === 'DETAILS')), true);
-eq('colors 不显示自动变化', simUi.rows.colors.el.usage.parentElement.children.some(c => containsText(c, '自动变化')), false);
+eq('floats 行有 3 个槽', floatsRow.slots.length, 3);
+eq('其它大类各有 1 个槽', simUi.rows.strings.slots.length === 1 && simUi.rows.selected.slots.length === 1, true);
+const rowHeader = floatsRow.els.body.parentElement.children[0];
+eq('大类标题行含名称', containsText(rowHeader, 'cmdata.floats'), true);
+eq('大类默认展开', floatsRow.els.body.style.display, 'flex');
+floatsRow.els.toggle.fire('click');
+eq('点箭头后大类折叠', floatsRow.els.body.style.display, 'none');
+floatsRow.els.toggle.fire('click');
+eq('再点恢复展开', floatsRow.els.body.style.display, 'flex');
+const slot0 = floatsRow.slots[0];
+eq('槽标题行含「槽 1 / 索引 / 值」', ['槽 1', '索引', '值'].every(t => containsText(slot0.els.val.parentElement.parentElement, t)), true);
+eq('槽默认折叠（标题行仍可见）', slot0.els.body.style.display, 'none');
+slot0.els.toggle.fire('click');
+eq('点箭头后槽展开', slot0.els.body.style.display, 'flex');
+eq('槽内有自动变化参数（周期/步长/规则/下限/上限）', ['自动变化', '周期', '步长', '规则', '下限', '上限'].every(t => containsText(slot0.els.body, t)), true);
+eq('大类标题行没有「自动变化」复选框', containsText(rowHeader, '自动变化'), false);
+eq('行内没有 <details> 包裹输入', insideDetails(slot0.els.val), false);
+
+/* ---------- 值改变会驱动求值（0.38 的回归） ---------- */
+console.log('\n[值驱动求值]');
+const gModel = (name, model) => new global.Group({ name, imm_type: 'model', imm_model: model });
+const rangeGroup = new global.Group({ name: 'range', imm_type: 'range_dispatch', imm_property: 'minecraft:custom_model_data', imm_index: 0 });
+rangeGroup.children.push(gModel('low', 'ns:item/low'), gModel('high', 'ns:item/high'));
+global.Outliner.root.push(rangeGroup);
+eq('编辑值会自动启用该大类', (() => { slot0.els.val.value = '1'; slot0.els.val.fire('input'); return floatsRow.enabled && floatsRow.els.enable.checked; })(), true);
+eq('值 1 → 命中 high', /✔ ns:item\/high/.test(simUi.out.textContent), true);
+eq('槽角标显示命中数', slot0.els.badge.textContent, '命中 1');
+slot0.els.val.value = '0';
+slot0.els.val.fire('input');
+eq('值 0 → 命中 low', /✔ ns:item\/low/.test(simUi.out.textContent), true);
+eq('槽展开后有活跃项/关联分组', /range/.test(slot0.els.usage.innerHTML), true);
+
+/* ---------- 运行状态 ---------- */
+console.log('\n[运行状态]');
+eq('初始为「▶ 运行 / 已停止」', simUi.runBtn.textContent + '|' + simUi.status.textContent, '▶ 运行|已停止');
+simUi.runBtn.fire('click');
+eq('运行后按钮变「■ 停止」', simUi.runBtn.textContent, '■ 停止');
+eq('运行后状态可见', /运行中/.test(simUi.status.textContent), true);
+simUi.runBtn.fire('click');
+eq('停止后按钮恢复', simUi.runBtn.textContent, '▶ 运行');
+eq('停止后状态恢复', simUi.status.textContent, '已停止');
+floatsRow.els.enable.checked = false;
+floatsRow.els.enable.fire('change');
+simUi.runBtn.fire('click');
+eq('没有启用的数值大类时不会误报运行中', simUi.runBtn.textContent, '▶ 运行');
+simUi.runBtn.fire('click');
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
