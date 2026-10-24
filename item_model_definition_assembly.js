@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.34.0';
+const VERSION = '0.34.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1562,22 +1562,27 @@ function refreshUsage(hits) {
 	try {
 		const usageMap = collectInputUsage();
 		const boxes = (typeof document !== 'undefined') ? document.querySelectorAll('#panel_imm_sim_panel details') : [];
-		const isActive = (name) => {
-			if (!Array.isArray(hits) || !hits.length) return false;
-			const tokens = String(name).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-			return tokens.length > 0 && hits.some(h => tokens.every(t => String(h).toLowerCase().includes(t)));
-		};
+		const prefixOf = (name) => { const m = String(name || '').match(/^\[(-?\d+(?:\.\d+)?)\]/); return m ? Number(m[1]) : null; };
 		for (const key of Object.keys(sim_ui.rows)) {
 			const row = sim_ui.rows[key];
 			const groups = usageMap[key + '#' + row.index] || [];
+			const value = num(row.value);
 			const html = ['<div style="opacity:.75;margin-bottom:2px">关联分组：</div>'];
 			if (!groups.length) html.push('<div style="opacity:.5">（无）</div>');
 			groups.forEach((g, gi) => {
 				if (gi > 0) html.push('<hr style="border:none;border-top:1px solid rgba(128,128,128,.25);margin:4px 0">');
-				const pActive = isActive(g.parent);
-				html.push('<div style="' + (pActive ? 'font-weight:700;color:#7fd0ff' : 'opacity:.8') + '">' + (pActive ? '[!] ' : '· ') + g.parent + '</div>');
-				const act = g.children.filter(c => isActive(c));
-				const inact = g.children.filter(c => !isActive(c));
+				// 按“阈值 <= 当前值”里最大的那个，判定活跃子分支
+				let activeIndex = null;
+				for (const child of g.children) {
+					const k = prefixOf(child);
+					if (k === null) continue;
+					if (k <= value && (activeIndex === null || k > activeIndex)) activeIndex = k;
+				}
+				const isActiveChild = (child) => { const k = prefixOf(child); return k !== null && k === activeIndex; };
+				const anyActive = g.children.some(isActiveChild);
+				html.push('<div style="' + (anyActive ? 'font-weight:700;color:#7fd0ff' : 'opacity:.8') + '">' + (anyActive ? '[!] ' : '· ') + g.parent + '</div>');
+				const act = g.children.filter(isActiveChild);
+				const inact = g.children.filter(c => !isActiveChild(c));
 				for (const c of act) html.push('<div style="font-weight:700;color:#7fd0ff">[!] ' + c + '</div>');
 				if (inact.length) {
 					html.push('<details><summary style="cursor:pointer;opacity:.55;font-size:10px">未活跃 ' + inact.length + ' 项（点开查看）</summary>');
