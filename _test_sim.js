@@ -67,7 +67,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.41.0', api.VERSION, '0.41.0');
+eq('版本是 0.42.0', api.VERSION, '0.42.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -232,6 +232,35 @@ simUi.runBtn.fire('click');
 eq('没有启用的数值大类时不会误报运行中', simUi.runBtn.textContent, '▶ 运行');
 simUi.runBtn.fire('click');
 
+/* ---------- 不活跃分支联动（走真实 simTick + groupNodes） ---------- */
+console.log('\n[不活跃分支联动]');
+const lowGroup = rangeGroup.children[0];
+const highGroup = rangeGroup.children[1];
+const meshMat = () => ({ transparent: false, opacity: 1, depthWrite: true, clone() { return { transparent: false, opacity: 1, depthWrite: true, dispose() { } }; }, dispose() { } });
+const lowCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
+lowCube.mesh = { material: meshMat() };
+lowGroup.children.push(lowCube); lowGroup.mesh = { visible: true };
+const highCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
+highCube.mesh = { material: meshMat() };
+highGroup.children.push(highCube); highGroup.mesh = { visible: true };
+floatsRow.els.enable.checked = true;
+floatsRow.els.enable.fire('change');
+slot0.els.val.value = '5';
+slot0.els.val.fire('input');
+api.simTick();
+const simState = api.getSimState();
+simState.viewMode = 'ghost';
+api.simTick();
+eq('半透明：未命中的 low 变透明', lowCube.mesh.material.transparent === true && Math.abs(lowCube.mesh.material.opacity - 0.28) < 1e-9, true);
+eq('半透明：命中的 high 保持不透明', highCube.mesh.material.transparent, false);
+simState.viewMode = 'hide';
+api.simTick();
+eq('隐藏：未命中的 low 分组不可见', lowGroup.mesh.visible, false);
+eq('隐藏：命中的 high 仍可见', highGroup.mesh.visible, true);
+simState.viewMode = 'off';
+api.simTick();
+eq('关闭联动后恢复材质与可见性', lowCube.mesh.material.transparent === false && lowGroup.mesh.visible === true, true);
+
 /* ---------- 分支前缀清理 ---------- */
 console.log('\n[分支前缀清理]');
 const strayParent = new global.Group({ name: 'container', imm_type: 'composite' });
@@ -267,6 +296,28 @@ const outerRendered = outerPoints.map(p => api.rotateAroundQuat(outerQ, outer.or
 const outerCenter = [0, 1, 2].map(i => outerRendered.reduce((s, p) => s + p[i], 0) / outerRendered.length);
 eq('外层枢轴落在内容中心（误差 < 1e-6）', dist3(outer.origin, outerCenter) < 1e-6, true);
 eq('枢轴确实移动了', dist3(beforePivot, afterPivot) < 1e-6 && dist3(outer.origin, [2, 1, 0]) > 1, true);
+
+/* ---------- 不活跃分支：半透明 / 隐藏 ---------- */
+console.log('\n[不活跃分支视图]');
+const makeMaterial = () => ({ transparent: false, opacity: 1, depthWrite: true, clone() { return { transparent: false, opacity: 1, depthWrite: true, dispose() { this.disposed = true; } }; }, dispose() { } });
+const viewCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
+viewCube.mesh = { material: makeMaterial() };
+const viewGroup = new global.Group({ name: 'viewGroup', imm_type: 'composite' });
+viewGroup.children.push(viewCube);
+viewGroup.mesh = { visible: true };
+api.simApplyGroupVisual([{ group: viewGroup, active: false }], 'ghost');
+eq('半透明：材质 transparent + opacity 0.28', viewCube.mesh.material.transparent === true && Math.abs(viewCube.mesh.material.opacity - 0.28) < 1e-9, true);
+eq('半透明：不改分组可见性', viewGroup.mesh.visible, true);
+api.simApplyGroupVisual([{ group: viewGroup, active: true }], 'ghost');
+eq('活跃后恢复原材质', viewCube.mesh.material.transparent, false);
+api.simApplyGroupVisual([{ group: viewGroup, active: false }], 'hide');
+eq('隐藏：分组 mesh 不可见', viewGroup.mesh.visible, false);
+eq('隐藏模式下不残留半透明', viewCube.mesh.material.transparent, false);
+api.simApplyGroupVisual([{ group: viewGroup, active: true }], 'hide');
+eq('恢复可见', viewGroup.mesh.visible, true);
+api.simApplyGroupVisual([{ group: viewGroup, active: false }], 'ghost');
+api.simApplyGroupVisual([], 'off');
+eq('关闭联动后全部恢复', viewCube.mesh.material.transparent === false && viewGroup.mesh.visible === true, true);
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));

@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.41.0';
+const VERSION = '0.42.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -198,6 +198,7 @@ class Exporter {
 		this.textureRefs = new Map();
 		this.uvScales = new Map();
 		this.modelNames = new Set();
+		this.groupNodes = new Map(); // 映射节点 → 来源分组（视图联动用，不参与导出）
 		this.textureNames = new Set();
 		this.negativeCount = 0;
 	}
@@ -506,6 +507,7 @@ class Exporter {
 		else if (inlineCubes.length) built = this.addModel(inlineCubes, hint);
 
 		const node = { type: 'minecraft:' + type };
+		try { this.groupNodes.set(node, group); } catch (e) { /* ignore */ }
 		const own_shift = built ? built.shift : [0, 0, 0];
 		const transformation = this.buildTransformation(group, own_shift, parent_shift);
 		if (transformation) node.transformation = transformation;
@@ -1687,6 +1689,9 @@ const sim = {
 	usage: null,          // collectInputUsage() 缓存
 	tickTimer: null,      // 输入防抖
 	usageOpen: {},        // 「未活跃」展开状态，重渲染后保持
+	viewMode: 'off',      // 不活跃分支：off / ghost / hide
+	groupNodes: null,     // 映射节点 → 分组（随 mapping 一起缓存）
+	viewTouched: null,    // 被视图联动改过的分组集合
 	inputs: { floats: [], colors: [], strings: [], flags: [], selected: false, using_item: false, damage: 0, count: 0, time: 0 },
 };
 
@@ -1698,7 +1703,9 @@ function simInvalidate() {
 
 function simGetMapping() {
 	if (!sim.mapping || sim.dirty) {
-		sim.mapping = createExporter().buildMapping();
+		const exporter = createExporter();
+		sim.mapping = exporter.buildMapping();
+		sim.groupNodes = exporter.groupNodes || null;
 		sim.usage = null;
 		sim.dirty = false;
 	}
@@ -1736,6 +1743,106 @@ function simApplySlot(inputs, key, slot) {
 		default: inputs[key] = num(value);
 	}
 }
+
+/* ============================== 模拟视图联动 ============================== */
+/* 只改运行时材质/可见性：不碰纹理、UV、元素数据，也不写项目/撤销。 */
+
+function simGhostCube(cube, on) {
+	const mesh = cube && cube.mesh;
+	if (!mesh || !mesh.material) return;
+	if (on) {
+		if (mesh.__immGhost) return;
+		const original = mesh.material;
+		const tint = (material) => {
+			try {
+				const clone = material.clone();
+				clone.transparent = true;
+				clone.opacity = 0.28;
+				clone.depthWrite = false;
+				clone.needsUpdate = true;
+				return clone;
+			} catch (e) { return material; }
+		};
+		const cloned = Array.isArray(original) ? original.map(tint) : tint(original);
+		mesh.__immGhost = { original, cloned };
+		mesh.material = cloned;
+	} else if (mesh.__immGhost) {
+		const saved = mesh.__immGhost;
+		try { mesh.material = saved.original; } catch (e) { /* ignore */ }
+		const clones = Array.isArray(saved.cloned) ? saved.cloned : [saved.cloned];
+		for (const clone of clones) {
+			if (!clone || clone === saved.original) continue;
+			try { if (typeof clone.dispose === 'function') clone.dispose(); } catch (e) { /* ignore */ }
+		}
+		delete mesh.__immGhost;
+	}
+}
+
+function simHideGroup(group, on) {
+	const mesh = group && group.mesh;
+	if (!mesh) return;
+	if (on) {
+		if (mesh.__immHidden) return;
+		mesh.__immHidden = { visible: mesh.visible };
+		mesh.visible = false;
+	} else if (mesh.__immHidden) {
+		try { mesh.visible = mesh.__immHidden.visible; } catch (e) { /* ignore */ }
+		delete mesh.__immHidden;
+	}
+}
+
+function simRestoreGroup(group) {
+	for (const child of (group.children || [])) if (isCube(child)) simGhostCube(child, false);
+	simHideGroup(group, false);
+}
+
+function simViewEntries(items) {
+	const map = sim.groupNodes;
+	if (!map) return [];
+	const hits = new Map();
+	for (const item of items || []) {
+		const group = map.get(item && item.node);
+		if (!group) continue;
+		hits.set(group, !!hits.get(group) || !!(item && item.hit));
+	}
+	const entries = [];
+	for (const [group, active] of hits) entries.push({ group, active });
+	return entries;
+}
+
+function simRestoreView() {
+	if (!sim.viewTouched) return;
+	for (const group of sim.viewTouched) simRestoreGroup(group);
+	sim.viewTouched.clear();
+}
+
+/** 对 [{group, active}] 应用不活跃样式；mode = off / ghost / hide */
+function simApplyGroupVisual(entries, mode) {
+	if (!sim.viewTouched) sim.viewTouched = new Set();
+	if (!mode || mode === 'off') { simRestoreView(); return; }
+	const seen = new Set();
+	for (const entry of entries || []) {
+		const group = entry && entry.group;
+		if (!group) continue;
+		seen.add(group);
+		sim.viewTouched.add(group);
+		if (mode === 'ghost') {
+			simHideGroup(group, false);
+			for (const child of (group.children || [])) if (isCube(child)) simGhostCube(child, !entry.active);
+		} else if (mode === 'hide') {
+			for (const child of (group.children || [])) if (isCube(child)) simGhostCube(child, false);
+			simHideGroup(group, !entry.active);
+		}
+	}
+	// 已经不在映射里的分组要恢复，避免退出/改结构后残留幽灵
+	for (const group of Array.from(sim.viewTouched)) {
+		if (seen.has(group)) continue;
+		simRestoreGroup(group);
+		sim.viewTouched.delete(group);
+	}
+}
+
+function simApplyView(items) { simApplyGroupVisual(simViewEntries(items), sim.viewMode || 'off'); }
 
 function simSlotLabel(key, slot) {
 	if (key === 'floats' || key === 'colors') return key + '[' + slot.index + '] = ' + slot.value;
@@ -1900,7 +2007,12 @@ function buildSimPanel(show_panel) {
 	controlRow.appendChild(runBtn);
 	const refreshBtn = mk('button', { textContent: '⟳ 刷新', title: '结构/属性改动没生效时点这里重建映射' }, 'padding:4px 8px;');
 	controlRow.appendChild(refreshBtn);
+	const viewSel = mk('select', {}, 'font-size:10px;margin-left:auto');
+	[['off', '不活跃分支：不处理'], ['ghost', '不活跃分支：半透明'], ['hide', '不活跃分支：完全隐藏']].forEach(([value, text]) => viewSel.appendChild(mk('option', { value, textContent: text })));
+	viewSel.value = sim.viewMode || 'off';
+	viewSel.addEventListener('change', () => { sim.viewMode = viewSel.value; simTick(); });
 	controlRow.appendChild(statusEl);
+	controlRow.appendChild(viewSel);
 	const out = mk('div', {}, 'white-space:pre-wrap;font-family:monospace;font-size:11px;opacity:.85;flex:1 1 auto;overflow:auto;border-top:1px solid rgba(128,128,128,.3);padding-top:6px;margin-top:4px');
 	sim_ui.out = out;
 	sim_ui.runBtn = runBtn;
@@ -2090,7 +2202,11 @@ function simEvaluate(node, inputs) {
 function simTick() {
 	if (!sim_ui || !sim_ui.rows) return;
 	let mapping = null;
-	try { mapping = simGetMapping(); } catch (error) { if (sim_ui.out) sim_ui.out.textContent = '无法生成映射：' + ((error && error.message) || error); return; }
+	try { mapping = simGetMapping(); } catch (error) {
+		try { simRestoreView(); } catch (restoreError) { /* ignore */ }
+		if (sim_ui.out) sim_ui.out.textContent = '无法生成映射：' + ((error && error.message) || error);
+		return;
+	}
 	// 清空后再按启用的行/槽写入（禁用 = 不参与求值）
 	const inputs = sim.inputs;
 	inputs.floats.length = 0;
@@ -2114,6 +2230,7 @@ function simTick() {
 	}
 	const items = simEvaluate(mapping.model, inputs);
 	const hits = items.filter(item => item.hit && item.node.model).map(item => item.node.model);
+	try { simApplyView(items); } catch (error) { /* ignore */ }
 	// 每个槽单独求值一次，得到它自己的命中数（角标）
 	for (const key of Object.keys(sim_ui.rows)) {
 		const row = sim_ui.rows[key];
@@ -2448,14 +2565,14 @@ Plugin.register('item_model_definition_assembly', {
 			try { Blockbench.on(event, (data) => { simInvalidate(); scheduleBranchSync(data && data.object); }); } catch (e) { /* ignore */ }
 		}
 		for (const event of ['select_project', 'finished_loading_project', 'update_selection']) {
-			try { Blockbench.on(event, () => { simInvalidate(); attachGroupMenu(); }); } catch (e) { /* ignore */ }
+			try { Blockbench.on(event, () => { try { simRestoreView(); } catch (viewError) { /* ignore */ } simInvalidate(); attachGroupMenu(); }); } catch (e) { /* ignore */ }
 		}
 		for (const event of ['select_project', 'finished_loading_project']) {
 			try { Blockbench.on(event, ensurePackVersion); } catch (e) { /* ignore */ }
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, pivotContentPoints, rotateAroundQuat, readQuaternion, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, simApplyGroupVisual, simRestoreView, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
@@ -2465,6 +2582,7 @@ Plugin.register('item_model_definition_assembly', {
 	onunload() {
 		try { if (sim.timer) { clearInterval(sim.timer); sim.timer = null; } } catch (e) { /* ignore */ }
 		try { if (sim.tickTimer) { clearTimeout(sim.tickTimer); sim.tickTimer = null; } } catch (e) { /* ignore */ }
+		try { simRestoreView(); } catch (e) { /* ignore */ }
 		try { if (sim_panel && typeof sim_panel.delete === 'function') sim_panel.delete(); } catch (e) { /* ignore */ }
 		sim_panel = null;
 		sim_ui = null;

@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-24 · 当前版本 **0.41.0**（tag `v0.41.0`）
+> 生成时间：2026-10-24 · 当前版本 **0.42.0**（tag `v0.42.0`）
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 
 ---
@@ -101,6 +101,11 @@
 - 关联分组：容器（如 `bone7`）在上、直属子分支全列出；活跃子分支加粗标蓝（容器始终灰色、无 `[!]`）。
 - 活跃判定：`activeIndex = max{ k | k ≤ 当前值 }`（k 来自子分组名 `[k]` 前缀）。
 - 关联信息由 `refreshUsage()` **统一持有**（`simTick` 只调用它）：按每个槽自己的 `idx/val` 取下标与值，不要再从 DOM 顺序去猜目标节点。
+- **不活跃分支视图联动（0.42.0）**：控制条右侧「不活跃分支：不处理 / 半透明 / 完全隐藏」。
+  - 半透明：克隆**运行时材质**（`transparent` + `opacity 0.28` + `depthWrite false`），`mesh.__immGhost` 记原材质；**不碰纹理/UV/元素数据/项目/撤销**。
+  - 完全隐藏：`group.mesh.visible = false`（运行时），`mesh.__immHidden` 记原值；不改 `group.visibility`。
+  - 映射节点到分组靠 `Exporter.groupNodes`（旁路表，不参与导出）；`simGetMapping()` 里缓存为 `sim.groupNodes`。
+  - 恢复时机：模式改回不处理、映射失败、切换项目、卸载插件；映射里消失的分组也会在下次 tick 恢复，避免残留幽灵。
 
 ### 2.8 枢轴归位（Tools → 枢轴归位…）
 
@@ -117,6 +122,7 @@
 ## 3. 版本历史（近期，git tag）
 
 ```
+0.42.0  不活跃分支视图联动：不处理 / 半透明 / 完全隐藏（只动运行时材质）
 0.41.0  分支前缀自动清理；枢轴归位（嵌套旋转补偿，外观不变）
 0.40.0  槽级开关；未活跃改自绘折叠（原生 details 打不开）；映射/用量缓存 + 输入防抖 + ⟳ 刷新
 0.39.0  恢复 sim 状态对象（修“值没反应”）；面板：大类/槽双层折叠、每槽控制器+命中角标、运行状态
@@ -160,7 +166,8 @@
 3. **UV 缩放按 PNG 真实尺寸**：现在用 `texture.uv_width`，若与 PNG 实际尺寸不一致 UV 会偏。
 4. **模型 `groups` 字段未用于还原层级**：导入的是扁平方块。
 5. **「装配属性」常驻面板**：尚未实现（原计划 Panel + 随选择刷新）。
-6. **模拟结果驱动视图**：未实现“未命中分组隐藏 / 幽灵半透明”（注意：不得改动纹理与 UV，只能动运行时材质）。
+
+> 已实现：模拟结果驱动视图（0.42.0，`不处理 / 半透明 / 完全隐藏`）。
 
 ---
 
@@ -210,7 +217,7 @@
 $node = 'C:\Users\Rainbow_\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 & $node --check 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js'
 & $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_assembly.js'   # 离线冒烟
-& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴单测（75 项）
+& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图单测（87 项）
 Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js' `
   'C:\Users\Rainbow_\AppData\Roaming\Blockbench\plugins\item_model_definition_assembly.js' -Force
 ```
@@ -226,5 +233,5 @@ Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_d
 
 ### 6.1 新增的求值/版本钩子
 
-- `_test_sim.js` 通过 `globalThis.__IMM_TEST__ = {}`（require 之前设置）拿到 `api = { simEvaluate, simValue, simTick, packMcmetaData, packFormatLabel, packMcmetaFormat, PACK_VERSIONS, VERSION, buildSimPanel, getSimUi, getSimPanel, stripStrayBranchPrefixes, fixGroupPivot, pivotContentPoints, rotateAroundQuat, readQuaternion }`；生产环境不设这个全局就没有副作用。它还 mock 了极简 `document` / `Panel`，用来断言面板结构（输入不能在 `<details>` 里）。
+- `_test_sim.js` 通过 `globalThis.__IMM_TEST__ = {}`（require 之前设置）拿到 `api = { simEvaluate, simValue, simTick, packMcmetaData, packFormatLabel, packMcmetaFormat, PACK_VERSIONS, VERSION, buildSimPanel, getSimUi, getSimPanel, stripStrayBranchPrefixes, fixGroupPivot, simApplyGroupVisual, simRestoreView, pivotContentPoints, rotateAroundQuat, readQuaternion }`；生产环境不设这个全局就没有副作用。它还 mock 了极简 `document` / `Panel`，用来断言面板结构（输入不能在 `<details>` 里）。
 - `packMcmetaData(description, versionId)` 是 `pack.mcmeta` 的唯一生成入口；改版本表只改 `PACK_VERSIONS`。
