@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.31.1';
+const VERSION = '0.31.2';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1472,8 +1472,7 @@ function buildSimPanel(show_panel) {
 		head.appendChild(nameEl);
 		if (kind !== 'bool' || (key !== 'selected' && key !== 'using_item')) head.appendChild(cell('索引', idx, '64px'));
 		head.appendChild(cell('值', val, '92px'));
-		const usageEl = mk('span', {}, 'flex:1 1 100%;font-size:10px;opacity:.55;white-space:normal;line-height:1.3');
-		head.appendChild(usageEl);
+		const usageEl = mk('div', {}, 'font-size:10px;opacity:.6;white-space:pre-wrap;line-height:1.35;padding:2px 0 4px 0');
 		const body = mk('div', {}, 'display:flex;flex-wrap:nowrap;gap:6px;padding:6px 0 4px 0;align-items:flex-end;overflow:hidden');
 		const autoC = mk('input', { type: 'checkbox' }); const autoL = mk('label', { textContent: '自动' }, 'display:flex;gap:3px;align-items:center'); autoL.appendChild(autoC);
 		const period = mk('input', { type: 'number', value: '0.2', step: '0.1' }, 'width:100%;min-width:0');
@@ -1489,7 +1488,7 @@ function buildSimPanel(show_panel) {
 		body.appendChild(cell('规则', rule));
 		body.appendChild(cell('下限', minI));
 		body.appendChild(cell('上限', maxI));
-		box.appendChild(head); box.appendChild(body); root.appendChild(box);
+		box.appendChild(head); box.appendChild(body); box.appendChild(usageEl); root.appendChild(box);
 		row.el = { enable, idx, val, auto: autoC, period, step, rule, min: minI, max: maxI, usage: usageEl };
 		const read = () => { row.enabled = enable.checked; row.index = Number(idx.value) || 0; row.value = val.value; row.auto = autoC.checked; row.period = Math.max(50, (Number(period.value) || 0.2) * 1000); row.step = Number(step.value) || 0.5; row.rule = rule.value; row.min = Number(minI.value) || 0; row.max = Number(maxI.value) || 4; };
 		[enable, idx, val, autoC, period, step, rule, minI, maxI].forEach(el => el.addEventListener('change', () => { read(); simTick(); }));
@@ -1562,15 +1561,22 @@ function simTick() {
 			default: inputs[key] = num(v); lines.push(key + ' = ' + num(v));
 		}
 	}
+	const items = simEvaluate(mapping.model, inputs);
+	const hits = items.filter(item => item.hit && item.node.model).map(item => item.node.model);
 	const usageMap = collectInputUsage();
 	for (const key of Object.keys(sim_ui.rows)) {
 		const row = sim_ui.rows[key];
 		if (!row.el || !row.el.usage) continue;
 		const list = usageMap[key + '#' + row.index] || [];
-		row.el.usage.textContent = '关联分组：' + (list.length ? list.join('、') : '（无）');
+		const norm = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, '_');
+		const shown = list.map(name => {
+			const tokens = String(name).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+			const active = tokens.length > 0 && hits.some(h => tokens.every(t => String(h).toLowerCase().includes(t)));
+			return (active ? '✔ ' : '· ') + name;
+		});
+		row.el.usage.textContent = '关联分组：' + (shown.length ? '' : '（无）') + (shown.length ? '\n' + shown.join('\n') : '');
 	}
-	const items = simEvaluate(mapping.model, inputs);
-	const hits = items.filter(item => item.hit && item.node.model).map(item => item.node.model);
+
 	lines.push('');
 	lines.push('命中 ' + hits.length + ' / 分支 ' + items.length);
 	lines.push('');
