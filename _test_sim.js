@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.62.4', api.VERSION, '0.62.4');
+eq('版本是 0.62.5', api.VERSION, '0.62.5');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -626,7 +626,7 @@ eq('地面 display scale = 0.5', dispExporter.models[0].data.display.ground.scal
 console.log('\n[transformation 单位]');
 const unitExporter = api.createExporter();
 const unitTransformation = unitExporter.buildTransformation({ origin: [0, 0, 0], rotation: [0, 0, 0] }, [16, 0, 0], [0, 0, 0]);
-eq('translation 用像素/1-16 格，而不是除以 16', unitTransformation.translation, [16, 0, 0]);
+eq('translation 以格为单位（16px = 1）', unitTransformation.translation, [1, 0, 0]);
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));

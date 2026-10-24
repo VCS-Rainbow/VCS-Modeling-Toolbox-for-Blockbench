@@ -2,6 +2,10 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.62.5
+- 回退 0.62.4 的 translation 单位改动：`transformation.translation` 仍是**格**，它只影响偏移、不影响尺寸。
+- 模型偏小/引用模型偏大仍需从 display 或几何数据定位。
+
 ## 0.62.4
 - **修 transformation.translation 单位错误**：item model definition 的 translation 与模型 `display.translation` 同单位（1/16 格 = 像素），旧实现多除了 16，导致所有子件位移被缩小、整体又小又偏；引用模型没有这段位移，看起来就大一倍。
 - 单测新增 translation 单位断言（16px → 16，不是 1）。
