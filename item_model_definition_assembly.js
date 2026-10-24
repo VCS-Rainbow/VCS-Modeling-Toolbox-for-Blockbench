@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.32.5';
+const VERSION = '0.32.6';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1585,6 +1585,7 @@ function simTick() {
 	const items = simEvaluate(mapping.model, inputs);
 	const hits = items.filter(item => item.hit && item.node.model).map(item => item.node.model);
 	const usageMap = collectInputUsage();
+	console.log('[装配] sim usage keys=', Object.keys(usageMap), '| rows=', Object.keys(sim_ui.rows).length);
 	for (const key of Object.keys(sim_ui.rows)) {
 		const row = sim_ui.rows[key];
 		if (!row.el || !row.el.usage) continue;
@@ -1595,6 +1596,7 @@ function simTick() {
 			const active = tokens.length > 0 && hits.some(h => tokens.every(t => String(h).toLowerCase().includes(t)));
 			return (active ? '✔ ' : '· ') + name;
 		});
+		console.log('[装配] row', key + '#' + row.index, 'list=', list.length, 'usageEl=', !!row.el.usage);
 		row.el.usage.textContent = '关联分组：' + (shown.length ? '' : '（无）') + (shown.length ? '\n' + shown.join('\n') : '');
 	}
 
