@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.49.0', api.VERSION, '0.49.0');
+eq('版本是 0.50.0', api.VERSION, '0.50.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -185,7 +185,7 @@ eq('槽标题行含「槽 1 / 索引 / 值」', ['槽 1', '索引', '值'].every
 eq('槽默认折叠（标题行仍可见）', slot0.els.body.style.display, 'none');
 slot0.els.toggle.fire('click');
 eq('点箭头后槽展开', slot0.els.body.style.display, 'flex');
-eq('槽内有自动变化参数（周期/步长/规则/下限/上限）', ['自动变化', '周期', '步长', '规则', '下限', '上限'].every(t => containsText(slot0.els.body, t)), true);
+eq('槽内有自动参数（周期/步长/规则/下限/上限）', ['周期', '步长', '规则', '下限', '上限'].every(t => containsText(slot0.els.body, t)), true);
 eq('每个槽有独立开关（默认开）', !!slot0.els.enable && slot0.els.enable.checked, true);
 eq('大类标题行没有「自动变化」复选框', containsText(rowHeader, '自动变化'), false);
 eq('行内没有 <details> 包裹输入', insideDetails(slot0.els.val), false);
@@ -196,7 +196,7 @@ const gModel = (name, model) => new global.Group({ name, imm_type: 'model', imm_
 const rangeGroup = new global.Group({ name: 'range', imm_type: 'range_dispatch', imm_property: 'minecraft:custom_model_data', imm_index: 0 });
 rangeGroup.children.push(gModel('low', 'ns:item/low'), gModel('high', 'ns:item/high'));
 global.Outliner.root.push(rangeGroup);
-eq('编辑值会自动启用该大类', (() => { slot0.els.val.value = '1'; slot0.els.val.fire('input'); return floatsRow.enabled && floatsRow.els.enable.checked; })(), true);
+eq('未勾选自动也能用手动值参与求值', (() => { slot0.els.val.value = '1'; slot0.els.val.fire('input'); return floatsRow.enabled === false; })(), true);
 api.simTick();
 eq('值 1 → 命中 high', /✔ ns:item\/high/.test(simUi.out.textContent), true);
 eq('槽角标显示命中数', slot0.els.badge.textContent, '命中 1');
@@ -227,6 +227,8 @@ eq('关掉的槽不再显示命中角标', slot1.els.badge.textContent, '');
 /* ---------- 运行状态 ---------- */
 console.log('\n[运行状态]');
 eq('初始为「▶ 运行 / 已停止」', simUi.runBtn.textContent + '|' + simUi.status.textContent, '▶ 运行|已停止');
+floatsRow.els.enable.checked = true;
+floatsRow.els.enable.fire('change');
 simUi.runBtn.fire('click');
 eq('运行后按钮变「■ 停止」', simUi.runBtn.textContent, '■ 停止');
 eq('运行后状态可见', /运行中/.test(simUi.status.textContent), true);
@@ -413,6 +415,10 @@ eq('着色不改原纹理对象', tintCube.mesh.material.map === tintOriginal.ma
 simState2.inputs.colors.length = 0;
 api.simApplyTints();
 eq('清空 colors 后恢复原材质', tintCube.mesh.material === tintOriginal, true);
+const colorsRow = simUi.rows.colors;
+colorsRow.slots[0].els.presets.value = '0xFFFF0000, 0xFF00FF00';
+colorsRow.slots[0].els.presets.fire('change');
+eq('colors 预设色解析为数字', colorsRow.slots[0].presets.length === 2 && colorsRow.slots[0].presets[0] === 0xFFFF0000, true);
 const colorsUsage = api.collectInputUsage();
 eq('colors 关联分组包含 tintindex 0 所在分组', !!(colorsUsage['colors#0'] || []).find(entry => entry.parent === 'tintGroup'), true);
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRoot4);

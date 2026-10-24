@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.49.0';
+const VERSION = '0.50.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1866,6 +1866,7 @@ let sim_panel = null;
 let sim_ui = null;
 
 /* 模拟状态：0.30.1 重构面板时和 simEvaluate 一起被误删，0.39.0 恢复 */
+const SIM_COLOR_PRESETS = ['0xFFFFFFFF', '0xFFFF5555', '0xFF55FF55', '0xFF5555FF'];
 const sim = {
 	timer: null,
 	dir: 1,
@@ -2207,14 +2208,15 @@ function buildSimPanel(show_panel) {
 		enableWrap.appendChild(enable);
 		enableWrap.appendChild(mk('span', { textContent: label }, 'font-weight:600;font-size:11px'));
 		if (hint) enableWrap.appendChild(mk('span', { textContent: hint }, 'font-size:10px;opacity:.55'));
-		const stateEl = mk('span', { textContent: '未启用' }, 'font-size:10px;color:#e0a040');
+		const stateEl = mk('span', { textContent: '自动' }, 'font-size:10px;color:#7fd0ff');
+		stateEl.title = '勾选后参与自动变化（点上方「运行」生效）；不勾选仍会用手动值参与求值';
 		header.appendChild(rowToggle);
 		header.appendChild(enableWrap);
 		header.appendChild(stateEl);
 		const body = mk('div', {}, 'display:flex;flex-direction:column;gap:4px;padding:4px 0 0 16px');
 		const refreshRowState = () => {
-			box.style.opacity = row.enabled ? '1' : '.65';
-			stateEl.style.display = row.enabled ? 'none' : 'inline';
+			box.style.opacity = '1';
+			stateEl.style.display = row.enabled ? 'inline' : 'none';
 		};
 		const setRowOpen = (open) => {
 			row.open = open;
@@ -2224,7 +2226,7 @@ function buildSimPanel(show_panel) {
 		rowToggle.addEventListener('click', (event) => { if (event && event.preventDefault) event.preventDefault(); setRowOpen(!row.open); });
 		const slotCount = multi ? 3 : 1;
 		for (let slotIndex = 0; slotIndex < slotCount; slotIndex++) {
-			const slot = { index: slotIndex, enabled: true, value: kind === 'bool' ? 'false' : (kind === 'text' ? '' : '0'), period: 200, step: 0.5, rule: 'pingpong', min: 0, max: 4, dir: 1, lastTick: 0, open: false };
+			const slot = { index: slotIndex, enabled: true, value: kind === 'bool' ? 'false' : (kind === 'text' ? '' : '0'), period: (key === 'colors' ? 1000 : 200), step: 0.5, rule: 'pingpong', min: 0, max: 4, dir: 1, lastTick: 0, open: false, presetIndex: 0, presets: key === 'colors' ? SIM_COLOR_PRESETS.map(v => Number(v)) : [] };
 			const slotBox = mk('div', {}, 'border:1px solid rgba(128,128,128,.18);border-radius:3px;padding:3px 5px;display:flex;flex-direction:column;gap:3px');
 			const slotHead = mk('div', {}, 'display:flex;align-items:center;gap:6px;flex-wrap:wrap');
 			const slotToggle = mk('button', { textContent: '▸', title: '展开自动变化 / 关联分组' }, 'border:none;background:transparent;cursor:pointer;padding:0;font-size:11px;line-height:1;width:12px;opacity:.7');
@@ -2243,13 +2245,13 @@ function buildSimPanel(show_panel) {
 			slotHead.appendChild(cell('值', val, '78px'));
 			slotHead.appendChild(badge);
 			const slotBody = mk('div', {}, 'display:none;flex-direction:column;gap:4px;padding:3px 0 2px 16px');
-			const period = mk('input', { type: 'number', value: '0.2', step: '0.1' }, 'width:100%;min-width:0');
+			const period = mk('input', { type: 'number', value: (key === 'colors' ? '1' : '0.2'), step: '0.1' }, 'width:100%;min-width:0');
 			const step = mk('input', { type: 'number', value: '0.5', step: '0.1' }, 'width:100%;min-width:0');
 			const rule = mk('select', {}, 'width:100%;min-width:0');
 			[['pingpong', '往复'], ['wrap', '循环']].forEach(([v, t]) => rule.appendChild(mk('option', { value: v, textContent: t })));
 			const minI = mk('input', { type: 'number', value: '0' }, 'width:100%;min-width:0');
 			const maxI = mk('input', { type: 'number', value: '4' }, 'width:100%;min-width:0');
-			const autoTitle = mk('span', { textContent: '自动变化（点上方「运行」生效）' }, 'font-size:10px;opacity:.6;padding-bottom:2px;white-space:nowrap');
+			const presets = mk('input', { type: 'text', value: SIM_COLOR_PRESETS.join(', ') }, 'width:100%;min-width:0');
 			const usageEl = mk('div', {}, 'font-size:10px;line-height:1.45;white-space:pre-wrap');
 			usageEl.addEventListener('click', (event) => {
 				const target = event && event.target;
@@ -2264,9 +2266,13 @@ function buildSimPanel(show_panel) {
 				body.style.display = open ? 'block' : 'none';
 				btn.textContent = (open ? '▾ ' : '▸ ') + '未活跃 ' + btn.getAttribute('data-count') + ' 项';
 			});
-			if (kind === 'number') {
+			if (key === 'colors') {
+				const colorRow = mk('div', {}, 'display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap');
+				colorRow.appendChild(cell('周期（秒）', period, '62px'));
+				colorRow.appendChild(cell('预设颜色（逗号分隔，运行时轮换）', presets));
+				slotBody.appendChild(colorRow);
+			} else if (kind === 'number') {
 				const autoRow = mk('div', {}, 'display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap');
-				autoRow.appendChild(autoTitle);
 				autoRow.appendChild(cell('周期（秒）', period, '62px'));
 				autoRow.appendChild(cell('步长', step, '56px'));
 				autoRow.appendChild(cell('规则', rule, '72px'));
@@ -2285,6 +2291,10 @@ function buildSimPanel(show_panel) {
 				slot.index = Number(idx.value) || 0;
 				slot.value = val.value;
 				slot.period = Math.max(50, (Number(period.value) || 0.2) * 1000);
+				if (slot.key === 'colors' || key === 'colors') {
+					const list = String(presets.value || '').split(/[,\s;]+/).map(t => t.trim()).filter(Boolean).map(t => Number(t)).filter(v => isFinite(v));
+					slot.presets = list.length ? list : [Number(val.value) || 0];
+				}
 				slot.step = Number(step.value) || 0.5;
 				slot.rule = rule.value;
 				slot.min = Number(minI.value) || 0;
@@ -2299,16 +2309,16 @@ function buildSimPanel(show_panel) {
 			slotToggle.addEventListener('click', (event) => { if (event && event.preventDefault) event.preventDefault(); setSlotOpen(!slot.open); });
 			// 改值（或索引）说明就是想用这个槽：自动勾上槽和大类，避免“改了没反应”
 			const ensureEnabled = () => {
-				let changed = false;
-				if (!slotEnable.checked) { slotEnable.checked = true; changed = true; }
-				if (!row.enabled) { row.enabled = true; enable.checked = true; refreshRowState(); changed = true; }
-				if (changed) { readSlot(); refreshSlotState(); }
+				if (slotEnable.checked) return;
+				slotEnable.checked = true;
+				readSlot();
+				refreshSlotState();
 			};
 			val.addEventListener('input', () => { ensureEnabled(); readSlot(); simScheduleTick(); });
 			val.addEventListener('change', () => { ensureEnabled(); readSlot(); simScheduleTick(); });
 			idx.addEventListener('input', () => { ensureEnabled(); readSlot(); simScheduleTick(); });
-			[slotEnable, period, step, rule, minI, maxI].forEach(el => el.addEventListener('change', () => { readSlot(); refreshSlotState(); simUpdateRunUi(); simTick(); }));
-			slot.els = { toggle: slotToggle, body: slotBody, enable: slotEnable, idx, val, badge, usage: usageEl, period, step, rule, min: minI, max: maxI };
+			[slotEnable, period, step, rule, minI, maxI, presets].forEach(el => el.addEventListener('change', () => { readSlot(); refreshSlotState(); simUpdateRunUi(); simTick(); }));
+			slot.els = { toggle: slotToggle, body: slotBody, enable: slotEnable, idx, val, badge, usage: usageEl, period, step, rule, min: minI, max: maxI, presets };
 			refreshSlotState();
 			setSlotOpen(false);
 			row.slots.push(slot);
@@ -2317,7 +2327,7 @@ function buildSimPanel(show_panel) {
 		box.appendChild(body);
 		root.appendChild(box);
 		row.els = { enable, state: stateEl, toggle: rowToggle, body };
-		enable.addEventListener('change', () => { row.enabled = enable.checked; refreshRowState(); simTick(); });
+		enable.addEventListener('change', () => { row.enabled = enable.checked; refreshRowState(); simUpdateRunUi(); simTick(); });
 		refreshRowState();
 		setRowOpen(true);
 		sim_ui.rows[key] = row;
@@ -2557,7 +2567,7 @@ function simTick() {
 	const lines = [];
 	for (const key of Object.keys(sim_ui.rows)) {
 		const row = sim_ui.rows[key];
-		if (!row.enabled) continue;
+		// 行复选框只管“自动变化”，手动值始终参与求值
 		for (const slot of row.slots) {
 			if (!slot.enabled) continue;
 			simApplySlot(inputs, key, slot);
@@ -2573,7 +2583,12 @@ function simTick() {
 	for (const key of Object.keys(sim_ui.rows)) {
 		const row = sim_ui.rows[key];
 		for (const slot of row.slots) {
-			if (!row.enabled || !slot.enabled) { if (slot.els) slot.els.badge.textContent = ''; continue; }
+			if (!slot.enabled) { if (slot.els) slot.els.badge.textContent = ''; continue; }
+			if (key === 'colors') {
+				const groups = simGetUsage()['colors#' + slot.index] || [];
+				if (slot.els) slot.els.badge.textContent = groups.length ? (groups.length + ' 组') : '';
+				continue;
+			}
 			const solo = simBlankInputs();
 			simApplySlot(solo, key, slot);
 			const count = simEvaluate(mapping.model, solo).filter(item => item.hit && item.node.model).length;
@@ -2592,7 +2607,7 @@ function simAutoSlots() {
 	if (!sim_ui || !sim_ui.rows) return list;
 	for (const key of Object.keys(sim_ui.rows)) {
 		const row = sim_ui.rows[key];
-		// 大类复选框 + 槽复选框都是开关；只有数值类能自动变化（文本/布尔没有“下一个值”）
+		// 行复选框 = 自动变化开关；槽复选框 = 是否参与（求值与自动都看它）
 		if (!row.enabled || row.kind !== 'number') continue;
 		for (const slot of row.slots) if (slot.enabled) list.push({ key, slot });
 	}
@@ -2616,7 +2631,7 @@ function toggleSim() {
 	if (sim.timer) { clearInterval(sim.timer); sim.timer = null; simUpdateRunUi(); simTick(); return; }
 	const autos = simAutoSlots();
 	if (!autos.length) {
-		Blockbench.showQuickMessage('没有可自动变化的数值槽：先勾选上方某个数值大类（如 cmdata.floats），再点运行', 3500);
+		Blockbench.showQuickMessage('没有勾选要自动变化的大类：在数值输入（如 cmdata.floats / colors）前面打勾，再点运行', 3500);
 		simUpdateRunUi();
 		return;
 	}
@@ -2632,10 +2647,16 @@ function toggleSim() {
 				if (!slot.lastTick) slot.lastTick = now;
 				if (now - slot.lastTick < slot.period) continue;
 				slot.lastTick = now;
-				let value = num(slot.value) + slot.step * slot.dir;
-				if (slot.rule === 'wrap') { if (value > slot.max) value = slot.min; }
-				else { if (value > slot.max) { value = slot.max; slot.dir = -1; } if (value < slot.min) { value = slot.min; slot.dir = 1; } }
-				slot.value = String(value);
+				if (item.key === 'colors') {
+					const list = (slot.presets && slot.presets.length) ? slot.presets : [Number(slot.value) || 0];
+					slot.presetIndex = ((slot.presetIndex || 0) + 1) % list.length;
+					slot.value = String(list[slot.presetIndex]);
+				} else {
+					let value = num(slot.value) + slot.step * slot.dir;
+					if (slot.rule === 'wrap') { if (value > slot.max) value = slot.min; }
+					else { if (value > slot.max) { value = slot.max; slot.dir = -1; } if (value < slot.min) { value = slot.min; slot.dir = 1; } }
+					slot.value = String(value);
+				}
 				if (slot.els && slot.els.val) slot.els.val.value = slot.value;
 			}
 			simTick();

@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-24 · 当前版本 **0.49.0**（tag `v0.49.0`）
+> 生成时间：2026-10-24 · 当前版本 **0.50.0**（tag `v0.50.0`）
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 
 ---
@@ -98,6 +98,7 @@
 - 运行状态：`simUpdateRunUi()` 维护按钮文案（▶ 运行 / ■ 停止）+ 高亮 + 右侧「已停止 / 运行中 · N 个自动槽」；没有数值槽时只弹提示、不进入运行态。
 - 改值即时重算（`input` 事件，**40ms 防抖** `simScheduleTick`）。
 - **性能**：`sim.mapping` 缓存 `buildMapping()`、`sim.usage` 缓存 `collectInputUsage()`；结构/属性变化时 `simInvalidate()` 置脏（组事件、分组属性确认、分支改名都会调）。`createExporter().buildMapping()` 很重，**绝不能在每次输入时重建**。另有「⟳ 刷新」按钮兜底。
+- **行首复选框 = 自动变化开关（0.50.0）**：`row.enabled` 只影响 `simAutoSlots()`；`simTick` 里所有 `slot.enabled` 的槽都参与求值（手动值不再被行复选框挡掉）。`colors` 自动用 `slot.presets` 轮换（`SIM_COLOR_PRESETS`），角标显示关联组数。
 - **colors 预览着色（0.48.0）**：`simApplyTints()` 在每个 tick 后遍历分组内方块，取第一个 `face.tint >= 0` 的 tintindex 作为 `colors[index]` 下标，用 `MeshBasicMaterial(map, color)` 替换运行时材质；`simRestoreTints()` 在清空/关闭/切项目/卸载时恢复。幽灵态优先，不叠加。
 - 关联分组：容器（如 `bone7`）在上、直属子分支全列出；活跃子分支加粗标蓝（容器始终灰色、无 `[!]`）。
 - 活跃判定：`activeIndex = max{ k | k ≤ 当前值 }`（k 来自子分组名 `[k]` 前缀）。
@@ -139,6 +140,7 @@
 ## 3. 版本历史（近期，git tag）
 
 ```
+0.50.0  行首复选框=自动开关（不勾也参与求值）；colors 预设色轮换 + 角标改关联组数
 0.49.0  colors 关联分组（按 tintindex / tints index 反查分组）
 0.48.0  colors 驱动预览着色（tintindex 方块运行时着色）
 0.47.0  Locator 复调用标签（导出替换为目标分组节点）+ 右键/工具菜单
@@ -241,7 +243,7 @@
 $node = 'C:\Users\Rainbow_\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 & $node --check 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js'
 & $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_assembly.js'   # 离线冒烟
-& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图/复调用/着色单测（103 项）
+& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图/复调用/着色单测（104 项）
 Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js' `
   'C:\Users\Rainbow_\AppData\Roaming\Blockbench\plugins\item_model_definition_assembly.js' -Force
 ```
