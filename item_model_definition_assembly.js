@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.54.0';
+const VERSION = '0.55.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1582,6 +1582,52 @@ function callSelectedGroup() {
 	Blockbench.showQuickMessage('已创建 ' + created + ' 个复调用标签', 3000);
 }
 
+/** 编辑一个复调用 Locator 的目标（分组 UUID 或模型 id） */
+function editCallTag(locator) {
+	if (!locator) return;
+	const current = String(locator.imm_call_target || '').trim();
+	const groups = [];
+	const walk = (nodes) => {
+		for (const node of (nodes || [])) {
+			if (!isGroup(node)) continue;
+			groups.push(node);
+			walk(node.children);
+		}
+	};
+	walk((typeof Outliner !== 'undefined' && Outliner) ? Outliner.root : []);
+	const options = { '': '（未设置）' };
+	let matchedGroup = '';
+	for (const group of groups) {
+		options[group.uuid] = labelOf(group);
+		if (group.uuid === current) matchedGroup = group.uuid;
+	}
+	new Dialog({
+		id: 'imm_edit_call',
+		title: '编辑复调用标签 — ' + (locator.name || 'Locator'),
+		width: 560,
+		form: {
+			target: { label: '目标分组', type: 'select', value: matchedGroup, options, description: '导出时这个 Locator 会被替换成目标分组的映射节点（保留其 transformation）。' },
+			model: { label: '或模型 id（优先）', type: 'text', value: (matchedGroup || !current) ? '' : current, description: '例如 namespace:item/foo；填写后忽略上面的分组选择。' },
+		},
+		onConfirm(result) {
+			try {
+				const model = String(result.model || '').trim();
+				const target = model || String(result.target || '').trim();
+				try { Undo.initEdit({ elements: [locator] }); } catch (e) { /* ignore */ }
+				locator.imm_call_target = target;
+				try { Undo.finishEdit('编辑复调用标签'); } catch (e) { /* ignore */ }
+				simInvalidate();
+				try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+				try { Project.saved = false; } catch (e) { /* ignore */ }
+				Blockbench.showQuickMessage(target ? ('复调用标签已指向 ' + target) : '已清空复调用目标', 2500);
+			} catch (error) {
+				console.error(error);
+				Blockbench.showMessageBox({ title: '修改失败', message: String((error && error.message) || error), icon: 'error' });
+			}
+		},
+	}).show();
+}
+
 function createModelFromGroup(group) {
 	if (!group) return;
 	const root = String(projectValue('imm_pack_path', '') || '').trim();
@@ -2904,15 +2950,29 @@ function registerProperties() {
 }
 
 let menuAttached = false;
+let locatorMenuAttached = false;
 function attachGroupMenu() {
-	if (menuAttached || !actions.props) return;
+	const addSeparator = (menu) => {
+		try { if (typeof MenuSeparator !== 'undefined') menu.addAction(new MenuSeparator('imm_menu_sep')); } catch (e) { /* ignore */ }
+	};
 	try {
-		if (typeof Group !== 'undefined' && Group.prototype && Group.prototype.menu && typeof Group.prototype.menu.addAction === 'function') {
-			Group.prototype.menu.addAction(actions.props);
-			if (actions.createModel) { try { Group.prototype.menu.addAction(actions.createModel); } catch (e) { /* ignore */ } }
-			if (actions.call) { try { Group.prototype.menu.addAction(actions.call); } catch (e) { /* ignore */ } }
+		if (!menuAttached && actions.props && typeof Group !== 'undefined' && Group.prototype && Group.prototype.menu && typeof Group.prototype.menu.addAction === 'function') {
+			const menu = Group.prototype.menu;
+			addSeparator(menu);
+			if (actions.createModel) menu.addAction(actions.createModel);
+			if (actions.call) menu.addAction(actions.call);
+			menu.addAction(actions.props);
 			menuAttached = true;
 			console.log('[装配] 已加入分组右键菜单');
+		}
+	} catch (error) { /* ignore */ }
+	try {
+		if (!locatorMenuAttached && actions.editCall && typeof Locator !== 'undefined' && Locator.prototype && Locator.prototype.menu && typeof Locator.prototype.menu.addAction === 'function') {
+			const menu = Locator.prototype.menu;
+			addSeparator(menu);
+			menu.addAction(actions.editCall);
+			locatorMenuAttached = true;
+			console.log('[装配] 已加入复调用标签右键菜单');
 		}
 	} catch (error) { /* ignore */ }
 }
@@ -3035,6 +3095,7 @@ Plugin.register('item_model_definition_assembly', {
 		actions.viewDiag = new Action('imm_view_diag', { name: '诊断：模拟视图联动', description: '打印匹配到的分组/方块/材质数量', icon: 'bug_report', category: 'tools', condition, click: diagnoseSimView });
 		actions.pivot = new Action('imm_fix_pivot', { name: '枢轴归位（对齐几何中心）…', description: '把分组 origin 移到几何中心，补偿方块坐标，外观不变', icon: 'center_focus_strong', category: 'tools', condition, click: openPivotFix });
 		actions.props = new Action('imm_group_props', { name: '编辑分组映射属性…', description: '映射类型 / 引用模型 / property 等', icon: 'tune', category: 'tools', condition, click: editGroupProps });
+		actions.editCall = new Action('imm_edit_call', { name: '编辑复调用标签…', description: '修改选中的复调用 Locator 指向的分组或模型 id', icon: 'edit', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && Locator.selected && Locator.selected.length > 0), click: () => { const locator = (Locator.selected && Locator.selected[0]) || null; if (!locator) { Blockbench.showMessageBox({ title: '请先选中复调用标签', message: '在 outliner 里选中一个 Locator（复调用标签）。', icon: 'info' }); return; } editCallTag(locator); } });
 
 		addMenu(actions.zip, 'file.export');
 		addMenu(actions.merge, 'file.export');
@@ -3045,6 +3106,7 @@ Plugin.register('item_model_definition_assembly', {
 		addMenu(actions.call, 'tools');
 		addMenu(actions.import, 'tools');
 		addMenu(actions.props, 'tools');
+		addMenu(actions.editCall, 'tools');
 		addMenu(actions.pivot, 'tools');
 		addMenu(actions.viewDiag, 'tools');
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
