@@ -2,6 +2,9 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.63.1
+- **修动画模式下根节点 gizmo 无法移动**：框选/选择守卫在 `Modes.animate`（动画/姿态模式）下直接跳过；当首个选中项是分组时也不介入，避免在拖动 gizmo 时反复重算选择。
+
 ## 0.63.0
 - **允许动画模式**：格式 `animation_mode: true`；项目设置新增「时间轴 FPS」（`imm_anim_fps`，默认 20）与「时间轴 custom_model_data index」（`imm_anim_index`，默认 0）。
 - **新分组类型 `range_dispatch_timeline`（逐帧时间轴）**：只做导出前数据整理，不参与动画自动包裹（避免循环）。
