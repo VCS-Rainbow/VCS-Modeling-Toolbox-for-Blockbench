@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.22.2';
+const VERSION = '0.22.3';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1360,6 +1360,10 @@ function importModelReference(group) {
 			if (texture) cube.faces[dir].texture = texture.uuid;
 			if (src.rotation) cube.faces[dir].rotation = Number(src.rotation) || 0;
 			if (src.cullface) cube.faces[dir].cullface = String(src.cullface);
+		}
+		if (created.length === 0) {
+			const keys = Object.keys(cube.faces || {});
+			console.log("[装配] 首个方块", JSON.stringify({ from: cube.from, to: cube.to, faceKeys: keys, enabled: keys.map(k => cube.faces[k].enabled), texture: keys.map(k => cube.faces[k].texture), uv: keys.map(k => cube.faces[k].uv) }));
 		}
 		created.push(cube);
 	});
