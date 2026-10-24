@@ -456,6 +456,23 @@ class AssemblyExporter {
 		return null;
 	}
 
+	/** 多轴旋转的方块：原生元素只能单轴，必须拆成独立子项用 transformation 表达（与旧插件一致） */
+	needsOwnNode(cube) {
+		const rotation = (cube && cube.rotation) ? cube.rotation : [0, 0, 0];
+		const active = [0, 1, 2].filter(axis => Math.abs(Number(rotation[axis]) || 0) > 1e-6);
+		return active.length > 1;
+	}
+
+	/** 单个方块 → 一个带 transformation 的 minecraft:model 子项（枢轴 = 方块 origin） */
+	buildCubeModelNode(cube, hint) {
+		const reference = this.addModel([cube], hint + '_' + sanitizePath(labelOf(cube), 'cube'));
+		if (!reference) return null;
+		const node = { type: 'minecraft:model', model: reference };
+		const transformation = this.buildTransformation(cube);
+		if (transformation) node.transformation = transformation;
+		return node;
+	}
+
 	/** 本层几何：优先「引用模型」，否则根据自身方块生成模型文件 */
 	ownModelRef(group, cubes, hint) {
 		const reference = group.imm_model;
@@ -470,11 +487,24 @@ class AssemblyExporter {
 		const cubes = children.filter(child => isCube(child));
 		const type = this.normalizeType(group.imm_type);
 
+		// 多轴旋转的方块拆成独立子项，其余合并在本分组的一个模型文件里
+		const inline_cubes = [];
+		const separate_cubes = [];
+		for (const cube of cubes) {
+			if (this.needsOwnNode(cube)) separate_cubes.push(cube);
+			else inline_cubes.push(cube);
+		}
+
 		const node = { type: 'minecraft:' + type };
 		const transformation = this.buildTransformation(group);
 		if (transformation) node.transformation = transformation;
 
-		const own_ref = this.ownModelRef(group, cubes, hint);
+		const own_ref = this.ownModelRef(group, inline_cubes, hint);
+		const extra_models = [];
+		for (const cube of separate_cubes) {
+			const extra = this.buildCubeModelNode(cube, hint);
+			if (extra) extra_models.push(extra);
+		}
 
 		if (type === 'empty') return node;
 
@@ -503,12 +533,14 @@ class AssemblyExporter {
 				node.entries.push({ threshold: isFinite(threshold) ? clean(threshold) : 0, model: child_node });
 			}
 			if (own_ref) node.fallback = { type: 'minecraft:model', model: own_ref };
+			else if (extra_models.length) node.fallback = extra_models[0];
 			if (!node.entries.length && !node.fallback) return null;
 			return node;
 		}
 
 		const models = [];
 		if (own_ref) models.push({ type: 'minecraft:model', model: own_ref });
+		for (const extra of extra_models) models.push(extra);
 		for (const child of child_groups) {
 			const child_node = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'));
 			if (child_node) models.push(child_node);
@@ -1063,7 +1095,7 @@ Plugin.register('item_model_definition_assembly', {
 	author: 'Blockbench',
 	icon: 'account_tree',
 	description: '新增“物品模型映射装配”模型格式：每个分组对应一个 composite/range_dispatch/condition/model 子项，分组变换写入 transformation，可引用 Java 版模型作为子项，并导出完整资源包。',
-	version: '0.6.1',
+	version: '0.7.0',
 	variant: 'both',
 	min_version: '5.0.0',
 	tags: ['Minecraft: Java Edition'],
