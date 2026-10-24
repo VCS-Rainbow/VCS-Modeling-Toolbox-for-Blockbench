@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.53.0';
+const VERSION = '0.53.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1778,25 +1778,33 @@ function importModelReference(group) {
 		}
 		const created = [];
 		const textureMap = {};
-		// 模型文件里的 groups → Blockbench 分组（内联模型）
+		// 模型文件里的 groups → Blockbench 分组（内联模型）；children 可以是元素下标或子分组对象
 		const importedGroups = [];
 		const elementGroup = {};
-		for (let gi = 0; gi < ((resolved.groups || []).length); gi++) {
-			const src = resolved.groups[gi];
-			if (!src || !Array.isArray(src.children) || !src.children.length) continue;
-			try {
+		const buildImportGroups = (list, parentNode) => {
+			for (const src of (list || [])) {
+				if (!src || typeof src !== 'object') continue;
 				const origin = Array.isArray(src.origin)
 					? src.origin.map((v, a) => (Number(v) || 0) + (Number(import_base[a]) || 0))
 					: [Number(import_base[0]) || 0, Number(import_base[1]) || 0, Number(import_base[2]) || 0];
 				const rotation = Array.isArray(src.rotation) ? src.rotation.map(v => Number(v) || 0) : [0, 0, 0];
-				const groupNode = new Group({ name: String(src.name || ('group_' + (gi + 1))), origin, rotation }).addTo(import_holder);
-				try { if (typeof groupNode.init === 'function') groupNode.init(); } catch (e) { /* ignore */ }
-				try { if (typeof groupNode.createUniqueName === 'function') groupNode.createUniqueName(); } catch (e) { /* ignore */ }
-				groupNode.imm_type = 'inline';
-				importedGroups.push(groupNode);
-				for (const childIndex of src.children) elementGroup[Number(childIndex)] = groupNode;
-			} catch (error) { console.warn('[装配] 创建导入分组失败', error); }
-		}
+				let node = null;
+				try {
+					node = new Group({ name: String(src.name || 'group'), origin, rotation }).addTo(parentNode);
+					try { if (typeof node.init === 'function') node.init(); } catch (e) { /* ignore */ }
+					try { if (typeof node.createUniqueName === 'function') node.createUniqueName(); } catch (e) { /* ignore */ }
+					node.imm_type = 'inline';
+					importedGroups.push(node);
+				} catch (error) { console.warn('[装配] 创建导入分组失败', error); continue; }
+				const nested = [];
+				for (const child of (src.children || [])) {
+					if (typeof child === 'number') elementGroup[child] = node;
+					else if (child && typeof child === 'object') nested.push(child);
+				}
+				if (nested.length) buildImportGroups(nested, node);
+			}
+		};
+		buildImportGroups(resolved.groups || [], import_holder);
 		console.log('[装配] 导入分组', importedGroups.length, '个（inline）');
 		for (const key of Object.keys(resolved.textures || {})) {
 			const value = String(resolved.textures[key] || '');
