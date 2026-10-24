@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.12.3';
+const VERSION = '0.13.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -827,9 +827,15 @@ function syncBranchLabels(group) {
 			const manual = Number(child.imm_threshold) || 0;
 			label = String(formatted !== null ? formatted : (manual !== 0 ? manual : index));
 		}
-		const base = String(child.name || '').replace(/^\[[^\]]*\]\s*/, '');
+		const base = String(child.name || '').replace(/^\[[^\]]*\]\s*/, '').replace(/^\u26a0\s*/, '');
 				// 没有对应标签（例如类型从 range_dispatch 改成 condition）→ 只剥掉旧前缀
-				if (label === null) { if (base !== child.name) { child.name = base; changed++; } return; }
+				if (label === null) {
+						// condition 只输出前两个分支，其余标上 ⚠ 提醒（导出时会被忽略）
+						const ignored = type === 'condition' && index >= 2;
+						const target = (ignored ? '\u26a0 ' : '') + base;
+						if (target !== child.name) { child.name = target; changed++; }
+						return;
+					}
 		const prefix = '[' + label + '] ';
 		const next = prefix + base;
 		if (next !== child.name) { child.name = next; changed++; }
