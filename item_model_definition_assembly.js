@@ -18,11 +18,11 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.17.0';
+const VERSION = '0.18.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
-const MAPPING_TYPES = ['composite', 'model', 'range_dispatch', 'condition', 'empty'];
+const MAPPING_TYPES = ['composite', 'model', 'range_dispatch', 'condition', 'select', 'empty'];
 const MANIFEST = '.imm-assembly-manifest.json';
 
 const BLOCK_DISPLAY = {
@@ -105,6 +105,10 @@ function formatNode(node, depth) {
 		fields.push('"entries": [\n' + node.entries.map(e =>
 			entryPad + '{"threshold": ' + JSON.stringify(e.threshold) + ', "model": ' + formatNode(e.model, depth + 2) + '}').join(',\n')
 			+ '\n' + padIn + ']');
+	}
+	if (Array.isArray(node.cases)) {
+		const casePad = pad + '\t\t';
+		fields.push('"cases": [\n' + node.cases.map(c => casePad + '{"when": ' + inline(c.when) + ', "model": ' + formatNode(c.model, depth + 2) + '}').join(',\n') + '\n' + padIn + ']');
 	}
 	if (Array.isArray(node.models)) {
 		if (!node.models.length) fields.push('"models": []');
@@ -447,6 +451,22 @@ class Exporter {
 	}
 
 
+	/** select 的 when：支持 JSON 数组，或逗号分隔（数字/布尔/字符串） */
+	parseWhen(value) {
+		const text = String(value == null ? '' : value).trim();
+		if (!text) return [];
+		if (text.charAt(0) === '[') {
+			try { const parsed = JSON.parse(text); if (Array.isArray(parsed)) return parsed; } catch (e) { /* fallthrough */ }
+		}
+		return text.split(',').map(part => {
+			const t = part.trim();
+			if (/^-?\d+(\.\d+)?$/.test(t)) return Number(t);
+			if (t === 'true') return true;
+			if (t === 'false') return false;
+			return t;
+		});
+	}
+
 	parseTints(value) {
 		if (!value) return null;
 
@@ -500,6 +520,23 @@ class Exporter {
 			node.model = ref;
 			const tints = this.buildTints(group);
 			if (tints) node.tints = tints;
+			return node;
+		}
+
+		if (type === 'select') {
+			const prop = String(group.imm_property || 'custom_model_data').replace(/^minecraft:/, '').trim() || 'custom_model_data';
+			node.property = 'minecraft:' + prop;
+			if (prop === 'custom_model_data') node.index = clean(num(group.imm_index));
+			else if (prop === 'component') node.component = String(group.imm_component || '');
+			node.cases = [];
+			for (const child of childGroups) {
+				const childNode = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'), own_shift);
+				if (!childNode) continue;
+				node.cases.push({ when: this.parseWhen(child.imm_case_when), model: childNode });
+			}
+			const fallback = built ? { type: 'minecraft:model', model: built.reference } : (extras[0] || null);
+			if (fallback) node.fallback = fallback;
+			if (!node.cases.length && !node.fallback) return null;
 			return node;
 		}
 
@@ -833,6 +870,9 @@ function syncBranchLabels(group) {
 		let label = null;
 		if (type === 'condition') {
 			label = index === 0 ? 'on_true' : (index === 1 ? 'on_false' : null);
+		} else if (type === 'select') {
+			const when = String(child.imm_case_when || '').trim();
+			label = when ? when.replace(/^\[|\]$/g, '').split(',')[0].trim() : ('case' + index);
 		} else {
 			try { if (!exporter) exporter = createExporter(); } catch (e) { exporter = null; }
 			const formatted = exporter ? exporter.evalThreshold(group.imm_threshold_format, index) : null;
@@ -886,10 +926,10 @@ function editGroupProps() {
 		form: {
 			imm_type: {
 				label: '映射类型（type）', description: '语法：{"type": "minecraft:<类型>"}\n作用：决定本节点是哪一种物品模型映射。\n可选：composite / model / range_dispatch / condition / empty', type: 'select', value: String(group.imm_type || 'composite'),
-				options: { composite: 'composite', model: 'model', range_dispatch: 'range_dispatch', condition: 'condition', empty: 'empty' },
+				options: { composite: 'composite', model: 'model', range_dispatch: 'range_dispatch', condition: 'condition', select: 'select', empty: 'empty' },
 			},
 			imm_model: { label: '引用模型（model）', description: '语法：{"type": "minecraft:model", "model": "<命名空间>:item/<路径>"}\n作用：本节点直接引用一个 Java 版模型；\n留空则由本层方块生成模型文件。', type: 'text', value: String(group.imm_model || ''), condition: (r) => r.imm_type !== 'empty' },
-			imm_property: { label: 'property（谓词 / 属性）', type: 'select', value: String(group.imm_property || ''), options: { '': '（未设置）', selected: 'selected', broken: 'broken', damaged: 'damaged', carried: 'carried', extended_view: 'extended_view', using_item: 'using_item', view_entity: 'view_entity', 'fishing_rod/cast': 'fishing_rod/cast', 'bundle/has_selected_item': 'bundle/has_selected_item', custom_model_data: 'custom_model_data', has_component: 'has_component', component: 'component', keybind_down: 'keybind_down', compass: 'compass（range）', count: 'count（range）', damage: 'damage（range）', time: 'time（range）', use_cycle: 'use_cycle（range）', use_duration: 'use_duration（range）' }, description: 'condition：谓词（selected / broken / custom_model_data / has_component / component / keybind_down …）；\nrange_dispatch：数值属性（custom_model_data / compass / count / damage / time / use_cycle / use_duration）', condition: (r) => r.imm_type === 'range_dispatch' || r.imm_type === 'condition' },
+			imm_property: { label: 'property（谓词 / 属性）', type: 'select', value: String(group.imm_property || ''), options: { '': '（未设置）', selected: 'selected', broken: 'broken', damaged: 'damaged', carried: 'carried', extended_view: 'extended_view', using_item: 'using_item', view_entity: 'view_entity', 'fishing_rod/cast': 'fishing_rod/cast', 'bundle/has_selected_item': 'bundle/has_selected_item', custom_model_data: 'custom_model_data', has_component: 'has_component', component: 'component', keybind_down: 'keybind_down', compass: 'compass（range）', count: 'count（range）', damage: 'damage（range）', time: 'time（range）', use_cycle: 'use_cycle（range）', use_duration: 'use_duration（range）', block_state: 'block_state（select）', local_time: 'local_time（select）' }, description: 'condition：谓词（selected / broken / custom_model_data / has_component / component / keybind_down …）；\nrange_dispatch：数值属性（custom_model_data / compass / count / damage / time / use_cycle / use_duration）', condition: (r) => r.imm_type === 'range_dispatch' || r.imm_type === 'condition' },
 			imm_component: { label: 'component（has_component 用）', type: 'text', value: String(group.imm_component || ''), description: '语法："component": "minecraft:lodestone_tracker"', condition: (r) => r.imm_property === 'has_component' },
 			imm_ignore_default: { label: 'ignore_default', type: 'checkbox', value: !!group.imm_ignore_default, description: 'has_component：组件值与默认值相同时是否视为不存在', condition: (r) => r.imm_property === 'has_component' },
 			imm_predicate: { label: 'predicate（component 用）', type: 'text', value: String(group.imm_predicate || ''), description: '语法："predicate": "minecraft:stored_enchantments"', condition: (r) => r.imm_property === 'component' },
