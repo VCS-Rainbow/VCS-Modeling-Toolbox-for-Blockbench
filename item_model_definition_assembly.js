@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.22.3';
+const VERSION = '0.22.4';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1384,6 +1384,8 @@ function importModelReference(group) {
 			group.imm_offset = [0, 0, 0];
 		}
 		Undo.finishEdit('导入引用模型');
+		try { if (typeof unselectAll === 'function') unselectAll(); } catch (e) { /* ignore */ }
+		try { Canvas.updateView({ elements: created, element_aspects: { faces: true, uv: true } }); } catch (e) { /* ignore */ }
 		try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 		Blockbench.showQuickMessage('已导入 ' + created.length + ' 个方块（' + reference + '）', 4000);
 		return true;
