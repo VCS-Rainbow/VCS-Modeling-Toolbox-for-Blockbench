@@ -2,70 +2,9 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
-## 0.65.3
-- **修导出结果里的空 `composite`**：`buildNode()` 失败（无模型/无分支）时清除 `groupNodeCache`，不再把空节点留给时间轴/父级复用；新增 `nodeIsEmpty()` 并在时间轴帧、根部汇总处过滤空节点。
-- 单测扩到 **159 项**（空分组不产生空 composite）。
-
-## 0.65.2
-- **超宽分组自动拆成逐方块节点**：inline 方块包围盒任一轴跨度 > 32 时，改为每个方块单独模型 + `transformation`；元素不再写 `rotation`（由 transformation 承载），保证 from/to 落在范围内。
-- 模型缓存键支持无 uuid/name 的方块（WeakMap 兜底），避免不同方块错误复用同一模型。
-- 新增回归测试：超宽分组拆分、拆分后 from/to 在 -16~32、元素无 rotation。
-- 单测扩到 **158 项**。
-
-## 0.65.1
-- **时间轴逐帧导出复用静态模型几何**：`addModel` 增加按方块集合的模型缓存；`buildTimelineNode` 先无姿态构建一次，再逐帧用缓存模型 + 每帧 transformation，不再给每帧重新生成/居中 from/to。
-- 模型文件名不再带 `_fN` 后缀，逐帧只有 transformation 不同。
-
-## 0.65.0
-- 时间轴采样抽成可测试的 `sampleTimelinePoses(animation, fps, frameCount)`：逐帧读取带关键帧分组的 rotation / position 增量，恢复动画时间；`bakeTimelineToCallTags()` 复用它。
-- 单测扩到 **155 项**（采样帧数、rotation 叠加、position、时间恢复）。
-
-## 0.64.0
-- 选择优化改为“计算最高级分组 → 清空选择 → 逐个模拟普通单击”（`group.select({ctrlOrCmd:true})`）：不再手动拼 `Outliner.selected`/子项 selected，交给 Blockbench 原生选择逻辑，修多分组全局移动方向不一致。
-- 单测 151 项保持通过。
-
-## 0.63.9
-- 修框选后移动方向不一致：选择守卫不再把子分组/方块逐个塞进 `Outliner.selected`，只把分组放进去；子项通过 `multiSelect`/`markAsSelected` 置 selected 标记（更接近手动单击分组的真实选择状态），避免 Blockbench 把每个子项当独立变换对象。
-
-## 0.63.8
-- 修框选后全局移动方向不一致：选择守卫完成后，把**最顶层选中分组**排到 `Outliner.selected[0]`（并同步 `Group.multi_selected` 首位），让 Blockbench 用 root/单位旋转做全局方向换算。
-- 单测扩到 **151 项**。
-
-## 0.63.7
-- 修框选时只有部分父组被选中：向上递归原来只走 `parents[0]` 的祖先链；现在对所有父组的祖先去重、按深度从深到浅判断，`sacpack1…5` 这类多分支都能选中。
-- 单测扩到 **150 项**。
-
-## 0.63.6
-- **选择守卫改为鼠标松开后判定**：不再挂 `update_selection`，拖动/gizmo 过程中完全不碰选择；`mouseup` 后 `setTimeout(0)` 跑一次向上选组。
-- `animation_mode` 恢复默认 `true`（0.63.5 的“动画模式导致 gizmo”结论作废）；仍保留 `Tools → 切换动画模式（时间轴）` 手动开关。
-- 指针监听在 `onunload` 里移除，避免重载后重复触发。
-- 单测 148 项保持通过。
-
-## 0.63.5
-- **动画模式改为默认关闭、手动切换**：`animation_mode` 默认 false，保证分组 gizmo 正常；需要时间轴时用 `Tools → 切换动画模式（时间轴）` 打开。
-- 排查结论：0.62.2（无 animation_mode）gizmo 正常，0.63.2 恢复后必坏；根因是 Blockbench 在动画模式下的分组变换/gizmo 行为，不是选择守卫。
-
-## 0.63.4
-- 修父分组 gizmo 再失效：选择守卫新增判断——方块所属父分组**已经 selected** 时让路（点选分组/拖 gizmo），只有父组未选中（框选方块）才向上递归选组。
-
-## 0.63.3
-- 修“子项全选后自动选父组”失效：移除选择守卫里过度的 `Modes.animate` 与 `Group.selected` 跳过，只保留「首个选中项是分组时才让路」。
-- 这样框选方块仍会向上递归选组，点选父分组拖 gizmo 也不会被守卫打断。
-
-## 0.63.2
-- **恢复动画模式与 `range_dispatch(timeline)` 时间轴导出**（0.63.0/0.63.1 的特性重新合并到 0.62.2 之后）。
-- 保留 0.62.2 的修复：选择守卫在 `Modes.animate`、首个选中项是分组、或 `Group.selected` 非空时让路，父分组 gizmo 可正常拖动。
-
-## 0.63.1
-- **修动画模式下根节点 gizmo 无法移动**：框选/选择守卫在 `Modes.animate`（动画/姿态模式）下直接跳过；当首个选中项是分组时也不介入，避免在拖动 gizmo 时反复重算选择。
-
-## 0.63.0
-- **允许动画模式**：格式 `animation_mode: true`；项目设置新增「时间轴 FPS」（`imm_anim_fps`，默认 20）与「时间轴 custom_model_data index」（`imm_anim_index`，默认 0）。
-- **新分组类型 `range_dispatch_timeline`（逐帧时间轴）**：只做导出前数据整理，不参与动画自动包裹（避免循环）。
-- **`Tools → 解析时间轴为复调用标签…`**：按 FPS 采样当前动画里所有带关键帧的分组，创建/替换根部 `[timeline]` 分组，每帧一个 Locator（`imm_frame` / `imm_pose`，`addTo` + `init` 都调用）。
-- **导出 `range_dispatch(timeline)`**：entries 阈值 0,1,2…，默认 `custom_model_data`；每个 entry 克隆根部装配并用该帧姿态覆盖 transformation；静态子树缓存复用。
-- 当前限制：只采样 rotation / position，scale 暂不支持。
-- 单测扩到 **147 项**。
+## 0.62.2
+- **修选中父分组时 gizmo 动不了**：当首选节点是分组、或 `Group.selected` 非空时，框选选择守卫直接让路，不再重算选择；子分组/方块仍可单独移动。
+- 单测扩到 **144 项**。
 
 ## 0.62.1
 - 选中**单个元素**也会触发：选中它的父分组 + 同层全部元素（像单击分组），并继续向上递归；不再要求至少 2 个方块。

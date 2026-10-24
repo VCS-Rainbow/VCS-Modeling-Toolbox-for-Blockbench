@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.65.3', api.VERSION, '0.65.3');
+eq('版本是 0.62.2', api.VERSION, '0.62.2');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -526,9 +526,9 @@ api.setBoxSelectGroups(true);
 global.Outliner.selected.push(boxCube1, boxCube2);
 api.guardBoxSelection();
 eq('多选方块时改为选中父分组', global.Outliner.selected.indexOf(boxGroup) >= 0, true);
-eq('分组及其元素一起被选中', boxCube1.selected === true && boxCube2.selected === true && global.Outliner.selected.indexOf(boxGroup) >= 0, true);
+eq('分组及其元素一起被选中', global.Outliner.selected.indexOf(boxCube1) >= 0 && global.Outliner.selected.indexOf(boxCube2) >= 0, true);
 api.guardBoxSelection();
-eq('再次触发不会再把子元素取消', boxCube1.selected === true && global.Outliner.selected.indexOf(boxGroup) >= 0, true);
+eq('再次触发不会再把子元素取消', global.Outliner.selected.indexOf(boxCube1) >= 0 && global.Outliner.selected.indexOf(boxGroup) >= 0, true);
 global.Outliner.selected.length = 0; boxCube1.selected = true; global.Outliner.selected.push(boxCube1);
 api.guardBoxSelection();
 eq('只选一个方块时不处理', global.Outliner.selected.indexOf(boxCube1) >= 0, true);
@@ -562,7 +562,7 @@ refGroup.markAsSelected = function () { this.selected = true; if (global.Outline
 global.Outliner.selected.length = 0; refCube1.selected = true; refCube2.selected = true;
 global.Outliner.selected.push(refCube1, refCube2);
 api.guardBoxSelection();
-eq('引用模型分组不享受例外', global.Outliner.selected.indexOf(refGroup) >= 0 && refCube1.selected === true, true);
+eq('引用模型分组不享受例外', global.Outliner.selected.indexOf(refGroup) >= 0 && global.Outliner.selected.indexOf(refCube1) >= 0, true);
 
 const savedFormatId = global.Format.id; global.Format.id = 'other';
 global.Outliner.selected.length = 0; boxCube1.selected = true; boxCube2.selected = true;
@@ -600,25 +600,6 @@ eq('子组全部子项选中后选中子组', !!childGroup.selected, true);
 eq('继续向上选中父组', !!parentGroup.selected, true);
 global.Outliner.selected.length = 0;
 
-/* ---------- 时间轴 range_dispatch ---------- */
-console.log('\n[时间轴 range_dispatch]');
-const animGroup = new global.Group({ name: 'animGroup', uuid: 'anim-group-1', imm_type: 'model', imm_model: 'ns:item/anim', origin: [8, 8, 8], rotation: [0, 0, 0] });
-const timelineGroup = new global.Group({ name: '[timeline]', imm_type: 'range_dispatch_timeline', origin: [8, 8, 8], rotation: [0, 0, 0] });
-const frame0 = new global.Locator({ name: 'frame 0' }); frame0.imm_frame = 0; frame0.imm_pose = JSON.stringify({ 'anim-group-1': { rotation: [0, 0, 0], origin: [8, 8, 8], position: [0, 0, 0] } });
-const frame1 = new global.Locator({ name: 'frame 1' }); frame1.imm_frame = 1; frame1.imm_pose = JSON.stringify({ 'anim-group-1': { rotation: [0, 0, 0], origin: [8, 8, 8], position: [0, 1, 0] } });
-timelineGroup.children.push(frame0, frame1);
-const savedRootAnim = global.Outliner.root.splice(0, global.Outliner.root.length, animGroup, timelineGroup);
-const timelineExporter = api.createExporter();
-const timelineMapping = timelineExporter.buildMapping();
-eq('时间轴导出为 range_dispatch', timelineMapping.model.type, 'minecraft:range_dispatch');
-eq('时间轴阈值 0/1', (timelineMapping.model.entries || []).map(e => e.threshold), [0, 1]);
-const findAnimNode = (node) => { if (!node) return null; if (node.model === 'ns:item/anim') return node; for (const child of (node.models || [])) { const hit = findAnimNode(child); if (hit) return hit; } return null; };
-const __anim0 = findAnimNode(timelineMapping.model.entries[0].model);
-const __anim1 = findAnimNode(timelineMapping.model.entries[1].model);
-eq('帧1 translation Y = 1/16 格', __anim1.transformation.translation[1], 0.0625);
-eq('帧0 恒等姿态无 transformation', !!__anim0.transformation, false);
-global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRootAnim);
-
 /* ---------- 分组优先选择时守卫让路 ---------- */
 console.log('\n[分组 gizmo 让路]');
 const gizmoGroup = new global.Group({ name: 'gizmoGroup' });
@@ -629,72 +610,6 @@ global.Outliner.selected.length = 0; global.Outliner.selected.push(gizmoGroup);
 api.guardBoxSelection();
 eq('分组优先选择时不改写选择', gizmoCube.selected !== true, true);
 global.Group.selected = []; global.Outliner.selected.length = 0;
-
-/* ---------- 多分支向上选组 ---------- */
-console.log('\n[多分支向上选组]');
-const multiRoot = new global.Group({ name: 'multiRoot' });
-const branchParents = [];
-const branchCubes = [];
-for (let i = 0; i < 3; i++) {
-  const p = new global.Group({ name: 'p' + i });
-  const g = new global.Group({ name: 'g' + i });
-  const c = new global.Cube({ from: [0, 0, 0], to: [1, 1, 1], origin: [0, 0, 0], rotation: [0, 0, 0] });
-  c.parent = g; g.children.push(c); g.parent = p; p.children.push(g); p.parent = multiRoot; multiRoot.children.push(p);
-  branchParents.push(p); branchCubes.push(c);
-}
-const savedMultiRoot = global.Outliner.root.splice(0, global.Outliner.root.length, multiRoot);
-global.Outliner.selected.length = 0;
-for (const c of branchCubes) { c.selected = true; global.Outliner.selected.push(c); }
-api.guardBoxSelection();
-eq('所有分支的父组都向上选中', branchParents.every(p => p.selected === true), true);
-eq('共同根节点也选中', multiRoot.selected === true, true);
-eq('顶层分组排在选择第一位', global.Outliner.selected[0] === multiRoot, true);
-global.Outliner.root.splice(0, global.Outliner.root.length, ...savedMultiRoot);
-global.Outliner.selected.length = 0;
-
-/* ---------- 时间轴采样 ---------- */
-console.log('\n[时间轴采样]');
-const sampleGroup = new global.Group({ name: 'sampleGroup', uuid: 'sample-group', rotation: [0, 0, 10], origin: [8, 8, 8] });
-const savedGroupAll = global.Group.all; global.Group.all = [sampleGroup];
-const fakeAnimator = { keyframes: [{}], channels: { rotation: [{}], position: [{}] }, interpolate(channel) { if (channel === 'rotation') return [0, 20, 0]; if (channel === 'position') return [0, 1, 0]; return [1, 1, 1]; } };
-const fakeAnimation = { time: 0.5, getBoneAnimator(group) { return group === sampleGroup ? fakeAnimator : null; } };
-const sampled = api.sampleTimelinePoses(fakeAnimation, 20, 3);
-eq('采样 3 帧', sampled.poses.length, 3);
-eq('rotation = 基础 + 关键帧增量', sampled.poses[0]['sample-group'].rotation, [0, 20, 10]);
-eq('position 被采样', sampled.poses[0]['sample-group'].position, [0, 1, 0]);
-eq('采样后恢复动画时间', fakeAnimation.time, 0.5);
-global.Group.all = savedGroupAll;
-
-/* ---------- 超宽分组逐方块拆分 ---------- */
-console.log('\n[超宽分组拆分]');
-const spreadGroup = new global.Group({ name: 'spreadGroup', imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
-const spreadTexture = new global.Texture({ name: 'spreadTex', uuid: 'tex-spread', uv_width: 16, uv_height: 16 });
-global.Texture.all.push(spreadTexture);
-const makeSpreadCube = (from, to, rotation) => {
-  const cube = new global.Cube({ from, to, origin: [0, 0, 0], rotation: rotation || [0, 0, 0] });
-  cube.faces = { north: { texture: 'tex-spread', uv: [0, 0, 16, 16] } };
-  cube.parent = spreadGroup; spreadGroup.children.push(cube); return cube;
-};
-makeSpreadCube([0, 0, 0], [5, 5, 5]);
-const spreadCubeFar = makeSpreadCube([60, 0, 0], [65, 5, 5], [0, 0, 25]);
-const savedSpreadRoot = global.Outliner.root.splice(0, global.Outliner.root.length, spreadGroup);
-const spreadExporter = api.createExporter();
-spreadExporter.buildMapping();
-const spreadElements = spreadExporter.models.flatMap(model => model.data.elements || []);
-eq('超宽分组拆成多个模型', spreadExporter.models.length >= 2, true);
-eq('拆分后 from/to 都在 -16~32', spreadElements.every(el => el.from.concat(el.to).every(v => v >= -16.001 && v <= 32.001)), true);
-eq('节点承载旋转，元素不再写 rotation', spreadElements.every(el => !el.rotation), true);
-global.Outliner.root.splice(0, global.Outliner.root.length, ...savedSpreadRoot);
-
-/* ---------- 空节点过滤 ---------- */
-console.log('\n[空节点过滤]');
-const emptyGroup = new global.Group({ name: 'emptyGroup', imm_type: 'composite' });
-const savedEmptyRoot = global.Outliner.root.splice(0, global.Outliner.root.length, spreadGroup, emptyGroup);
-const emptyExporter = api.createExporter();
-const emptyMapping = emptyExporter.buildMapping();
-const hasEmptyComposite = (node) => { if (!node) return false; if (node.type === 'minecraft:composite' && (!node.models || !node.models.length)) return true; for (const child of (node.models || [])) if (hasEmptyComposite(child)) return true; if (node.entries) for (const entry of node.entries) if (hasEmptyComposite(entry.model)) return true; return false; };
-eq('空分组不产生空 composite', hasEmptyComposite(emptyMapping.model), false);
-global.Outliner.root.splice(0, global.Outliner.root.length, ...savedEmptyRoot);
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
