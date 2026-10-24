@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.30.1';
+const VERSION = '0.30.2';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1446,6 +1446,7 @@ function buildSimPanel(show_panel) {
 	const root = document.createElement('div');
 	root.style.cssText = 'padding:8px;display:flex;flex-direction:column;gap:4px;font-size:12px;overflow:auto;height:100%';
 	const mk = (tag, props, style) => { const el = document.createElement(tag); Object.assign(el, props || {}); if (style) el.style.cssText = style; return el; };
+	const cell = (labelText, inputEl, width) => { const wrap = mk('label', {}, 'display:flex;flex-direction:column;gap:2px;font-size:10px;opacity:.75' + (width ? (';width:' + width) : '')); wrap.appendChild(mk('span', { textContent: labelText })); wrap.appendChild(inputEl); return wrap; };
 	const SPECS = [
 		['floats', 'cmdata.floats', 'number'],
 		['colors', 'cmdata.colors', 'number'],
@@ -1461,22 +1462,29 @@ function buildSimPanel(show_panel) {
 	for (const [key, label, kind] of SPECS) {
 		const row = { key, kind, enabled: false, index: 0, value: kind === 'bool' ? 'false' : (kind === 'text' ? '' : '0'), auto: false, period: 800, step: 0.5, rule: 'pingpong', min: 0, max: 4, dir: 1 };
 		const box = mk('details', {}, 'border-top:1px solid rgba(128,128,128,.25);padding-top:3px');
-		const head = mk('summary', {}, 'cursor:pointer;display:flex;gap:6px;align-items:center');
+		const head = mk('summary', {}, 'cursor:pointer;display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;list-style:none;padding:3px 0');
 		const enable = mk('input', { type: 'checkbox' });
-		const nameEl = mk('span', { textContent: label }, 'flex:1 1 auto');
+		const nameEl = mk('span', { textContent: label }, 'flex:1 1 100%;font-weight:600;opacity:.95');
 		const idx = mk('input', { type: 'number', value: '0' }, 'width:52px;display:' + (kind === 'bool' && (key === 'selected' || key === 'using_item') ? 'none' : 'inline-block'));
 		const val = mk('input', { type: kind === 'text' ? 'text' : (kind === 'bool' ? 'text' : 'number'), value: row.value }, 'width:78px');
-		head.appendChild(enable); head.appendChild(nameEl); head.appendChild(idx); head.appendChild(val);
-		const body = mk('div', {}, 'display:flex;flex-wrap:wrap;gap:4px;padding:4px 0 2px 6px');
+		const enableWrap = mk('label', {}, 'display:flex;align-items:center;gap:4px;font-size:11px');
+		enableWrap.appendChild(enable); enableWrap.appendChild(mk('span', { textContent: label }));
+		head.appendChild(nameEl);
+		if (kind !== 'bool' || (key !== 'selected' && key !== 'using_item')) head.appendChild(cell('索引', idx, '64px'));
+		head.appendChild(cell('值', val, '92px'));
+		const body = mk('div', {}, 'display:grid;grid-template-columns:repeat(5, minmax(0, 1fr));gap:6px;padding:6px 0 4px 0;align-items:end');
 		const autoC = mk('input', { type: 'checkbox' }); const autoL = mk('label', { textContent: '自动' }, 'display:flex;gap:3px;align-items:center'); autoL.appendChild(autoC);
 		const period = mk('input', { type: 'number', value: '800' }, 'width:60px');
 		const step = mk('input', { type: 'number', value: '0.5', step: '0.1' }, 'width:56px');
 		const rule = mk('select', {}); [['pingpong', '往复'], ['wrap', '循环']].forEach(([v, t]) => rule.appendChild(mk('option', { value: v, textContent: t })));
 		const minI = mk('input', { type: 'number', value: '0' }, 'width:52px');
 		const maxI = mk('input', { type: 'number', value: '4' }, 'width:52px');
-		body.appendChild(autoL); body.appendChild(mk('span', { textContent: '周期' })); body.appendChild(period);
-		body.appendChild(mk('span', { textContent: '步长' })); body.appendChild(step); body.appendChild(rule);
-		body.appendChild(mk('span', { textContent: '范围' })); body.appendChild(minI); body.appendChild(maxI);
+		body.appendChild(cell('自动', autoC));
+		body.appendChild(cell('周期 ms', period));
+		body.appendChild(cell('步长', step));
+		body.appendChild(cell('规则', rule));
+		body.appendChild(cell('下限', minI));
+		body.appendChild(cell('上限', maxI));
 		box.appendChild(head); box.appendChild(body); root.appendChild(box);
 		row.el = { enable, idx, val, auto: autoC, period, step, rule, min: minI, max: maxI };
 		const read = () => { row.enabled = enable.checked; row.index = Number(idx.value) || 0; row.value = val.value; row.auto = autoC.checked; row.period = Math.max(120, Number(period.value) || 800); row.step = Number(step.value) || 0.5; row.rule = rule.value; row.min = Number(minI.value) || 0; row.max = Number(maxI.value) || 4; };
