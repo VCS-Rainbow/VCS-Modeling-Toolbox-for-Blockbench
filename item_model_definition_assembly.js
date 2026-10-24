@@ -373,17 +373,6 @@ class AssemblyExporter {
 		}
 		if (!elements.length) return null;
 
-		// 居中：把这份几何的中点移到 (8,8,8)，真正的位移/旋转交给 transformation。
-		// Java 模型元素的 from/to 有 [-16,32] 限制，transformation 则自由得多。
-		const shift = this.centerElements(elements);
-		for (const element of elements) {
-			element.from = element.from.map((value, axis) => clean(value - shift[axis]));
-			element.to = element.to.map((value, axis) => clean(value - shift[axis]));
-			if (element.rotation) {
-				element.rotation.origin = element.rotation.origin.map((value, axis) => clean(value - shift[axis]));
-			}
-		}
-
 		const textures = {};
 		let particle = null;
 		for (const [texture, key] of texture_order) {
@@ -399,59 +388,17 @@ class AssemblyExporter {
 		const base = sanitizePath(this.item_stem + '_' + (hint || 'part'), 'model');
 		const name = this.uniqueName(base, this.used_model_names);
 		this.models.push({ name, data: model });
-		return { reference: this.namespace + ':item/' + name, shift };
-	}
-
-	/** 元素集合的包围盒中点（考虑元素自转），返回需要平移的量：中点 − (8,8,8) */
-	centerElements(elements) {
-		const min = [Infinity, Infinity, Infinity];
-		const max = [-Infinity, -Infinity, -Infinity];
-		for (const element of elements) {
-			let corners = [];
-			for (const x of [element.from[0], element.to[0]]) {
-				for (const y of [element.from[1], element.to[1]]) {
-					for (const z of [element.from[2], element.to[2]]) corners.push([x, y, z]);
-				}
-			}
-			if (element.rotation) {
-				const axis = Math.max(0, ['x', 'y', 'z'].indexOf(element.rotation.axis));
-				const angle = (element.rotation.angle || 0) * Math.PI / 180;
-				const c = Math.cos(angle);
-				const s = Math.sin(angle);
-				const R = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
-				const i = (axis + 1) % 3;
-				const j = (axis + 2) % 3;
-				R[i][i] = c; R[i][j] = -s; R[j][i] = s; R[j][j] = c;
-				const origin = element.rotation.origin || [0, 0, 0];
-				corners = corners.map(p => {
-					const v = [p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]];
-					const r = [0, 1, 2].map(row => R[row][0] * v[0] + R[row][1] * v[1] + R[row][2] * v[2]);
-					return [r[0] + origin[0], r[1] + origin[1], r[2] + origin[2]];
-				});
-			}
-			for (const p of corners) {
-				for (let k = 0; k < 3; k++) {
-					if (p[k] < min[k]) min[k] = p[k];
-					if (p[k] > max[k]) max[k] = p[k];
-				}
-			}
-		}
-		if (!isFinite(min[0])) return [0, 0, 0];
-		return [0, 1, 2].map(k => (min[k] + max[k]) / 2 - UNIT_PER_BLOCK / 2);
+		return this.namespace + ':item/' + name;
 	}
 
 	/* ------------------------------ 变换 ------------------------------ */
 
 	/**
-	 * 分组变换 → transformation
-	 *
-	 * 元素坐标已经被居中过（模型中点移到 (8,8,8)），记平移量 d = 中点 − (8,8,8)。
-	 * 于是原始坐标 p = p′ + d，目标映射为 p′ → R·(p′ + d − O) + O
-	 *   = R·p′ + [R·d + O − R·O]
-	 * 分解形式里 translation 就是该常数项除以 16：
-	 *   t = [R·d + O′ − R·O′] / 16      （O′ = O，或 O − (8,8,8)）
+	 * 分组变换 → transformation：
+	 *   p' = R·(p − O) + O
+	 * 分解形式 T = (O′ − R·O′)/16，其中 O′ = O − C（C 为物品中心时 O′=O−(8,8,8)）
 	 */
-	buildTransformation(node, shift) {
+	buildTransformation(node) {
 		const quaternion = readLocalQuaternion(node);
 		if (!quaternion) return null;
 		const length = Math.hypot(quaternion.x, quaternion.y, quaternion.z, quaternion.w);
@@ -468,10 +415,7 @@ class AssemblyExporter {
 			quaternion.x = -quaternion.x; quaternion.y = -quaternion.y;
 			quaternion.z = -quaternion.z; quaternion.w = -quaternion.w;
 		}
-
-		const d = Array.isArray(shift) ? shift : [0, 0, 0];
-		const has_shift = Math.abs(d[0]) + Math.abs(d[1]) + Math.abs(d[2]) > 1e-6;
-		if (Math.abs(quaternion.w) > 1 - 1e-7 && !has_shift) return null;
+		if (Math.abs(quaternion.w) > 1 - 1e-7) return null;
 
 		const matrix = quaternionToMatrix(quaternion);
 		const origin = (node && node.origin) ? node.origin : [0, 0, 0];
@@ -482,10 +426,12 @@ class AssemblyExporter {
 			(Number(origin[2]) || 0) - offset,
 		];
 		const rotated = rotateVector(matrix, pivot);
-		const moved = rotateVector(matrix, d);
 		return {
-			translation: cleanAll([0, 1, 2].map(axis =>
-				(moved[axis] + pivot[axis] - rotated[axis]) / UNIT_PER_BLOCK)),
+			translation: cleanAll([
+				(pivot[0] - rotated[0]) / UNIT_PER_BLOCK,
+				(pivot[1] - rotated[1]) / UNIT_PER_BLOCK,
+				(pivot[2] - rotated[2]) / UNIT_PER_BLOCK,
+			]),
 			left_rotation: cleanAll([quaternion.x, quaternion.y, quaternion.z, quaternion.w]),
 			scale: [1, 1, 1],
 			right_rotation: [0, 0, 0, 1],
@@ -513,7 +459,7 @@ class AssemblyExporter {
 	/** 本层几何：优先「引用模型」，否则根据自身方块生成模型文件 */
 	ownModelRef(group, cubes, hint) {
 		const reference = group.imm_model;
-		if (reference) return { reference: String(reference).trim(), shift: [0, 0, 0] };
+		if (reference) return String(reference).trim();
 		if (!cubes.length) return null;
 		return this.addModel(cubes, hint);
 	}
@@ -524,13 +470,11 @@ class AssemblyExporter {
 		const cubes = children.filter(child => isCube(child));
 		const type = this.normalizeType(group.imm_type);
 
-		const own = this.ownModelRef(group, cubes, hint);
-		const own_ref = own ? own.reference : null;
-		const own_shift = own ? own.shift : [0, 0, 0];
-
 		const node = { type: 'minecraft:' + type };
-		const transformation = this.buildTransformation(group, own_shift);
+		const transformation = this.buildTransformation(group);
 		if (transformation) node.transformation = transformation;
+
+		const own_ref = this.ownModelRef(group, cubes, hint);
 
 		if (type === 'empty') return node;
 
@@ -604,19 +548,8 @@ class AssemblyExporter {
 		}
 
 		if (loose.length) {
-			const built = this.addModel(loose, 'root');
-			if (built) {
-				const node = { type: 'minecraft:model', model: built.reference };
-				if (built.shift.some(value => Math.abs(value) > 1e-6)) {
-					node.transformation = {
-						translation: cleanAll(built.shift.map(value => value / UNIT_PER_BLOCK)),
-						left_rotation: [0, 0, 0, 1],
-						scale: [1, 1, 1],
-						right_rotation: [0, 0, 0, 1],
-					};
-				}
-				models.push(node);
-			}
+			const reference = this.addModel(loose, 'root');
+			if (reference) models.push({ type: 'minecraft:model', model: reference });
 		}
 		if (!models.length) {
 			throw new Error('当前项目里没有可导出的分组或方块。');
