@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.26.1';
+const VERSION = '0.27.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1368,17 +1368,18 @@ function importModelReference(group) {
 			if (cube.faces[dirKey]) cube.faces[dirKey].enabled = true;
 		}
 		if (el.shade === false) cube.shade = false;
-		if (el.rotation && el.rotation.origin && el.rotation.axis) {
-			const axis = ['x', 'y', 'z'].indexOf(String(el.rotation.axis));
-			if (axis >= 0) {
-				cube.origin = [
-					(Number(el.rotation.origin[0]) || 0) + (Number(import_base[0]) || 0),
-					(Number(el.rotation.origin[1]) || 0) + (Number(import_base[1]) || 0),
-					(Number(el.rotation.origin[2]) || 0) + (Number(import_base[2]) || 0),
-				];
-				const rot = [0, 0, 0];
-				rot[axis] = Number(el.rotation.angle) || 0;
-				cube.rotation = rot;
+		if (el.rotation) {
+			const r = el.rotation;
+			const o = Array.isArray(r.origin) ? r.origin : [0, 0, 0];
+			const bx = Number(import_base[0]) || 0, by = Number(import_base[1]) || 0, bz = Number(import_base[2]) || 0;
+			cube.origin = [(Number(o[0]) || 0) + bx, (Number(o[1]) || 0) + by, (Number(o[2]) || 0) + bz];
+			if (r.axis) {
+				// Java 原版格式：{ axis: "y", angle: 45, origin: [...] }
+				const axis = ['x', 'y', 'z'].indexOf(String(r.axis));
+				if (axis >= 0) { const rot = [0, 0, 0]; rot[axis] = Number(r.angle) || 0; cube.rotation = rot; }
+			} else {
+				// Blockbench 导出格式：{ x: 0, y: 0, z: 57.5, origin: [...] }
+				cube.rotation = [Number(r.x) || 0, Number(r.y) || 0, Number(r.z) || 0];
 			}
 		}
 		for (const dir of Object.keys(el.faces || {})) {
