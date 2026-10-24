@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.30.4';
+const VERSION = '0.31.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1472,6 +1472,8 @@ function buildSimPanel(show_panel) {
 		head.appendChild(nameEl);
 		if (kind !== 'bool' || (key !== 'selected' && key !== 'using_item')) head.appendChild(cell('索引', idx, '64px'));
 		head.appendChild(cell('值', val, '92px'));
+		const usageEl = mk('span', {}, 'flex:1 1 100%;font-size:10px;opacity:.55;white-space:normal;line-height:1.3');
+		head.appendChild(usageEl);
 		const body = mk('div', {}, 'display:flex;flex-wrap:nowrap;gap:6px;padding:6px 0 4px 0;align-items:flex-end;overflow:hidden');
 		const autoC = mk('input', { type: 'checkbox' }); const autoL = mk('label', { textContent: '自动' }, 'display:flex;gap:3px;align-items:center'); autoL.appendChild(autoC);
 		const period = mk('input', { type: 'number', value: '0.2', step: '0.1' }, 'width:100%;min-width:0');
@@ -1486,7 +1488,7 @@ function buildSimPanel(show_panel) {
 		body.appendChild(cell('下限', minI));
 		body.appendChild(cell('上限', maxI));
 		box.appendChild(head); box.appendChild(body); root.appendChild(box);
-		row.el = { enable, idx, val, auto: autoC, period, step, rule, min: minI, max: maxI };
+		row.el = { enable, idx, val, auto: autoC, period, step, rule, min: minI, max: maxI, usage: usageEl };
 		const read = () => { row.enabled = enable.checked; row.index = Number(idx.value) || 0; row.value = val.value; row.auto = autoC.checked; row.period = Math.max(50, (Number(period.value) || 0.2) * 1000); row.step = Number(step.value) || 0.5; row.rule = rule.value; row.min = Number(minI.value) || 0; row.max = Number(maxI.value) || 4; };
 		[enable, idx, val, autoC, period, step, rule, minI, maxI].forEach(el => el.addEventListener('change', () => { read(); simTick(); }));
 		sim_ui.rows[key] = row;
@@ -1501,6 +1503,29 @@ function buildSimPanel(show_panel) {
 	try { if (typeof Panels !== 'undefined' && Panels) Panels[sim_panel.id] = sim_panel; } catch (e) { /* ignore */ }
 	if (show_panel !== false) sim_panel.show();
 	return sim_panel;
+}
+
+/* 遍历分组，得到 输入键+下标 -> [分组名] */
+function collectInputUsage() {
+	const map = {};
+	const push = (key, index, name) => { const k = key + '#' + (index || 0); map[k] = map[k] || []; if (map[k].indexOf(name) < 0) map[k].push(name); };
+	const walk = (nodes) => {
+		for (const node of nodes || []) {
+			if (!node || !isGroup(node)) continue;
+			const type = String(node.imm_type || '').replace(/^minecraft:/, '');
+			const prop = String(node.imm_property || '').replace(/^minecraft:/, '');
+			const index = Number(node.imm_index) || 0;
+			const name = labelOf(node);
+			if (type === 'range_dispatch' && prop === 'custom_model_data') push('floats', index, name);
+			else if (type === 'select' && prop === 'custom_model_data') push('strings', index, name);
+			else if (type === 'condition' && prop === 'custom_model_data') push('flags', index, name);
+			else if (prop && prop !== 'custom_model_data' && prop !== 'selected') push(prop, 0, name);
+			else if (prop === 'selected') push('selected', 0, name);
+			walk(node.children || []);
+		}
+	};
+	walk((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []);
+	return map;
 }
 
 function simTick() {
@@ -1525,6 +1550,13 @@ function simTick() {
 			case 'selected': case 'using_item': inputs[key] = (v === 'true' || v === '1' || num(v) > 0); lines.push(key + ' = ' + inputs[key]); break;
 			default: inputs[key] = num(v); lines.push(key + ' = ' + num(v));
 		}
+	}
+	const usageMap = collectInputUsage();
+	for (const key of Object.keys(sim_ui.rows)) {
+		const row = sim_ui.rows[key];
+		if (!row.el || !row.el.usage) continue;
+		const list = usageMap[key + '#' + row.index] || [];
+		row.el.usage.textContent = '关联分组：' + (list.length ? list.join('、') : '（无）');
 	}
 	const items = simEvaluate(mapping.model, inputs);
 	const hits = items.filter(item => item.hit && item.node.model).map(item => item.node.model);
