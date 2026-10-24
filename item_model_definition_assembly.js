@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.62.3';
+const VERSION = '0.62.4';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -380,7 +380,7 @@ class Exporter {
 	 * 分组/方块 → transformation
 	 * 元素已平移 d（d = 包围盒中点 − (8,8,8)），原始坐标 p = p′ + d：
 	 *   p′ → R·(p′ + d − O) + O = R·p′ + [R·d + O − R·O]
-	 * translation = 常数项 / 16（单位：格）；枢轴 = O（原点模式）或 O − (8,8,8)（中心模式）
+	 * translation = 常数项（单位：1/16 格，与模型 display.translation 一致）；枢轴 = O（原点模式）或 O − (8,8,8)（中心模式）
 	 */
 	buildTransformation(node, shift, parent_shift) {
 		const q = readQuaternion(node);
@@ -405,7 +405,7 @@ class Exporter {
 		const rp = rotVec(m, pivot);
 		const rd = rotVec(m, d);
 		return {
-			translation: cleanAll([0, 1, 2].map(a => (rd[a] + pivot[a] - rp[a] - dp[a]) / UNIT)),
+			translation: cleanAll([0, 1, 2].map(a => rd[a] + pivot[a] - rp[a] - dp[a])),
 			left_rotation: cleanAll([q.x, q.y, q.z, q.w]),
 			scale: [1, 1, 1],
 			right_rotation: [0, 0, 0, 1],
@@ -733,7 +733,7 @@ class Exporter {
 					const node = { type: 'minecraft:model', model: built.reference };
 					if (built.shift.some(v => Math.abs(v) > 1e-6)) {
 						node.transformation = {
-							translation: cleanAll(built.shift.map(v => v / UNIT)),
+							translation: cleanAll(built.shift),
 							left_rotation: [0, 0, 0, 1], scale: [1, 1, 1], right_rotation: [0, 0, 0, 1],
 						};
 					}

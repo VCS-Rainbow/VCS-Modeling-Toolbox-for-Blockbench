@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-24 · 当前版本 **0.62.3**（tag `v0.62.3`）
+> 生成时间：2026-10-24 · 当前版本 **0.62.4**（tag `v0.62.4`）
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 
 ---
@@ -43,7 +43,7 @@
 
 ### 2.2 变换（transformation）
 
-- 单位：`translation` 以**格**为单位（1 = 16px）；坐标系原点 = 方块空间 `(0,0,0)`，物品中心 = `(0.5,0.5,0.5)`＝像素 `(8,8,8)`，两者**不同**。
+- 单位：`translation` 以 **1/16 格（像素）** 为单位（与模型 `display.translation` 一致）；坐标系原点 = 方块空间 `(0,0,0)`，物品中心 = `(0.5,0.5,0.5)`＝像素 `(8,8,8)`，两者**不同**。
 - 分解顺序：`right_rotation → scale → left_rotation → translation`；姿态写 `left_rotation`（四元数 `[x,y,z,w]`），`scale` 保持 1。
 - 计算：`t = (R·d_i + O − R·O − d_parent)/16`
   - `d_i` = 该分组自身几何包围盒中点 − `(8,8,8)`（**每个分组各自居中**）
@@ -140,6 +140,7 @@
 ## 3. 版本历史（近期，git tag）
 
 ```
+0.62.4  transformation.translation 改用像素单位（修模型偏小/偏移）
 0.62.3  display 改为 item/generated（修游戏内偏小）
 0.62.2  选择守卫在分组优先选择时让路（修父分组 gizmo）
 0.62.1  单元素也触发选父组+同层元素
@@ -269,7 +270,7 @@
 $node = 'C:\Users\Rainbow_\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 & $node --check 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js'
 & $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_assembly.js'   # 离线冒烟
-& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图/复调用/着色单测（146 项）
+& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图/复调用/着色单测（147 项）
 Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js' `
   'C:\Users\Rainbow_\AppData\Roaming\Blockbench\plugins\item_model_definition_assembly.js' -Force
 ```
