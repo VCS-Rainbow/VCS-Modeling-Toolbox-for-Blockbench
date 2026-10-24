@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.32.6';
+const VERSION = '0.32.7';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1510,6 +1510,7 @@ function buildSimPanel(show_panel) {
 		row.el = { enable, idx, val, auto: autoC, period, step, rule, min: minI, max: maxI, usage: usageFresh };
 		const read = () => { row.enabled = enable.checked; row.index = Number(idx.value) || 0; row.value = val.value; row.auto = autoC.checked; row.period = Math.max(50, (Number(period.value) || 0.2) * 1000); row.step = Number(step.value) || 0.5; row.rule = rule.value; row.min = Number(minI.value) || 0; row.max = Number(maxI.value) || 4; };
 		[enable, idx, val, autoC, period, step, rule, minI, maxI].forEach(el => el.addEventListener('change', () => { read(); simTick(); }));
+		row.order = Object.keys(sim_ui.rows).length;
 		sim_ui.rows[key] = row;
 	}
 	const runBtn = mk('button', { textContent: '运行 / 停止' }, 'padding:4px 8px;margin-top:4px');
@@ -1588,7 +1589,7 @@ function simTick() {
 	console.log('[装配] sim usage keys=', Object.keys(usageMap), '| rows=', Object.keys(sim_ui.rows).length);
 	for (const key of Object.keys(sim_ui.rows)) {
 		const row = sim_ui.rows[key];
-		if (!row.el || !row.el.usage) continue;
+		if (!row.el) continue;
 		const list = usageMap[key + '#' + row.index] || [];
 		const norm = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, '_');
 		const shown = list.map(name => {
@@ -1596,8 +1597,10 @@ function simTick() {
 			const active = tokens.length > 0 && hits.some(h => tokens.every(t => String(h).toLowerCase().includes(t)));
 			return (active ? '✔ ' : '· ') + name;
 		});
-		console.log('[装配] row', key + '#' + row.index, 'list=', list.length, 'usageEl=', !!row.el.usage);
-		row.el.usage.textContent = '关联分组：' + (shown.length ? '' : '（无）') + (shown.length ? '\n' + shown.join('\n') : '');
+		const boxes = (typeof document !== 'undefined') ? document.querySelectorAll('#panel_imm_sim_panel details') : [];
+		const target = boxes[row.order] ? boxes[row.order].lastElementChild : null;
+		console.log('[装配] row', key + '#' + row.index, 'list=', list.length, 'target=', !!target);
+		if (target) target.textContent = '关联分组：' + (shown.length ? '' : '（无）') + (shown.length ? '\n' + shown.join('\n') : '');
 	}
 
 	lines.push('');
