@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.24.1';
+const VERSION = '0.25.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1183,6 +1183,19 @@ function editGroupProps() {
 					try { if (typeof UVEditor !== 'undefined' && UVEditor.updateView) UVEditor.updateView(); } catch (e) { /* ignore */ }
 				}
 Undo.finishEdit('修改分组映射属性');
+				try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+				const modelRef = String(group.imm_model || '').trim();
+				if (modelRef) {
+					const existingCubes = (group.children || []).filter(isCube).length;
+					const runImport = () => { try { importModelReference(group); } catch (e) { console.error('[装配] 导入失败', e); } };
+					if (existingCubes > 0) {
+						Blockbench.showMessageBox({
+							title: '该分组已有元素',
+							message: '分组 “' + labelOf(group) + '” 里已有 ' + existingCubes + ' 个方块。\n导入引用模型会删除它们并重新导入，是否继续？',
+							buttons: ['取消', '继续导入'], confirm: 1, cancel: 0,
+						}, (button) => { if (button === 1) runImport(); });
+					} else { runImport(); }
+				}
 				Blockbench.showQuickMessage('已更新 “' + labelOf(group) + '”' + (tinted ? ('，为 ' + tinted + ' 个方块自动勾选着色') : '') + (sortedCount ? ('，重排 ' + sortedCount + ' 个分支') : '') + (relabeled ? ('，更新 ' + relabeled + ' 个分支名') : ''), 2500);
 			} catch (error) {
 				console.error(error);
@@ -1320,6 +1333,10 @@ function importModelReference(group) {
 		// 确保分组可见（可能被“隐藏不可用分支”关闭过）
 		try { group.visibility = true; group.export = true; group.imm_auto_disabled = false; } catch (e) { /* ignore */ }
 		let import_holder = group; // 直接导入到目标分组（其 mesh 已初始化）
+		// 导入前清空本分组原有元素（保持“替换”语义）
+		for (const old_child of (group.children || []).slice()) {
+			try { old_child.remove(); } catch (e) { console.warn('[装配] 删除旧元素失败', e); }
+		}
 		const created = [];
 		const textureMap = {};
 		for (const key of Object.keys(resolved.textures || {})) {
@@ -1331,7 +1348,7 @@ function importModelReference(group) {
 	elements.forEach((el, index) => {
 		if (!el || !Array.isArray(el.from) || !Array.isArray(el.to)) return;
 		const cube = new Cube({
-			name: 'part_' + index,
+			name: (el && el.name ? String(el.name) : ('part_' + index)),
 			from: [Number(el.from[0]) || 0, Number(el.from[1]) || 0, Number(el.from[2]) || 0],
 			to: [Number(el.to[0]) || 0, Number(el.to[1]) || 0, Number(el.to[2]) || 0],
 		}).addTo(group);
