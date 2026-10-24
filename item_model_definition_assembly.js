@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.27.0';
+const VERSION = '0.28.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1531,7 +1531,7 @@ function toggleSim() {
 
 /* ============================== 模拟输入 ============================== */
 
-const sim = { timer: null, value: 0, dir: 1, inputs: { floats: [0, 0, 0, 0, 0, 0, 0, 0], selected: false, damage: 0, use_remainder: false } };
+const sim = { timer: null, value: 0, dir: 1, inputs: { floats: [0, 0, 0, 0, 0, 0, 0, 0], colors: [0, 0, 0, 0], strings: ['', '', '', ''], flags: [false, false, false, false], selected: false, damage: 0 } };
 
 function simValue(node, inputs) {
 	const type = String((node && node.type) || '').replace(/^minecraft:/, '');
@@ -1539,6 +1539,7 @@ function simValue(node, inputs) {
 	const index = Number(node && node.index) || 0;
 	let value = 0;
 	if (prop === 'custom_model_data') value = Number((inputs.floats || [])[index] || 0);
+	else if (prop === 'custom_model_data_string') value = String((inputs.strings || [])[index] || '');
 	else if (prop === 'selected') value = inputs.selected ? 1 : 0;
 	else value = Number(inputs[prop] || 0);
 	if (node && node.scale) value *= Number(node.scale);
