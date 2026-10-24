@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.30.0';
+const VERSION = '0.30.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1496,102 +1496,59 @@ function buildSimPanel(show_panel) {
 }
 
 function simTick() {
-	if (!sim_ui) return;
+	if (!sim_ui || !sim_ui.rows) return;
 	let mapping = null;
 	try { mapping = createExporter().buildMapping(); } catch (error) { sim_ui.out.textContent = '无法生成映射：' + ((error && error.message) || error); return; }
-	const index = Math.max(0, num(sim_ui.indexInp.value));
-	const prop = sim_ui.propSel.value;
-	sim.inputs.floats = sim.inputs.floats || [];
-	const raw = sim_ui.valueInp.value;
-	if (prop === 'custom_model_data.floats') { sim.inputs.floats[index] = num(raw); }
-	else if (prop === 'custom_model_data.colors') { sim.inputs.colors = sim.inputs.colors || []; sim.inputs.colors[index] = num(raw) | 0; }
-	else if (prop === 'custom_model_data.strings') { sim.inputs.strings = sim.inputs.strings || []; sim.inputs.strings[index] = String(raw); }
-	else if (prop === 'custom_model_data.flags') { sim.inputs.flags = sim.inputs.flags || []; sim.inputs.flags[index] = raw === 'true' || raw === '1'; }
-	else if (prop === 'selected' || prop === 'using_item') { sim.inputs[prop] = raw === 'true' || raw === '1' || num(raw) > 0; }
-	else { sim.inputs[prop] = num(raw); }
-	const items = simEvaluate(mapping.model, sim.inputs);
-	const hits = items.filter(item => item.hit).map(item => item.node.model).filter(Boolean);
+	const inputs = sim.inputs;
+	inputs.floats = inputs.floats || [];
+	inputs.colors = inputs.colors || [];
+	inputs.strings = inputs.strings || [];
+	inputs.flags = inputs.flags || [];
 	const lines = [];
-	lines.push(prop === 'selected' ? ('selected = ' + sim.inputs.selected) : ('floats[' + index + '] = ' + sim.inputs.floats[index]));
-	lines.push('命中 ' + hits.length + ' 个模型，总共 ' + items.length + ' 个分支');
-	lines.push('');
-	for (const item of items) {
-		const name = item.node.model || item.node.type;
-		lines.push((item.hit ? '  ✔ ' : '  ✘ ') + name);
+	for (const key of Object.keys(sim_ui.rows)) {
+		const row = sim_ui.rows[key];
+		if (!row.enabled) continue;
+		const v = String(row.value);
+		switch (key) {
+			case 'floats': inputs.floats[row.index] = num(v); lines.push('floats[' + row.index + '] = ' + num(v)); break;
+			case 'colors': inputs.colors[row.index] = num(v) | 0; lines.push('colors[' + row.index + '] = #' + (num(v) >>> 0).toString(16).padStart(8, '0')); break;
+			case 'strings': inputs.strings[row.index] = v; lines.push('strings[' + row.index + '] = "' + v + '"'); break;
+			case 'flags': inputs.flags[row.index] = (v === 'true' || v === '1'); lines.push('flags[' + row.index + '] = ' + inputs.flags[row.index]); break;
+			case 'selected': case 'using_item': inputs[key] = (v === 'true' || v === '1' || num(v) > 0); lines.push(key + ' = ' + inputs[key]); break;
+			default: inputs[key] = num(v); lines.push(key + ' = ' + num(v));
+		}
 	}
+	const items = simEvaluate(mapping.model, inputs);
+	const hits = items.filter(item => item.hit && item.node.model).map(item => item.node.model);
+	lines.push('');
+	lines.push('命中 ' + hits.length + ' / 分支 ' + items.length);
+	lines.push('');
+	for (const item of items) lines.push((item.hit ? '  ✔ ' : '  ✘ ') + (item.node.model || item.node.type));
 	sim_ui.out.textContent = lines.join('\n');
 }
 
 function toggleSim() {
 	if (sim.timer) { clearInterval(sim.timer); sim.timer = null; sim_ui.out.textContent += '\n(已停止自动变化)'; return; }
 	simTick();
-	if (!sim_ui.autoChk.checked) return;
-	const period = Math.max(80, num(sim_ui.periodInp.value) || 800);
-	const stepValue = num(sim_ui.stepInp.value) || 0.5;
-	const min = num(sim_ui.minInp.value);
-	const max = num(sim_ui.maxInp.value);
-	let dir = 1;
+	const autoRows = Object.keys(sim_ui.rows).map(k => sim_ui.rows[k]).filter(r => r.enabled && r.auto);
+	if (!autoRows.length) return;
+	const period = Math.min.apply(null, autoRows.map(r => r.period));
 	sim.timer = setInterval(() => {
 		try {
-			let value = num(sim_ui.valueInp.value) + stepValue * dir;
-			if (sim_ui.ruleSel.value === 'wrap') { if (value > max) value = min; }
-			else { if (value > max) { value = max; dir = -1; } if (value < min) { value = min; dir = 1; } }
-			sim_ui.valueInp.value = String(value);
+			const now = Date.now();
+			for (const row of autoRows) {
+				if (!row.lastTick) row.lastTick = now;
+				if (now - row.lastTick < row.period) continue;
+				row.lastTick = now;
+				let value = num(row.value) + row.step * row.dir;
+				if (row.rule === 'wrap') { if (value > row.max) value = row.min; }
+				else { if (value > row.max) { value = row.max; row.dir = -1; } if (value < row.min) { value = row.min; row.dir = 1; } }
+				row.value = String(value);
+				if (row.el && row.el.val) row.el.val.value = row.value;
+			}
 			simTick();
 		} catch (error) { /* ignore */ }
 	}, period);
-}
-
-
-/* ============================== 模拟输入 ============================== */
-
-const sim = { timer: null, value: 0, dir: 1, inputs: { floats: [0, 0, 0, 0, 0, 0, 0, 0], colors: [0, 0, 0, 0], strings: ['', '', '', ''], flags: [false, false, false, false], selected: false, damage: 0 } };
-
-function simValue(node, inputs) {
-	const type = String((node && node.type) || '').replace(/^minecraft:/, '');
-	const prop = String((node && node.property) || '').replace(/^minecraft:/, '');
-	// 数值来源统一走 floats / 物品属性
-	const index = Number(node && node.index) || 0;
-	let value = 0;
-	if (prop === 'custom_model_data') value = Number((inputs.floats || [])[index] || 0);
-	else if (prop === 'custom_model_data_string') value = String((inputs.strings || [])[index] || '');
-	else if (prop === 'selected') value = inputs.selected ? 1 : 0;
-	else value = Number(inputs[prop] || 0);
-	if (node && node.scale) value *= Number(node.scale);
-	return value;
-}
-
-/** 按输入求值整棵映射树，返回 [{ node, hit }]（hit=false 表示该分支被条件挡掉） */
-function simEvaluate(node, inputs, allowOutside) {
-	const result = [];
-	if (!node) return result;
-	const type = String(node.type || '').replace(/^minecraft:/, '');
-	if (type === 'composite') {
-		for (const child of node.models || []) result.push(...simEvaluate(child, inputs, allowOutside));
-		return result;
-	}
-	if (type === 'range_dispatch') {
-		const value = simValue(node, inputs);
-		let best = null;
-		for (const entry of node.entries || []) {
-			const threshold = Number(entry.threshold);
-			if (threshold <= value && (!best || threshold >= Number(best.threshold))) best = entry;
-		}
-		for (const entry of node.entries || []) {
-			const isBest = best === entry;
-			for (const item of simEvaluate(entry.model, inputs, allowOutside)) result.push({ node: item.node, hit: item.hit && isBest });
-		}
-		if (best && node.fallback) for (const item of simEvaluate(node.fallback, inputs, allowOutside)) result.push({ node: item.node, hit: item.hit });
-		return result;
-	}
-	if (type === 'condition') {
-		const prop = String(node.property || 'minecraft:selected').replace(/^minecraft:/, '');
-		const ok = prop === 'selected' ? !!inputs.selected : !!inputs[prop];
-		for (const item of simEvaluate(ok ? node.on_true : node.on_false, inputs, allowOutside)) result.push({ node: item.node, hit: item.hit && ok });
-		return result;
-	}
-	if (type === 'model') { result.push({ node, hit: true }); return result; }
-	return result;
 }
 
 function openSimulator() {
