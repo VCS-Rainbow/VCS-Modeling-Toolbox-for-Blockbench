@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.55.0', api.VERSION, '0.55.0');
+eq('版本是 0.55.1', api.VERSION, '0.55.1');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -460,7 +460,12 @@ lockGroup.mesh = { visible: true };
 const lockCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0], export: true });
 lockCube.parent = lockGroup; lockGroup.children.push(lockCube); lockCube.mesh = { material: { map: { name: 'lk' } } };
 const activeGroup = new global.Group({ name: 'activeGroup' }); activeGroup.mesh = { visible: true };
+const detach = function () { this.selected = false; const at = global.Outliner.selected.indexOf(this); if (at >= 0) global.Outliner.selected.splice(at, 1); };
+lockGroup.selected = true; lockGroup.unselect = detach;
+lockCube.selected = true; lockCube.unselect = detach;
+global.Outliner.selected.push(lockGroup, lockCube);
 api.simApplyGroupVisual([{ group: lockGroup, active: false }, { group: activeGroup, active: true }], 'ghost_lock');
+eq('锁定后取消已选中元素', lockGroup.selected === false && lockCube.selected === false && global.Outliner.selected.length === 0, true);
 eq('半透明并锁定：未活跃组被锁', lockGroup.locked, true);
 eq('半透明并锁定：子方块被锁', lockCube.locked, true);
 eq('半透明并锁定：活跃组不锁', !!activeGroup.locked, false);

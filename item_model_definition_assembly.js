@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.55.0';
+const VERSION = '0.55.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2224,6 +2224,20 @@ function simHideGroup(group, on) {
 	}
 }
 
+let guardingLocked = false;
+/** 把已选中的锁定元素踢出选择（锁定分支不可选中） */
+function guardLockedSelection() {
+	if (guardingLocked) return;
+	if (typeof Outliner === 'undefined' || !Outliner || !Outliner.selected) return;
+	guardingLocked = true;
+	try {
+		for (const element of Outliner.selected.slice()) {
+			if (!element || !element.locked) continue;
+			try { if (typeof element.unselect === 'function') element.unselect(); } catch (e) { /* ignore */ }
+		}
+	} finally { guardingLocked = false; }
+}
+
 /** 运行时锁定/解锁分组及其所有子项（保存/恢复原有 lock 状态） */
 function simLockGroup(group, on) {
 	if (!group) return;
@@ -2244,6 +2258,7 @@ function simLockGroup(group, on) {
 		walk(group);
 		group.__immLock = saved;
 		for (const pair of saved) { try { pair[0].locked = true; } catch (e) { /* ignore */ } }
+		guardLockedSelection();
 	} else if (group.__immLock) {
 		for (const pair of group.__immLock) { try { pair[0].locked = pair[1]; } catch (e) { /* ignore */ } }
 		delete group.__immLock;
@@ -3113,6 +3128,7 @@ Plugin.register('item_model_definition_assembly', {
 		// 面板会自动出现在「视图 → 面板」里，不再占用 Tools 菜单
 		attachGroupMenu();
 		bindOutlinerHook();
+		try { Blockbench.on('update_selection', () => { try { guardLockedSelection(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
 		for (const event of ['add_group', 'remove_group', 'update_selection']) {
 			try { Blockbench.on(event, (data) => { simInvalidate(); scheduleBranchSync(data && data.object); }); } catch (e) { /* ignore */ }
 		}
@@ -3124,7 +3140,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
