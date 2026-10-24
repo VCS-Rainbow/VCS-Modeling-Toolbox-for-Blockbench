@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.11.0';
+const VERSION = '0.11.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -488,6 +488,8 @@ class Exporter {
 		if (type === 'range_dispatch') {
 			if (group.imm_tints) this.warn('分组 "' + labelOf(group) + '" 的 tints 只在 model / composite 生效，range_dispatch 已忽略。');
 			node.property = String(group.imm_property || 'minecraft:custom_model_data');
+			// custom_model_data 必须有 index，未填时默认 0
+			if (node.property === 'minecraft:custom_model_data' && node.index === undefined) node.index = 0;
 			const scale = num(group.imm_scale);
 			if (scale && scale !== 1) node.scale = clean(scale);
 			if (String(group.imm_index || '').length) node.index = clean(group.imm_index);
@@ -748,6 +750,32 @@ function runMerge(root) {
 	});
 }
 
+/* 把分支编号 / 条件写进子分组名最前方（幂等：先剥掉旧前缀） */
+function syncBranchLabels(group) {
+	const type = String((group && group.imm_type) || '').replace(/^minecraft:/, '');
+	if (type !== 'range_dispatch' && type !== 'condition') return 0;
+	const children = (group.children || []).filter(isGroup);
+	let exporter = null;
+	let changed = 0;
+	children.forEach((child, index) => {
+		let label = null;
+		if (type === 'condition') {
+			label = index === 0 ? 'on_true' : (index === 1 ? 'on_false' : null);
+		} else {
+			try { if (!exporter) exporter = createExporter(); } catch (e) { exporter = null; }
+			const formatted = exporter ? exporter.evalThreshold(group.imm_threshold_format, index) : null;
+			const manual = Number(child.imm_threshold) || 0;
+			label = String(formatted !== null ? formatted : (manual !== 0 ? manual : index));
+		}
+		if (label === null) return;
+		const prefix = '[' + label + '] ';
+		const base = String(child.name || '').replace(/^\[[^\]]*\]\s*/, '');
+		const next = prefix + base;
+		if (next !== child.name) { child.name = next; changed++; }
+	});
+	return changed;
+}
+
 function pickTargetGroup() {
 	const found = [];
 	const push = (n) => { if (isGroup(n) && found.indexOf(n) < 0) found.push(n); };
@@ -825,13 +853,14 @@ function editGroupProps() {
 					}
 				};
 				walkTint(group, root_index);
+				const relabeled = syncBranchLabels(group);
 				if (tinted) {
 					Project.saved = false;
 					try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 					try { if (typeof UVEditor !== 'undefined' && UVEditor.updateView) UVEditor.updateView(); } catch (e) { /* ignore */ }
 				}
 Undo.finishEdit('修改分组映射属性');
-				Blockbench.showQuickMessage('已更新 “' + labelOf(group) + '”' + (tinted ? ('，为 ' + tinted + ' 个方块自动勾选着色') : ''), 2500);
+				Blockbench.showQuickMessage('已更新 “' + labelOf(group) + '”' + (tinted ? ('，为 ' + tinted + ' 个方块自动勾选着色') : '') + (relabeled ? ('，更新 ' + relabeled + ' 个分支名') : ''), 2500);
 			} catch (error) {
 				console.error(error);
 				Blockbench.showMessageBox({ title: '修改失败', message: String((error && error.message) || error), icon: 'error' });
