@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.61.5';
+const VERSION = '0.59.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2280,60 +2280,6 @@ function guardLockedSelection() {
 }
 
 /** 运行时锁定/解锁分组及其所有子项（保存/恢复原有 lock 状态） */
-let guardingBox = false;
-let immBoxSetting = null;
-let immBoxFallback = false;
-function boxGroupsEnabled() {
-	// 装配格式内强制开启；其它格式按开关（默认关）
-	try { if (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID) return true; } catch (e) { /* ignore */ }
-	return immBoxSetting ? (immBoxSetting.value === true) : immBoxFallback;
-}
-function setBoxSelectGroups(value) {
-	immBoxFallback = !!value;
-	if (immBoxSetting) immBoxSetting.value = !!value;
-	return boxGroupsEnabled();
-}
-/** 内建模型：仅 inline（内联模型）分组；引用模型（model）不算例外 */
-function isBuiltInModelGroup(group) {
-	let node = group;
-	while (node && isGroup(node)) {
-		const type = String(node.imm_type || '').replace(/^minecraft:/, '');
-		if (type === 'inline') return true;
-		node = node.parent;
-	}
-	return false;
-}
-
-/** 一次选中多个方块时，改为选中它们各自的父分组 */
-function guardBoxSelection() {
-	if (guardingBox || !boxGroupsEnabled()) return;
-	if (typeof Outliner === 'undefined' || !Outliner || !Array.isArray(Outliner.selected)) return;
-	const cubes = Outliner.selected.filter(isCube);
-	if (cubes.length < 2) return;
-	const groups = [];
-	for (const cube of cubes) {
-		const parent = cube && cube.parent;
-		if (isGroup(parent) && groups.indexOf(parent) < 0) groups.push(parent);
-	}
-	if (!groups.length) return;
-	// 只选了内建模型里的元素：保持原样，便于直接编辑引用模型内部
-	if (groups.every(isBuiltInModelGroup)) return;
-	// 分组及其全部子项都已选中（上一次转换已经完成）→ 不再处理
-	if (groups.every(group => group.selected && (group.children || []).every(child => child.selected))) return;
-	// 父分组已经处于选中状态：说明这是“单击分组”的结果，不要再把子元素取消
-	guardingBox = true;
-	try {
-		for (const group of groups) {
-			try {
-				if (typeof group.select === 'function') group.select({ ctrlOrCmd: true }, true);
-				else if (typeof group.markAsSelected === 'function') group.markAsSelected();
-				else group.selected = true;
-			} catch (e) { /* ignore */ }
-		}
-		try { if (typeof updateSelection === 'function') updateSelection(); } catch (e) { /* ignore */ }
-	} finally { guardingBox = false; }
-}
-
 let guardingBatch = false;
 let immBatchSetting = null;
 let immBatchFallback = false;
@@ -3126,13 +3072,6 @@ Plugin.register('item_model_definition_assembly', {
 		try {
 		try {
 			if (typeof Setting !== 'undefined') {
-				immBoxSetting = new Setting('imm_box_select_groups', {
-					name: '框选/多选方块时自动改选所属分组',
-					description: '一次选中两个及以上方块时，自动取消方块、改为选中它们各自的父分组；单选一个方块不处理。',
-					category: 'edit',
-					type: 'checkbox',
-					value: false,
-				});
 				immBatchSetting = new Setting('imm_batch_groups_only', {
 					name: '批量选择分组时自动取消单个元素',
 					description: '同时选中两个及以上分组时，自动取消被一起选中的方块/定位点，避免批量操作误改单个元素。',
@@ -3208,7 +3147,6 @@ Plugin.register('item_model_definition_assembly', {
 		actions.viewDiag = new Action('imm_view_diag', { name: '诊断：模拟视图联动', description: '打印匹配到的分组/方块/材质数量', icon: 'bug_report', category: 'tools', condition, click: diagnoseSimView });
 		actions.pivot = new Action('imm_fix_pivot', { name: '枢轴归位（对齐几何中心）…', description: '把分组 origin 移到几何中心，补偿方块坐标，外观不变', icon: 'center_focus_strong', category: 'tools', condition, click: openPivotFix });
 		actions.props = new Action('imm_group_props', { name: '编辑分组映射属性…', description: '映射类型 / 引用模型 / property 等', icon: 'tune', category: 'tools', condition, click: editGroupProps });
-		actions.boxToggle = new Action('imm_box_toggle', { name: '开关：框选方块时改选所属分组', description: '切换“一次选中多个方块时自动改为选中其父分组”', icon: 'select_all', category: 'tools', click: () => { if (!immBoxSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !boxGroupsEnabled(); setBoxSelectGroups(next); try { if (typeof immBoxSetting.save === 'function') immBoxSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('框选方块改选所属分组：' + (next ? '开' : '关') + (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID ? '（装配格式内强制开启）' : ''), 2600); } });
 		actions.batchToggle = new Action('imm_batch_toggle', { name: '开关：批量选择时取消单个元素', description: '切换“同时选中多个分组时自动取消方块/定位点选择”', icon: 'select_all', category: 'tools', click: () => { if (!immBatchSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !batchGroupsOnlyEnabled(); setBatchGroupsOnly(next); try { if (typeof immBatchSetting.save === 'function') immBatchSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('批量选择时取消单个元素：' + (next ? '开' : '关'), 2200); } });
 		actions.editCall = new Action('imm_edit_call', { name: '编辑复调用标签…', description: '修改选中的复调用 Locator 指向的分组或模型 id', icon: 'edit', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && Locator.selected && Locator.selected.length > 0), click: () => { const locator = (Locator.selected && Locator.selected[0]) || null; if (!locator) { Blockbench.showMessageBox({ title: '请先选中复调用标签', message: '在 outliner 里选中一个 Locator（复调用标签）。', icon: 'info' }); return; } editCallTag(locator); } });
 
@@ -3223,14 +3161,13 @@ Plugin.register('item_model_definition_assembly', {
 		addMenu(actions.props, 'tools');
 		addMenu(actions.editCall, 'tools');
 		addMenu(actions.batchToggle, 'tools');
-		addMenu(actions.boxToggle, 'tools');
 		addMenu(actions.pivot, 'tools');
 		addMenu(actions.viewDiag, 'tools');
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
 		// 面板会自动出现在「视图 → 面板」里，不再占用 Tools 菜单
 		attachGroupMenu();
 		bindOutlinerHook();
-		try { Blockbench.on('update_selection', () => { try { guardLockedSelection(); } catch (e) { /* ignore */ } try { guardBatchSelection(); } catch (e) { /* ignore */ } try { guardBoxSelection(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
+		try { Blockbench.on('update_selection', () => { try { guardLockedSelection(); } catch (e) { /* ignore */ } try { guardBatchSelection(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
 		for (const event of ['add_group', 'remove_group', 'update_selection']) {
 			try { Blockbench.on(event, (data) => { simInvalidate(); scheduleBranchSync(data && data.object); }); } catch (e) { /* ignore */ }
 		}
@@ -3242,7 +3179,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
