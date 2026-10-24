@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.62.0';
+const VERSION = '0.62.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2309,7 +2309,7 @@ function guardBoxSelection() {
 	if (guardingBox || !boxGroupsEnabled()) return;
 	if (typeof Outliner === 'undefined' || !Outliner || !Array.isArray(Outliner.selected)) return;
 	const selectedCubes = Outliner.selected.filter(isCube);
-	if (selectedCubes.length < 2) return;
+	if (!selectedCubes.length) return;
 	const parents = [];
 	for (const cube of selectedCubes) {
 		const parent = cube && cube.parent;
@@ -2318,26 +2318,35 @@ function guardBoxSelection() {
 	if (!parents.length) return;
 	// 只选了内建模型里的元素：保持原样，便于直接编辑引用模型内部
 	if (parents.every(isBuiltInModelGroup)) return;
+	const isSelected = (node) => !!(node && (node.selected || (Array.isArray(Outliner.selected) && Outliner.selected.indexOf(node) >= 0)));
 	guardingBox = true;
 	let changed = false;
 	try {
-		// 后序遍历：子分组先判断；某组的所有子项（分组/元素）都选中时，选中该组并继续往上传
-		const visit = (group) => {
-			for (const child of (group.children || [])) if (isGroup(child)) visit(child);
-			const children = (group.children || []);
-			if (!children.length || group.selected) return;
-			const isSelected = (child) => !!(child && (child.selected || (Array.isArray(Outliner.selected) && Outliner.selected.indexOf(child) >= 0)));
-			if (!children.every(isSelected)) return;
-			try {
-				if (typeof group.multiSelect === 'function') group.multiSelect();
-				else {
-					group.selected = true;
-					if (typeof Outliner !== 'undefined' && Outliner && Array.isArray(Outliner.selected) && Outliner.selected.indexOf(group) < 0) Outliner.selected.push(group);
-				}
-				changed = true;
-			} catch (e) { /* ignore */ }
+		const pushSelected = (node) => {
+			try { if (typeof node.markAsSelected === 'function') node.markAsSelected(); else node.selected = true; } catch (e) { node.selected = true; }
+			if (Array.isArray(Outliner.selected) && Outliner.selected.indexOf(node) < 0) Outliner.selected.push(node);
 		};
-		for (const root of (Outliner.root || [])) if (isGroup(root)) visit(root);
+		// 像单击分组：选中分组自身 + 它的全部子项（同层/后代都选上）
+		const selectWholeGroup = (group) => {
+			if (!group.selected) { group.selected = true; changed = true; }
+			try { if (typeof group.multiSelect === 'function') group.multiSelect(); } catch (e) { /* ignore */ }
+			pushSelected(group);
+			for (const child of (group.children || [])) {
+				if (!isSelected(child)) changed = true;
+				pushSelected(child);
+			}
+		};
+		for (const parent of parents) {
+			if (parent.selected && isSelected(parent) && (parent.children || []).every(isSelected)) continue;
+			selectWholeGroup(parent);
+		}
+		// 继续向上：祖先的所有子项都选中时也选中它
+		let node = parents[0] ? parents[0].parent : null;
+		while (isGroup(node)) {
+			const children = (node.children || []);
+			if (children.length && children.every(isSelected)) selectWholeGroup(node);
+			node = node.parent;
+		}
 		if (changed) { try { if (typeof updateSelection === 'function') updateSelection(); } catch (e) { /* ignore */ } }
 	} finally { guardingBox = false; }
 }

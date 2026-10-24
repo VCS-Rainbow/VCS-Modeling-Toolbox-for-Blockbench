@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.62.0', api.VERSION, '0.62.0');
+eq('版本是 0.62.1', api.VERSION, '0.62.1');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -580,10 +580,12 @@ const pc2 = new global.Cube({ from: [2, 0, 0], to: [3, 1, 1], origin: [2, 0, 0],
 const pc3 = new global.Cube({ from: [4, 0, 0], to: [5, 1, 1], origin: [4, 0, 0], rotation: [0, 0, 0] });
 pc1.parent = partialGroup; pc2.parent = partialGroup; pc3.parent = partialGroup;
 partialGroup.children.push(pc1, pc2, pc3);
-global.Outliner.selected.length = 0; pc1.selected = true; pc2.selected = true; pc3.selected = false; pc1.parent.selected = false;
-global.Outliner.selected.push(pc1, pc2);
+global.Outliner.selected.length = 0; pc1.selected = true; pc2.selected = false; pc3.selected = false; partialGroup.selected = false;
+global.Outliner.selected.push(pc1);
 api.guardBoxSelection();
-eq('部分子项选中时不选中分组', !!partialGroup.selected, false);
+eq('只选一个元素也选中父组', !!partialGroup.selected, true);
+eq('同层元素一起被选中', pc2.selected === true && pc3.selected === true, true);
+
 const childGroup = new global.Group({ name: 'childGroup' });
 const parentGroup = new global.Group({ name: 'parentGroup' });
 global.Outliner.root.push(parentGroup);
