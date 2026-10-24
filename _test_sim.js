@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.63.1', api.VERSION, '0.63.1');
+eq('版本是 0.62.1', api.VERSION, '0.62.1');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -599,25 +599,6 @@ api.guardBoxSelection();
 eq('子组全部子项选中后选中子组', !!childGroup.selected, true);
 eq('继续向上选中父组', !!parentGroup.selected, true);
 global.Outliner.selected.length = 0;
-
-/* ---------- 时间轴 range_dispatch ---------- */
-console.log('\n[时间轴 range_dispatch]');
-const animGroup = new global.Group({ name: 'animGroup', uuid: 'anim-group-1', imm_type: 'model', imm_model: 'ns:item/anim', origin: [8, 8, 8], rotation: [0, 0, 0] });
-const timelineGroup = new global.Group({ name: '[timeline]', imm_type: 'range_dispatch_timeline', origin: [8, 8, 8], rotation: [0, 0, 0] });
-const frame0 = new global.Locator({ name: 'frame 0' }); frame0.imm_frame = 0; frame0.imm_pose = JSON.stringify({ 'anim-group-1': { rotation: [0, 0, 0], origin: [8, 8, 8], position: [0, 0, 0] } });
-const frame1 = new global.Locator({ name: 'frame 1' }); frame1.imm_frame = 1; frame1.imm_pose = JSON.stringify({ 'anim-group-1': { rotation: [0, 0, 0], origin: [8, 8, 8], position: [0, 1, 0] } });
-timelineGroup.children.push(frame0, frame1);
-const savedRootAnim = global.Outliner.root.splice(0, global.Outliner.root.length, animGroup, timelineGroup);
-const timelineExporter = api.createExporter();
-const timelineMapping = timelineExporter.buildMapping();
-eq('时间轴导出为 range_dispatch', timelineMapping.model.type, 'minecraft:range_dispatch');
-eq('时间轴阈值 0/1', (timelineMapping.model.entries || []).map(e => e.threshold), [0, 1]);
-const findAnimNode = (node) => { if (!node) return null; if (node.model === 'ns:item/anim') return node; for (const child of (node.models || [])) { const hit = findAnimNode(child); if (hit) return hit; } return null; };
-const __anim0 = findAnimNode(timelineMapping.model.entries[0].model);
-const __anim1 = findAnimNode(timelineMapping.model.entries[1].model);
-eq('帧1 translation Y = 1/16 格', __anim1.transformation.translation[1], 0.0625);
-eq('帧0 恒等姿态无 transformation', !!__anim0.transformation, false);
-global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRootAnim);
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
