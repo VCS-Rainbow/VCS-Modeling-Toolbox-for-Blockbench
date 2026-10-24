@@ -26,7 +26,10 @@ class FakeEl {
 global.document = { createElement: (tag) => new FakeEl(tag) };
 global.Panel = class { constructor(id, options) { this.id = id; this.node = new FakeEl('div'); this.options = options || {}; } show() { } delete() { } };
 
-global.THREE = { Quaternion, Euler };
+global.THREE = {
+	Quaternion, Euler,
+	MeshBasicMaterial: class { constructor(o) { Object.assign(this, o || {}); this.color = { v: (o && o.color) || 0xffffff, setHex(h) { this.v = h; } }; } dispose() { } },
+};
 global.Texture = class { constructor(o) { Object.assign(this, o); } }; Texture.all = [];
 global.Cube = class { constructor(o) { Object.assign(this, o); } }; global.Cube.all = [];
 global.Group = class { constructor(o) { Object.assign(this, o); this.children = []; } }; global.Group.all = [];
@@ -68,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.47.0', api.VERSION, '0.47.0');
+eq('版本是 0.48.0', api.VERSION, '0.48.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -391,6 +394,26 @@ eq('复调用标签被替换为目标分组节点（几何只生成一次）', (
 eq('导出结果不含占位字段', callJSON.indexOf('__imm_call_group'), -1);
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRoot3);
 global.Group.all.splice(global.Group.all.indexOf(targetGroup), 1);
+
+/* ---------- colors 预览着色 ---------- */
+console.log('\n[colors 预览着色]');
+const tintCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0], export: true });
+tintCube.faces = { north: { tint: 0, uv: [0, 0, 2, 2] }, east: { tint: -1 }, south: { tint: -1 } };
+const tintOriginal = { map: { name: 'tex' }, side: 2 };
+tintCube.mesh = { material: tintOriginal };
+const tintGroup = new global.Group({ name: 'tintGroup', imm_type: 'composite' });
+tintGroup.children.push(tintCube);
+tintGroup.mesh = { visible: true };
+const savedRoot4 = global.Outliner.root.splice(0, global.Outliner.root.length, tintGroup);
+const simState2 = api.getSimState();
+simState2.inputs.colors[0] = 0xFFFF0000 | 0;
+api.simApplyTints();
+eq('colors[0] 给 tintindex 0 的方块着色', tintCube.mesh.material.color.v, 0xff0000);
+eq('着色不改原纹理对象', tintCube.mesh.material.map === tintOriginal.map, true);
+simState2.inputs.colors.length = 0;
+api.simApplyTints();
+eq('清空 colors 后恢复原材质', tintCube.mesh.material === tintOriginal, true);
+global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRoot4);
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));

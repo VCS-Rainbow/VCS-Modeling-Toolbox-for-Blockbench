@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.47.0';
+const VERSION = '0.48.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1934,10 +1934,90 @@ function simApplySlot(inputs, key, slot) {
 /* ============================== 模拟视图联动 ============================== */
 /* 只改运行时材质/可见性：不碰纹理、UV、元素数据，也不写项目/撤销。 */
 
+/* 预览着色：按面的 tintindex 取 colors[tintindex]，只替换运行时材质，不改纹理/UV */
+function simTintColorOf(cube) {
+	const faces = cube && cube.faces;
+	if (!faces) return null;
+	let index = null;
+	for (const dir of FACE_KEYS) {
+		const face = faces[dir];
+		if (face && typeof face.tint === 'number' && face.tint >= 0) { index = face.tint; break; }
+	}
+	if (index === null) return null;
+	const raw = (sim.inputs.colors || [])[index];
+	if (raw == null) return null;
+	const argb = raw >>> 0;
+	if (((argb >>> 24) & 0xff) === 0) return null;
+	return (((argb >> 16) & 0xff) << 16) | (((argb >> 8) & 0xff) << 8) | (argb & 0xff);
+}
+
+function simRestoreCubeTint(mesh) {
+	if (!mesh || !mesh.__immTint) return;
+	const saved = mesh.__immTint;
+	try { mesh.material = saved.original; } catch (e) { /* ignore */ }
+	const clones = Array.isArray(saved.cloned) ? saved.cloned : [saved.cloned];
+	for (const clone of clones) {
+		if (!clone || clone === saved.original) continue;
+		try { if (typeof clone.dispose === 'function') clone.dispose(); } catch (e) { /* ignore */ }
+	}
+	delete mesh.__immTint;
+}
+
+function simApplyCubeTint(cube, color) {
+	const mesh = cube && cube.mesh;
+	if (!mesh || !mesh.material) return;
+	// 幽灵优先：不活跃分支的半透明/隐藏态下不再叠着色
+	if (mesh.__immGhost) { simRestoreCubeTint(mesh); return; }
+	if (mesh.__immTint) {
+		if (mesh.__immTint.key === String(color)) return;
+		simRestoreCubeTint(mesh);
+	}
+	if (color == null) return;
+	try {
+		const original = mesh.material;
+		const make = (material) => {
+			const map = (material && material.uniforms && material.uniforms.map && material.uniforms.map.value) || (material && material.map) || null;
+			const options = { map, color, transparent: true, depthWrite: true };
+			if (material && typeof material.side === 'number') options.side = material.side;
+			const basic = new THREE.MeshBasicMaterial(options);
+			basic.alphaTest = 0.01;
+			return basic;
+		};
+		const cloned = Array.isArray(original) ? original.map(make) : make(original);
+		mesh.__immTint = { key: String(color), original, cloned };
+		mesh.material = cloned;
+	} catch (error) { /* ignore */ }
+}
+
+function simApplyTints() {
+	if (typeof Outliner === 'undefined' || !Outliner) return;
+	const walk = (nodes) => {
+		for (const node of nodes || []) {
+			if (!isGroup(node)) continue;
+			for (const child of (node.children || [])) if (isCube(child)) simApplyCubeTint(child, simTintColorOf(child));
+			walk(node.children);
+		}
+	};
+	walk(Outliner.root);
+}
+
+function simRestoreTints() {
+	if (typeof Outliner === 'undefined' || !Outliner) return;
+	const walk = (nodes) => {
+		for (const node of nodes || []) {
+			if (!isGroup(node)) continue;
+			for (const child of (node.children || [])) if (isCube(child)) simRestoreCubeTint(child.mesh);
+			walk(node.children);
+		}
+	};
+	walk(Outliner.root);
+}
+
 function simGhostCube(cube, on) {
 	const mesh = cube && cube.mesh;
 	if (!mesh || !mesh.material) return;
 	if (on) {
+		simRestoreCubeTint(mesh);
 		if (mesh.__immGhost) {
 			if (mesh.material === mesh.__immGhost.cloned) return;
 			// Blockbench 把材质换回去了：丢弃旧记录，按当前材质重新克隆
@@ -2066,6 +2146,7 @@ function simStartViewLoop() {
 	if (sim.viewTimer) return;
 	sim.viewTimer = setInterval(() => {
 		try { if (sim.lastItems) simApplyView(sim.lastItems); } catch (error) { /* ignore */ }
+		try { simApplyTints(); } catch (error) { /* ignore */ }
 	}, 250);
 }
 
@@ -2075,10 +2156,12 @@ function simSetViewMode(mode) {
 	if (sim.viewMode === 'off') {
 		simStopViewLoop();
 		simRestoreView();
+		simRestoreTints();
 		return;
 	}
 	simStartViewLoop();
 	simApplyView(sim.lastItems || []);
+	try { simApplyTints(); } catch (error) { /* ignore */ }
 }
 
 
@@ -2471,6 +2554,7 @@ function simTick() {
 	const hits = items.filter(item => item.hit && item.node.model).map(item => item.node.model);
 	sim.lastItems = items;
 	try { simApplyView(items); } catch (error) { /* ignore */ }
+	try { simApplyTints(); } catch (error) { /* ignore */ }
 	// 每个槽单独求值一次，得到它自己的命中数（角标）
 	for (const key of Object.keys(sim_ui.rows)) {
 		const row = sim_ui.rows[key];
@@ -2818,14 +2902,14 @@ Plugin.register('item_model_definition_assembly', {
 			try { Blockbench.on(event, (data) => { simInvalidate(); scheduleBranchSync(data && data.object); }); } catch (e) { /* ignore */ }
 		}
 		for (const event of ['select_project', 'finished_loading_project', 'update_selection']) {
-			try { Blockbench.on(event, () => { try { simRestoreView(); } catch (viewError) { /* ignore */ } simInvalidate(); attachGroupMenu(); }); } catch (e) { /* ignore */ }
+			try { Blockbench.on(event, () => { try { simRestoreView(); simRestoreTints(); } catch (viewError) { /* ignore */ } simInvalidate(); attachGroupMenu(); }); } catch (e) { /* ignore */ }
 		}
 		for (const event of ['select_project', 'finished_loading_project']) {
 			try { Blockbench.on(event, ensurePackVersion); } catch (e) { /* ignore */ }
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, simApplyGroupVisual, simRestoreView, simSetViewMode, createExporter, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, createExporter, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
@@ -2837,6 +2921,7 @@ Plugin.register('item_model_definition_assembly', {
 		try { if (sim.tickTimer) { clearTimeout(sim.tickTimer); sim.tickTimer = null; } } catch (e) { /* ignore */ }
 		try { simStopViewLoop(); } catch (e) { /* ignore */ }
 		try { simRestoreView(); } catch (e) { /* ignore */ }
+		try { simRestoreTints(); } catch (e) { /* ignore */ }
 		try { if (sim_panel && typeof sim_panel.delete === 'function') sim_panel.delete(); } catch (e) { /* ignore */ }
 		sim_panel = null;
 		sim_ui = null;
