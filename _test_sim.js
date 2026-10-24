@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.53.2', api.VERSION, '0.53.2');
+eq('版本是 0.53.3', api.VERSION, '0.53.3');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -447,6 +447,11 @@ const batchResult = { imm_type: 'inline', imm_tint_type: '', imm_tint_index: 0 }
 api.assignGroupMapProps(batchA, batchResult);
 api.assignGroupMapProps(batchB, batchResult);
 eq('同一结果应用到多个分组', batchA.imm_type === 'inline' && batchB.imm_type === 'inline' && batchA.imm_tint_type === 'none' && batchB.imm_tint_type === 'none', true);
+
+/* ---------- 导入 tintindex 判定 ---------- */
+console.log('\n[导入 tintindex 判定]');
+eq('模型已有 tintindex', api.modelElementsHaveTintIndex([{ faces: { north: { tintindex: 0 }, east: {} } }]), true);
+eq('模型没有 tintindex', api.modelElementsHaveTintIndex([{ faces: { north: { uv: [0, 0, 1, 1] } } }]), false);
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));

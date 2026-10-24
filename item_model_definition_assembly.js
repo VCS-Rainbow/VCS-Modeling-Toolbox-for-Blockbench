@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.53.2';
+const VERSION = '0.53.3';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1734,6 +1734,18 @@ function getOrCreateModelTexture(pathmod, fsmod, root, reference) {
 	}
 }
 
+/** 模型文件里是否已有任意 tintindex（有则不整体补，保留原有分布） */
+function modelElementsHaveTintIndex(elements) {
+	for (const element of (elements || [])) {
+		for (const face of Object.values((element && element.faces) || {})) {
+			if (!face) continue;
+			const tint = (typeof face.tintindex === 'number') ? face.tintindex : ((typeof face.tint === 'number') ? face.tint : -1);
+			if (tint >= 0) return true;
+		}
+	}
+	return false;
+}
+
 /** 把 Java 模型转成方块并放进分组；成功后才清空原有子项 */
 let importingModel = false;
 let lastImportKey = '';
@@ -1873,6 +1885,8 @@ function importModelReference(group) {
 			if (texture) cube.faces[dir].texture = texture.uuid;
 			if (src.rotation) cube.faces[dir].rotation = Number(src.rotation) || 0;
 			if (src.cullface) cube.faces[dir].cullface = String(src.cullface);
+			const srcTint = (typeof src.tintindex === 'number') ? src.tintindex : ((typeof src.tint === 'number') ? src.tint : null);
+			if (srcTint !== null && srcTint >= 0) cube.faces[dir].tint = srcTint;
 		}
 		if (created.length === 0) {
 			const keys = Object.keys(cube.faces || {});
@@ -1881,7 +1895,8 @@ function importModelReference(group) {
 		created.push(cube);
 	});
 		// 着色配置有效时，给所有导入方块补 tintindex（面原本没有 tint 的才补）
-		if (hasSourceTint && /^-?\d+$/.test(sourceTintIndex)) {
+		const importedHasTint = modelElementsHaveTintIndex(elements);
+		if (hasSourceTint && !importedHasTint && /^-?\d+$/.test(sourceTintIndex)) {
 			const tintValue = Number(sourceTintIndex);
 			const applyTint = (nodes) => {
 				for (const node of (nodes || [])) {
@@ -3015,7 +3030,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

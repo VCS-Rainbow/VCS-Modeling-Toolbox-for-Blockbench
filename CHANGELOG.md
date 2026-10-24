@@ -2,6 +2,9 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.53.3
+- **引用模型导入保留自带 tintindex**：面的 `tintindex`（兼容 `tint`）会原样写入；只要模型里**任意一个面**已有 tintindex，就不再用目标分组的索引给所有面整体补 tint；只有模型完全没有 tintindex 时才补全。
+
 ## 0.53.2
 - **引用模型的着色配置下发给所有子项分组**：导入时把目标分组的 `imm_tint_type` / `imm_tint_index` / `imm_tint_value` / `imm_tints` 复制到每个导入子分组（inline），并给导入方块的缺失面补上 `face.tint = 着色 index`（已有的不覆盖）。
 - 目标分组设为「不生成 tints」（`''` / `none`）时不下发。
