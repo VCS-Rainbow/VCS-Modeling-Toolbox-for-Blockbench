@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.52.1';
+const VERSION = '0.53.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1686,20 +1686,24 @@ function resolveJavaModel(pathmod, fsmod, root, reference) {
 	let current = String(reference || '').trim();
 	const seen = {};
 	let elements = null;
+	let groups = null;
 	const textureRefs = {};
 	for (let depth = 0; depth < 12 && current; depth++) {
 		if (seen[current]) break;
 		seen[current] = true;
 		const json = readJSONFile(pathmod, fsmod, modelPathOf(pathmod, root, current));
 		if (!json) return { error: '找不到模型文件：' + current + '\n完整路径：' + modelPathOf(pathmod, root, current) + '\n资源包工程：' + root };
-		if (!elements && Array.isArray(json.elements)) elements = json.elements;
+		if (!elements && Array.isArray(json.elements)) {
+			elements = json.elements;
+			groups = Array.isArray(json.groups) ? json.groups : null;
+		}
 		for (const key of Object.keys(json.textures || {})) {
 			if (!(key in textureRefs)) textureRefs[key] = json.textures[key];
 		}
 		current = typeof json.parent === 'string' ? json.parent : '';
 	}
 	if (!elements || !elements.length) return { error: '该模型没有 elements（可能是纯引用模型）' };
-	return { elements, textures: textureRefs };
+	return { elements, groups, textures: textureRefs };
 }
 
 /** 'sqsp:item/inker/jet_rifle/sac.full' -> Texture（找不到就按路径加载 PNG） */
@@ -1774,6 +1778,26 @@ function importModelReference(group) {
 		}
 		const created = [];
 		const textureMap = {};
+		// 模型文件里的 groups → Blockbench 分组（内联模型）
+		const importedGroups = [];
+		const elementGroup = {};
+		for (let gi = 0; gi < ((resolved.groups || []).length); gi++) {
+			const src = resolved.groups[gi];
+			if (!src || !Array.isArray(src.children) || !src.children.length) continue;
+			try {
+				const origin = Array.isArray(src.origin)
+					? src.origin.map((v, a) => (Number(v) || 0) + (Number(import_base[a]) || 0))
+					: [Number(import_base[0]) || 0, Number(import_base[1]) || 0, Number(import_base[2]) || 0];
+				const rotation = Array.isArray(src.rotation) ? src.rotation.map(v => Number(v) || 0) : [0, 0, 0];
+				const groupNode = new Group({ name: String(src.name || ('group_' + (gi + 1))), origin, rotation }).addTo(import_holder);
+				try { if (typeof groupNode.init === 'function') groupNode.init(); } catch (e) { /* ignore */ }
+				try { if (typeof groupNode.createUniqueName === 'function') groupNode.createUniqueName(); } catch (e) { /* ignore */ }
+				groupNode.imm_type = 'inline';
+				importedGroups.push(groupNode);
+				for (const childIndex of src.children) elementGroup[Number(childIndex)] = groupNode;
+			} catch (error) { console.warn('[装配] 创建导入分组失败', error); }
+		}
+		console.log('[装配] 导入分组', importedGroups.length, '个（inline）');
 		for (const key of Object.keys(resolved.textures || {})) {
 			const value = String(resolved.textures[key] || '');
 			const id = value.charAt(0) === '#' ? (resolved.textures[value.slice(1)] || value) : value;
@@ -1794,7 +1818,7 @@ function importModelReference(group) {
 				(Number(el.to[1]) || 0) + (Number(import_base[1]) || 0),
 				(Number(el.to[2]) || 0) + (Number(import_base[2]) || 0),
 			],
-		}).addTo(group);
+		}).addTo(elementGroup[index] || import_holder);
 		try { if (typeof cube.init === 'function') cube.init(); } catch (e) { console.warn('[装配] cube.init 失败', e); }
 		if (typeof Cube !== 'undefined' && Array.isArray(Cube.all) && Cube.all.indexOf(cube) < 0) Cube.all.push(cube);
 		try { cube.visibility = true; } catch (e) { /* ignore */ }

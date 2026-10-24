@@ -175,6 +175,8 @@ Blockbench 5.x 的实现方式有两条，本插件都接上了：
 1. **格式级 `parent_model_id`**：`ModelFormat` 的选项 `parent_model_id: true`，会在**项目设置**里生成一个 parent model id 字段（`Project.parent_model_id`）；
 2. **分组级 `引用模型`（`imm_model`）**：直接写 Java 版模型 id，导出成 `{"type":"minecraft:model","model":"<id>"}` —— 这就是“把 Java 版方块/物品模型当作子项”。
 
+> 导入时按模型文件的 `groups` 创建分组，并标记为 `inline`（内联模型）；组的 origin/rotation 会一并写入。
+
 编辑器里想看到被引用模型的几何体：用 `File → Import` 导入该 Java Block/Item 模型并选择“导入到当前项目”，再把它放进对应分组（导入的方块可删可留，导出时用 `imm_model` 指向原模型即可）。
 
 ## 已知限制
