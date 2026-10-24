@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.28.0';
+const VERSION = '0.28.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1439,6 +1439,9 @@ let sim_panel = null;
 let sim_ui = null;
 
 function buildSimPanel(show_panel) {
+	if (!sim_panel) {
+		try { if (typeof Panels !== 'undefined' && Panels['imm_sim_panel']) sim_panel = Panels['imm_sim_panel']; } catch (e) { /* ignore */ }
+	}
 	if (sim_panel) { if (show_panel !== false) sim_panel.show(); return sim_panel; }
 	if (typeof Panel === 'undefined') return null;
 	if (typeof document === 'undefined') return null;
@@ -1830,6 +1833,9 @@ Plugin.register('item_model_definition_assembly', {
 		}
 	},
 	onunload() {
+		try { if (sim_panel && typeof sim_panel.delete === 'function') sim_panel.delete(); } catch (e) { /* ignore */ }
+		sim_panel = null;
+		sim_ui = null;
 		menuAttached = false;
 		for (const key of Object.keys(actions)) {
 			try { if (actions[key]) actions[key].delete(); } catch (e) { /* ignore */ }
