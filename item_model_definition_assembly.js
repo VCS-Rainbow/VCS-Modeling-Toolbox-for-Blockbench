@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.22.0';
+const VERSION = '0.22.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -964,7 +964,8 @@ function sortBranchChildren(parent) {
 	const unchanged = sorted.every((child, index) => child === groups[index]);
 	if (unchanged) return 0;
 	const others = parent.children.filter(child => !isGroup(child));
-	parent.children = sorted.concat(others);
+	parent.children.length = 0;
+	for (const child of sorted.concat(others)) parent.children.push(child);
 	return sorted.length;
 }
 
@@ -1270,7 +1271,9 @@ function getOrCreateModelTexture(pathmod, fsmod, root, reference) {
 	const png = pathmod.join(root, 'assets', ns, 'textures', path + '.png');
 	const name = path.split('/').pop();
 	const all = (typeof Texture !== 'undefined' && Texture.all) ? Texture.all : [];
-	const existing = all.find(t => t && (t.name === name || (t.path && String(t.path).replace(/\\/g, '/').endsWith('assets/' + ns + '/textures/' + path + '.png'))));
+	const norm = (v) => String(v || "").toLowerCase().replace(/\.png$/, "");
+	const wantName = norm(name);
+	const existing = all.find(t => { if (!t) return false; if (norm(t.name) === wantName) return true; const p = norm(String(t.path || "").replace(/\\/g, "/")); return p.endsWith("/" + norm(path) + ".png") || p.endsWith("/" + wantName + ".png"); });
 	if (existing) return existing;
 	if (!fsmod.existsSync(png)) { console.warn('[装配] 纹理不存在：' + png); return null; }
 	try {
