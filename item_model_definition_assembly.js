@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.32.2';
+const VERSION = '0.32.3';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1502,6 +1502,8 @@ function buildSimPanel(show_panel) {
 		if (head.children.length > 1) { const clusterA = head.children[head.children.length - 1]; body.insertBefore(clusterA, body.firstChild); }
 		body.appendChild(bodyB);
 		body.appendChild(bodyC);
+// 关联信息确保留在 body 之后、独占一行（重组可能把它卷进簇里导致不可见）
+		box.appendChild(usageEl);
 		box.appendChild(head); box.appendChild(body); box.appendChild(usageEl); root.appendChild(box);
 		row.el = { enable, idx, val, auto: autoC, period, step, rule, min: minI, max: maxI, usage: usageEl };
 		const read = () => { row.enabled = enable.checked; row.index = Number(idx.value) || 0; row.value = val.value; row.auto = autoC.checked; row.period = Math.max(50, (Number(period.value) || 0.2) * 1000); row.step = Number(step.value) || 0.5; row.rule = rule.value; row.min = Number(minI.value) || 0; row.max = Number(maxI.value) || 4; };
