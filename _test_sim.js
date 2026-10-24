@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.58.0', api.VERSION, '0.58.0');
+eq('版本是 0.59.0', api.VERSION, '0.59.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -503,6 +503,14 @@ global.Outliner.selected.length = 0; global.Outliner.selected.push(bg1, bgCube);
 api.guardBatchSelection();
 eq('只选一个分组时不干预', global.Outliner.selected.indexOf(bgCube) >= 0, true);
 api.setBatchGroupsOnly(false); global.Outliner.selected.length = 0;
+
+/* ---------- 纹理引用路径 ---------- */
+console.log('\n[纹理引用路径]');
+const pathTexture = new global.Texture({ name: 'sac.full', uuid: 'tex-path', path: 'C:/Game/Minecraft/.minecraft/resourcepacks/Squilker Sparkle Res/assets/sqsp/textures/item/inker/jet_rifle/sac.full.png', uv_width: 16, uv_height: 16 });
+const pathExporter = api.createExporter();
+eq('纹理引用使用实际命名空间和目录', pathExporter.textureRef(pathTexture), 'sqsp:item/inker/jet_rifle/sac.full');
+eq('纹理输出路径保留原目录', pathExporter.textures[0].path, 'item/inker/jet_rifle/sac.full');
+eq('纹理输出命名空间用 sqsp', pathExporter.textures[0].namespace, 'sqsp');
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));

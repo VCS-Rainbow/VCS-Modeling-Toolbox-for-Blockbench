@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.58.0';
+const VERSION = '0.59.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -245,13 +245,26 @@ class Exporter {
 		return all.find(t => t.uuid === face.texture) || null;
 	}
 
+/** 从贴图文件路径解析 assets/<namespace>/textures/<path>.png；解析不到则用贴图名 */
+	textureLocation(texture) {
+		const rawPath = String((texture && (texture.path || texture.file_path)) || '').replace(/\\/g, '/');
+		const match = rawPath.match(/(?:^|\/)assets\/([^/]+)\/textures\/(.+?)\.png$/i);
+		if (match) {
+			return { namespace: sanitizeNamespace(match[1]), path: sanitizePath(match[2], 'texture') };
+		}
+		const folder = String((texture && texture.folder) || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+		const base = sanitizePath(String((texture && texture.name) || 'texture').replace(/\.png$/i, ''), 'texture');
+		return { namespace: this.namespace, path: (folder ? sanitizePath(folder, 'texture') + '/' : '') + base };
+	}
+
 	textureRef(texture) {
 		if (this.textureRefs.has(texture)) return this.textureRefs.get(texture);
-		const base = sanitizePath(String(texture.name || 'texture').replace(/\.png$/i, ''), 'texture');
+		const location = this.textureLocation(texture);
+		const base = sanitizePath(String(location.path || 'texture').split('/').pop(), 'texture');
 		const name = this.unique(base, this.textureNames);
-		const ref = this.namespace + ':item/' + name;
+		const ref = location.namespace + ':' + location.path;
 		this.textureRefs.set(texture, ref);
-		this.textures.push({ name, texture });
+		this.textures.push({ name, texture, namespace: location.namespace, path: location.path });
 		return ref;
 	}
 
@@ -756,7 +769,9 @@ class Exporter {
 			if (typeof source === 'string' && source.startsWith('data:image')) {
 				const comma = source.indexOf(',');
 				if (comma > 0) {
-					files.push({ path: 'assets/' + this.namespace + '/textures/item/' + texture.name + '.png', data: source.slice(comma + 1), base64: true });
+					const textureNamespace = texture.namespace || this.namespace;
+					const texturePath = texture.path || ('item/' + texture.name);
+					files.push({ path: 'assets/' + textureNamespace + '/textures/' + texturePath + '.png', data: source.slice(comma + 1), base64: true });
 					continue;
 				}
 			}
