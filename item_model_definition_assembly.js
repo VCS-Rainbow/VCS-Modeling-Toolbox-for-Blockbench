@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.62.5';
+const VERSION = '0.62.6';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -747,6 +747,10 @@ class Exporter {
 		}
 		if (!models.length) throw new Error('当前项目没有可导出的分组或方块。');
 		const result = { model: { type: 'minecraft:composite', models } };
+		const exportScale = num(projectValue('imm_export_scale', 1)) || 1;
+		if (Math.abs(exportScale - 1) > 1e-6) {
+			result.model.transformation = { translation: [0, 0, 0], left_rotation: [0, 0, 0, 1], scale: [exportScale, exportScale, exportScale], right_rotation: [0, 0, 0, 1] };
+		}
 		this.resolveCallPlaceholders(result.model);
 		return result;
 	}
@@ -3054,6 +3058,7 @@ function registerProperties() {
 
 	P(ModelProject, 'string', 'imm_namespace', { label: '命名空间（namespace）', default: 'custom' });
 	P(ModelProject, 'boolean', 'imm_center_pivot', { label: '旋转枢轴用 (0.5,0.5,0.5)（= 像素 8,8,8）', default: false });
+	P(ModelProject, 'number', 'imm_export_scale', { label: '整体缩放（写入根 transformation.scale）', default: 1, min: 0.01, max: 8 });
 	P(ModelProject, 'boolean', 'imm_block_display', { label: '模型附带 item/generated display 变换（推荐开）', default: true });
 	P(ModelProject, 'boolean', 'imm_hide_unavailable', { label: '隐藏当前条件下不可用的分组', default: true });
 	P(ModelProject, 'string', 'imm_pack_path', { label: '资源包工程路径（pack.mcmeta 所在目录）', default: '' });

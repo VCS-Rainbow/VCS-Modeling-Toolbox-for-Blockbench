@@ -2,6 +2,11 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.62.6
+- 新增项目属性 **整体缩放**（`imm_export_scale`，默认 1）：写入根 `transformation.scale`，用于整体放大/缩小装配（纯 transformation 层面，不动 from/to）。
+- 检查导出 mapping：所有 `left_rotation` 四元数范数均为 1，不存在四元数隐性缩放。
+- 单测扩到 **148 项**。
+
 ## 0.62.5
 - 回退 0.62.4 的 translation 单位改动：`transformation.translation` 仍是**格**，它只影响偏移、不影响尺寸。
 - 模型偏小/引用模型偏大仍需从 display 或几何数据定位。
