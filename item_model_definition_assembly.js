@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.52';
+const VERSION = '0.68.54';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2084,10 +2084,27 @@ function sourceModelGeometryCenter(reference) {
 	if (resolved.error) return { error: resolved.error };
 	const elements = resolved.elements || [];
 	if (!elements.length) return { error: '源模型没有 elements。' };
+	// 建立 element 下标 → 祖先分组链；Java 模型里元素受 groups 的 origin/rotation 影响
+	const chains = new Map();
+	const walkGroups = (nodes, chain) => {
+		for (const src of (nodes || [])) {
+			if (!src || typeof src !== 'object') continue;
+			const next = chain.concat([{ origin: Array.isArray(src.origin) ? src.origin : [0, 0, 0], rotation: Array.isArray(src.rotation) ? src.rotation : [0, 0, 0] }]);
+			for (const child of (src.children || [])) if (typeof child === 'number') chains.set(child, next);
+			walkGroups((src.children || []).filter(c => c && typeof c === 'object'), next);
+		}
+	};
+	walkGroups(resolved.groups || [], []);
 	const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
-	for (const el of elements) {
+	for (let index = 0; index < elements.length; index++) {
+		const el = elements[index];
 		if (!el || !Array.isArray(el.from) || !Array.isArray(el.to)) continue;
-		for (let a = 0; a < 3; a++) { min[a] = Math.min(min[a], Number(el.from[a]), Number(el.to[a])); max[a] = Math.max(max[a], Number(el.from[a]), Number(el.to[a])); }
+		const chain = chains.get(index) || [];
+		for (const cx of [el.from[0], el.to[0]]) for (const cy of [el.from[1], el.to[1]]) for (const cz of [el.from[2], el.to[2]]) {
+			let point = [Number(cx) || 0, Number(cy) || 0, Number(cz) || 0];
+			for (const group of chain) point = rotateAroundQuat({ x: 0, y: 0, z: 0, w: 1 }, group.origin, point), point = rotateAroundQuat((() => { const q = readQuaternion({ rotation: group.rotation }); return q || { x: 0, y: 0, z: 0, w: 1 }; })(), group.origin, point);
+			for (let a = 0; a < 3; a++) { min[a] = Math.min(min[a], point[a]); max[a] = Math.max(max[a], point[a]); }
+		}
 	}
 	if (!isFinite(min[0])) return { error: '源模型没有有效几何。' };
 	return { center: [0, 1, 2].map(a => (min[a] + max[a]) / 2), min, max };
@@ -2126,13 +2143,13 @@ function rebuildPivotFromSourceDialog() {
 			let groupCount = 0, callCount = 0;
 			for (const group of groups) {
 				fixGroupPivot(group);
-				const local = rotVec(quatMatrix(pivotConj(pivotQuat(group))), sourceOffset);
+				const local = rotVec(quatMatrix(pivotQuat(group)), sourceOffset);
 				const current = Array.isArray(group.origin) ? group.origin : [0, 0, 0];
 				moveGroupPivot(group, [current[0] - local[0], current[1] - local[1], current[2] - local[2]]);
 				groupCount++;
 			}
 			for (const locator of calls) {
-				const local = rotVec(quatMatrix(pivotConj(pivotQuat(locator))), sourceOffset);
+				const local = rotVec(quatMatrix(pivotQuat(locator)), sourceOffset);
 				const pos = Array.isArray(locator.position) ? locator.position : [0, 0, 0];
 				locator.position = [pos[0] - local[0], pos[1] - local[1], pos[2] - local[2]];
 				callCount++;
@@ -4453,7 +4470,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callModelPrefill, orderedSelectedGroups, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callModelPrefill, orderedSelectedGroups, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
