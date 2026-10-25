@@ -2,6 +2,11 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.61
+- 项目设置新增物品根参数：`hand_animation_on_swap`、`oversized_in_gui`、`swap_animation_scale`。
+- `items/*.json` 根对象按非默认值输出这些参数，`model` 保持不变。
+- 单测 200 项。
+
 ## 0.68.60
 - 修 cooldown 时间轴帧被倒置：只倒置阈值（第一帧 1 → 最后一帧 0），entries 保持原帧顺序，不再 reverse。
 - 单测 197 项。

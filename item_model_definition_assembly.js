@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.60';
+const VERSION = '0.68.61';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -157,7 +157,15 @@ function formatNode(node, depth) {
 	return '{\n' + fields.map(f => padIn + f).join(',\n') + '\n' + pad + '}';
 }
 
-const formatMapping = (mapping) => '{\n\t"model": ' + formatNode(mapping.model, 1) + '\n}';
+const formatMapping = (mapping) => {
+	const extra = [];
+	const hand = projectValue('imda_hand_animation_on_swap', true);
+	if (hand === false) extra.push('\t"hand_animation_on_swap": false');
+	if (projectValue('imda_oversized_in_gui', false) === true) extra.push('\t"oversized_in_gui": true');
+	const swapScale = Number(projectValue('imda_swap_animation_scale', 1));
+	if (isFinite(swapScale) && swapScale !== 1) extra.push('\t"swap_animation_scale": ' + JSON.stringify(clean(swapScale)));
+	return '{\n' + (extra.length ? extra.join(',\n') + ',\n' : '') + '\t"model": ' + formatNode(mapping.model, 1) + '\n}';
+};
 
 /* ============================== 旋转 ============================== */
 
@@ -4281,6 +4289,9 @@ P(ModelProject, 'number', 'imda_extra_composite_layers', { label: '调试：额�
 	P(ModelProject, 'boolean', 'imda_display_all_slots', { label: 'display 输出全部槽位（GUI/地面/固定）', default: false });
 	P(ModelProject, 'boolean', 'imda_export_node_names', { label: '输出 node_name（来源分组名）', default: true });
 	P(ModelProject, 'boolean', 'imda_anim_auto', { label: '导出时自动采样动画时间轴', default: true });
+	P(ModelProject, 'boolean', 'imda_hand_animation_on_swap', { label: 'hand_animation_on_swap（切换物品时播放过渡动画）', default: true });
+	P(ModelProject, 'boolean', 'imda_oversized_in_gui', { label: 'oversized_in_gui（GUI 内允许超出槽位）', default: false });
+	P(ModelProject, 'number', 'imda_swap_animation_scale', { label: 'swap_animation_scale（切换动画速度倍率）', default: 1, min: 0, step: 0.05 });
 	P(ModelProject, 'boolean', 'imda_hide_unavailable', { label: '隐藏当前条件下不可用的分组', default: true });
 	P(ModelProject, 'string', 'imda_pack_path', { label: '资源包工程路径（pack.mcmeta 所在目录）', default: '' });
 	P(ModelProject, 'string', 'imda_pack_version', {

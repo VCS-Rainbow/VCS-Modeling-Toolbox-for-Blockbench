@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.60', api.VERSION, '0.68.60');
+eq('版本是 0.68.61', api.VERSION, '0.68.61');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -809,6 +809,16 @@ const cool = api.cooldownThresholds(4);
 eq('cooldown 帧数', cool.length, 4);
 eq('cooldown 第一帧为 1', cool[0], 1);
 eq('cooldown 最后一帧为 0', cool[3], 0);
+/* ---------- 物品根参数 ---------- */
+console.log('\n[物品根参数]');
+global.Project.imda_hand_animation_on_swap = false;
+global.Project.imda_oversized_in_gui = true;
+global.Project.imda_swap_animation_scale = 0;
+const rootJson = api.formatMapping({ model: { type: 'minecraft:model', model: 'ns:item/x' } });
+eq('根参数 hand_animation_on_swap', rootJson.indexOf('hand_animation_on_swap') >= 0, true);
+eq('根参数 oversized_in_gui', rootJson.indexOf('oversized_in_gui') >= 0, true);
+eq('根参数 swap_animation_scale', rootJson.indexOf('swap_animation_scale') >= 0, true);
+delete global.Project.imda_hand_animation_on_swap; delete global.Project.imda_oversized_in_gui; delete global.Project.imda_swap_animation_scale;
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);
