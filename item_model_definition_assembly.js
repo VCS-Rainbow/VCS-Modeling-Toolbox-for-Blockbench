@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.64';
+const VERSION = '0.68.65';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2725,7 +2725,7 @@ function instantiateCallTags() {
 				const parent = locator.parent || null;
 				let created = null;
 				if (targetGroup) {
-					created = (typeof targetGroup.clone === 'function') ? targetGroup.clone() : null;
+					created = (typeof targetGroup.duplicate === 'function') ? targetGroup.duplicate() : ((typeof targetGroup.clone === 'function') ? targetGroup.clone() : null);
 					if (created) { created.name = labelOf(targetGroup) + ' 实例'; created.selected = false; }
 				} else if (target) {
 					created = new Group({ name: '实例 ' + target.split(':').pop(), imda_type: 'model', imda_model: target, origin: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() });
