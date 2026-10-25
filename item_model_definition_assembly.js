@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.41';
+const VERSION = '0.68.42';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -3246,6 +3246,16 @@ function setBoxSelectGroups(value) {
 	return boxGroupsEnabled();
 }
 /** 内建模型：仅 inline（内联模型）分组；引用模型（model）不算例外 */
+function isReferenceModelGroup(group) {
+	let node = group;
+	while (isGroup(node)) {
+		const type = String(node.imda_type || '').replace(/^minecraft:/, '');
+		if (type === 'model' || String(node.imda_model || '').trim()) return true;
+		node = node.parent;
+	}
+	return false;
+}
+
 function isBuiltInModelGroup(group) {
 	let node = group;
 	while (node && isGroup(node)) {
@@ -3284,7 +3294,7 @@ function guardBoxSelection() {
 	}
 	if (!parents.length) return;
 	// 只选了内建模型里的元素：保持原样，便于直接编辑引用模型内部
-	if (parents.every(isBuiltInModelGroup)) return;
+	if (parents.every(isBuiltInModelGroup) && !parents.some(isReferenceModelGroup)) return;
 	const isSelected = (node) => !!(node && (node.selected || (Array.isArray(Outliner.selected) && Outliner.selected.indexOf(node) >= 0)));
 	guardingBox = true;
 	let changed = false;
