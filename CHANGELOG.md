@@ -2,6 +2,10 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.30
+- 修 F5 不生效：Action 构造参数应为 `keybind`，不是 `default_keybind`；`new Keybind({key:116})` 现在会注册为默认快捷键。
+- 单测 188 项。
+
 ## 0.68.29
 - 新增 `File → Export → 导出物品模型映射 (JSON)`，默认快捷键 **F5**（Keybind key 116），只写 items/*.json。
 - 单测 188 项。
