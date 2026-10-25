@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.43', api.VERSION, '0.68.43');
+eq('版本是 0.68.44', api.VERSION, '0.68.44');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -777,6 +777,9 @@ eq('内部结构向上选中引用模型组', api.selectionGroupForCube(internal
 global.Outliner.selected.length = 0; internalInnerCube.selected = true; global.Outliner.selected.push(internalInnerCube);
 api.guardBoxSelection();
 eq('点击内部元素选中整个引用模型', global.Outliner.selected.indexOf(internalRefGroup) >= 0, true);
+global.Outliner.selected.length = 0; internalInnerGroup.selected = true; global.Outliner.selected.push(internalInnerGroup);
+api.guardBoxSelection();
+eq('选中 internal 分组时整组选中引用模型', global.Outliner.selected.indexOf(internalRefGroup) >= 0, true);
 eq('内部结构继承引用模型 tint 链', internalInnerGroup.parent === internalRefGroup, true);
 /* ---------- 复调用模型 id 预填 ---------- */
 console.log('\n[复调用预填]');

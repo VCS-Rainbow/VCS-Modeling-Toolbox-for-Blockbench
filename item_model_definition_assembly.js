@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.43';
+const VERSION = '0.68.44';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -3282,9 +3282,15 @@ function selectionGroupForCube(parent) {
 function guardBoxSelection() {
 	if (guardingBox || !boxGroupsEnabled()) return;
 	if (typeof Outliner === 'undefined' || !Outliner || !Array.isArray(Outliner.selected)) return;
-	const oneCubes = Outliner.selected.filter(isCube);
-	if (oneCubes.length === 1) {
-		const target = selectionGroupForCube(oneCubes[0].parent);
+	const selectedGroups = Outliner.selected.filter(isGroup);
+	const internalGroup = selectedGroups.find(g => String(g.imda_type || '').replace(/^minecraft:/, '') === 'internal');
+	let anchorGroup = internalGroup || null;
+	if (!anchorGroup) {
+		const oneCubes = Outliner.selected.filter(isCube);
+		if (oneCubes.length === 1) anchorGroup = oneCubes[0].parent;
+	}
+	if (anchorGroup) {
+		const target = selectionGroupForCube(anchorGroup);
 		if (isGroup(target) && String(target.imda_type || '').replace(/^minecraft:/, '') === 'model') {
 			guardingBox = true;
 			try {
