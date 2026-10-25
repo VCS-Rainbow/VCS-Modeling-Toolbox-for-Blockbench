@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.23';
+const VERSION = '0.68.24';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2475,9 +2475,11 @@ function convertSelectedGroupsToCallTags() {
 
 /** 编辑一个复调用 Locator 的目标（分组 UUID 或模型 id） */
 function editCallTag(locator) {
-	const selected = (typeof Locator !== 'undefined' && Locator && Array.isArray(Locator.selected)) ? Locator.selected.slice() : [];
-	let locators = selected.length ? selected : (locator ? [locator] : []);
-	locators = locators.filter((item, index) => item && locators.indexOf(item) === index);
+	const selected = [];
+	try { if (typeof Outliner !== 'undefined' && Array.isArray(Outliner.selected)) for (const item of Outliner.selected) { if (typeof Locator !== 'undefined' && item instanceof Locator) selected.push(item); } } catch (e) { /* ignore */ }
+	try { if (typeof Locator !== 'undefined' && Locator && Array.isArray(Locator.selected)) for (const item of Locator.selected) if (selected.indexOf(item) < 0) selected.push(item); } catch (e) { /* ignore */ }
+	if (locator && selected.indexOf(locator) < 0) selected.push(locator);
+	let locators = selected.filter((item, index) => item && selected.indexOf(item) === index);
 	if (!locators.length) return;
 	const first = locators[0];
 	const currentTargets = locators.map(l => String(l.imm_call_target || '').trim());
