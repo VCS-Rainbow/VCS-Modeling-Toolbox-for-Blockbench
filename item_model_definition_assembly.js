@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.11';
+const VERSION = '0.68.12';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -4070,28 +4070,27 @@ Plugin.register('item_model_definition_assembly', {
 		const toolSep = (id, label) => { try { if (toolsMenu && typeof MenuSeparator !== 'undefined') toolsMenu.addAction(new MenuSeparator(id, label)); } catch (e) { /* ignore */ } };
 		const tool = (action) => addMenu(action, 'tools');
 		toolSep('imda_group_start');
-		toolSep('imda_group_structure', 'VMT模型装配 - 结构');
+		toolSep('imda_vmt_title', '==VCS Modeling Toolbox==');
+		toolSep('imda_group_assembly', '[ 模型装配 ]');
 		tool(actions.props);
 		tool(actions.import);
 		tool(actions.createModel);
 		tool(actions.sequence);
-		toolSep('imda_group_calls', 'VMT模型装配 - 复调用');
 		tool(actions.call);
 		tool(actions.convertCall);
 		tool(actions.editCall);
 		tool(actions.instantiateCalls);
-		toolSep('imda_group_timeline', 'VMT模型装配 - 时间轴');
-		tool(actions.animationTimeline);
-		tool(actions.bakeTimeline);
-		tool(actions.removeTimeline);
-		toolSep('imda_group_selection', 'VMT辅助功能');
-		tool(actions.boxToggle);
-		tool(actions.batchToggle);
-		tool(actions.pivot);
-		toolSep('imda_group_debug', 'VMT模型装配 - 调试');
 		tool(actions.check);
 		tool(actions.normalize);
 		tool(actions.migratePrefix);
+		toolSep('imda_group_timeline', '时间轴');
+		tool(actions.animationTimeline);
+		tool(actions.bakeTimeline);
+		tool(actions.removeTimeline);
+		toolSep('imda_group_aux', '[ 辅助功能 ]');
+		tool(actions.boxToggle);
+		tool(actions.batchToggle);
+		tool(actions.pivot);
 		try { attachAnimationTimelineMenu(); } catch (e) { /* ignore */ }
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
 		// 面板会自动出现在「视图 → 面板」里，不再占用 Tools 菜单
