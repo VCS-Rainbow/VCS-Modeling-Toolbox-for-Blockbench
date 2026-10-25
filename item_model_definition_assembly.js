@@ -3280,6 +3280,26 @@ function selectionGroupForCube(parent) {
 }
 
 function guardBoxSelection() {
+	if (guardingBox || !boxGroupsEnabled()) return;
+	if (typeof Outliner === 'undefined' || !Outliner || !Array.isArray(Outliner.selected)) return;
+	const oneCubes = Outliner.selected.filter(isCube);
+	if (oneCubes.length === 1) {
+		const target = selectionGroupForCube(oneCubes[0].parent);
+		if (isGroup(target) && String(target.imda_type || '').replace(/^minecraft:/, '') === 'model') {
+			guardingBox = true;
+			try {
+				const mark = (node) => {
+					try { if (typeof node.markAsSelected === 'function') node.markAsSelected(); else node.selected = true; } catch (e) { node.selected = true; }
+					if (Array.isArray(Outliner.selected) && Outliner.selected.indexOf(node) < 0) Outliner.selected.push(node);
+					if (Array.isArray(node.children)) for (const child of node.children) mark(child);
+				};
+				mark(target);
+				try { if (typeof updateSelection === 'function') updateSelection(); } catch (e) { /* ignore */ }
+			} finally { guardingBox = false; }
+			return;
+		}
+	}
+
 	// 用户点选的是分组（含父分组优先级）：不要重算选择，交给 Blockbench 原生 gizmo 逻辑
 	if (Array.isArray(Outliner.selected) && Outliner.selected.length && isGroup(Outliner.selected[0])) return;
 	if (typeof Group !== 'undefined' && Group && Array.isArray(Group.selected) && Group.selected.length) return;
