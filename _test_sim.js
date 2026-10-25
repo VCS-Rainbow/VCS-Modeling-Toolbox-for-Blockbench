@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.19', api.VERSION, '0.68.19');
+eq('版本是 0.68.20', api.VERSION, '0.68.20');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -735,6 +735,20 @@ eq('生成 inline 子分组', normCreated >= 1 && !!normInline, true);
 eq('cube 移入 inline', normCube.parent === normInline, true);
 eq('composite 不再有直属 cube', normGroup.children.some(n => n === normCube), false);
 global.Group.all = savedNormAll; global.Outliner.root.splice(0, global.Outliner.root.length, ...savedNormRoot);
+/* ---------- range_dispatch 下的复调用 ---------- */
+console.log('\n[range 复调用]');
+const rangeCallGroup = new global.Group({ name: 'rangeCall', imm_type: 'range_dispatch', imm_property: 'minecraft:custom_model_data', imm_index: 0 });
+const rangeCallLocator = new global.Locator({ name: '调用 target', position: [0, 0, 0], rotation: [0, 0, 0] });
+rangeCallLocator.imm_call_target = 'target-uuid';
+rangeCallGroup.children.push(rangeCallLocator);
+if (global.Group.all.indexOf(targetGroup) < 0) global.Group.all.push(targetGroup);
+const savedRangeRoot = global.Outliner.root.splice(0, global.Outliner.root.length, rangeCallGroup);
+const rangeCallExporter = api.createExporter();
+rangeCallExporter.addModel = () => ({ reference: 'ns:item/rangecallfake', shift: [0, 0, 0] });
+const rangeCallJSON = JSON.stringify(rangeCallExporter.buildMapping());
+eq('range_dispatch 下的复调用被输出', rangeCallJSON.indexOf('rangecallfake') >= 0, true);
+eq('range 复调用不含占位字段', rangeCallJSON.indexOf('__imm_call_group'), -1);
+global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRangeRoot);
 /* ---------- 属性前缀迁移 ---------- */
 console.log('\n[属性前缀迁移]');
 const prefixGroup = new global.Group({ name: 'prefixGroup', imm_type: 'composite', imm_index: 3 });

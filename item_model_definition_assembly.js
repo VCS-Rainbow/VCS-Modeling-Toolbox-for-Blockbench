@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.19';
+const VERSION = '0.68.20';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -768,7 +768,7 @@ class Exporter {
 
 		const extras = ownCubes.map(cube => this.buildCubeNode(cube, hint, parent_shift)).filter(Boolean);
 		const calls = children.filter(isLocator).map(locator => this.buildCallNode(locator)).filter(Boolean);
-		if (calls.length && type !== 'composite' && type !== 'inline') {
+		if (calls.length && type !== 'composite' && type !== 'inline' && type !== 'range_dispatch' && type !== 'select') {
 			this.warn('复调用标签只支持放在 composite / inline 分组里，已忽略 ' + calls.length + ' 个。');
 			calls.length = 0;
 		}
@@ -795,7 +795,8 @@ class Exporter {
 				if (!childNode) continue;
 				node.cases.push({ when: this.parseWhen(child.imm_case_when), model: childNode });
 			}
-			const fallback = built ? { type: 'minecraft:model', model: built.reference } : (extras[0] || null);
+			let fallback = built ? { type: 'minecraft:model', model: built.reference } : (extras[0] || null);
+			if (calls.length) fallback = this.composeWithCalls(fallback, calls);
 			if (fallback) { this.groupNodes.set(fallback, group); node.fallback = fallback; }
 			if (!node.cases.length && !node.fallback) return null;
 			return node;
@@ -834,7 +835,8 @@ class Exporter {
 				node.entries.push({ threshold: clean(formatted !== null ? formatted : (manual !== 0 ? manual : branch_index)), model: childNode });
 				branch_index++;
 			}
-			const fallback = built ? { type: 'minecraft:model', model: built.reference } : (extras[0] || null);
+			let fallback = built ? { type: 'minecraft:model', model: built.reference } : (extras[0] || null);
+			if (calls.length) fallback = this.composeWithCalls(fallback, calls);
 			if (fallback) { this.groupNodes.set(fallback, group); node.fallback = fallback; }
 			if (!node.entries.length && !node.fallback) return null;
 			return node;
@@ -933,6 +935,12 @@ class Exporter {
 		return ref;
 	}
 
+	composeWithCalls(base, calls) {
+		if (!calls || !calls.length) return base;
+		if (!base) return calls.length === 1 ? calls[0] : { type: 'minecraft:composite', models: calls };
+		return { type: 'minecraft:composite', models: [base].concat(calls) };
+	}
+
 	buildCallNode(locator) {
 		const target = String((locator && locator.imm_call_target) || '').trim();
 		if (!target) return null;
@@ -965,7 +973,17 @@ class Exporter {
 		}
 		for (const key of Object.keys(node)) {
 			const value = node[key];
-			if (value && typeof value === 'object') this.resolveCallPlaceholders(value);
+			if (value && typeof value === 'object' && value.__imm_call_group) {
+				let target = this.groupNodeCache ? this.groupNodeCache.get(value.__imm_call_group) : null;
+				if (!target) {
+					try { target = this.buildNode(value.__imm_call_group, sanitizePath(labelOf(value.__imm_call_group), 'group'), [0, 0, 0]); } catch (e) { target = null; }
+					if (target) this.groupNodeCache.set(value.__imm_call_group, target);
+				}
+				if (!target) { delete node[key]; continue; }
+				const clone = JSON.parse(JSON.stringify(target));
+				this.stripCallPlaceholders(clone);
+				node[key] = clone;
+			} else if (value && typeof value === 'object') this.resolveCallPlaceholders(value);
 		}
 	}
 
