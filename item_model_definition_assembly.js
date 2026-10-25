@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.66.6';
+const VERSION = '0.66.7';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -127,7 +127,7 @@ function formatNode(node, depth) {
 	const pad = '\t'.repeat(depth);
 	const padIn = pad + '\t';
 	const fields = ['"type": ' + JSON.stringify(node.type)];
-	for (const key of ['model', 'property', 'index', 'scale', 'tints', 'transformation', 'component', 'ignore_default', 'predicate', 'value', 'keybind', 'target', 'wobble', 'normalize', 'source', 'period', 'remaining']) {
+	for (const key of ['node_name', 'model', 'property', 'index', 'scale', 'tints', 'transformation', 'component', 'ignore_default', 'predicate', 'value', 'keybind', 'target', 'wobble', 'normalize', 'source', 'period', 'remaining']) {
 		if (node[key] !== undefined) fields.push(JSON.stringify(key) + ': ' + inline(node[key]));
 	}
 	for (const key of ['on_true', 'on_false', 'fallback']) {
@@ -3735,6 +3735,10 @@ Plugin.register('item_model_definition_assembly', {
 		addMenu(actions.boxToggle, 'tools');
 		addMenu(actions.pivot, 'tools');
 		addMenu(actions.viewDiag, 'tools');
+		addMenu(actions.bakeTimeline, 'tools');
+		addMenu(actions.removeTimeline, 'tools');
+		addMenu(actions.instantiateCalls, 'tools');
+		addMenu(actions.migratePrefix, 'tools');
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
 		// 面板会自动出现在「视图 → 面板」里，不再占用 Tools 菜单
 		attachGroupMenu();
@@ -3751,7 +3755,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, copyImmToImda, migratePropPrefixes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, copyImmToImda, migratePropPrefixes, formatMapping, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
