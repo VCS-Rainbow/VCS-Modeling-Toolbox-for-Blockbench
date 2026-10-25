@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.24';
+const VERSION = '0.68.25';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2474,6 +2474,13 @@ function convertSelectedGroupsToCallTags() {
 }
 
 /** 编辑一个复调用 Locator 的目标（分组 UUID 或模型 id） */
+function callModelPrefill(target, matchedGroup) {
+	if (matchedGroup) return '';
+	const value = String(target || '').trim();
+	if (!value) return '';
+	return value.indexOf(':') >= 0 ? value : '';
+}
+
 function editCallTag(locator) {
 	const selected = [];
 	try { if (typeof Outliner !== 'undefined' && Array.isArray(Outliner.selected)) for (const item of Outliner.selected) { if (typeof Locator !== 'undefined' && item instanceof Locator) selected.push(item); } } catch (e) { /* ignore */ }
@@ -2505,7 +2512,7 @@ function editCallTag(locator) {
 		width: 560,
 		form: {
 			target: { label: '目标分组', type: 'select', value: matchedGroup, options, description: '批量编辑时会把所有选中标签指向同一目标；导出时替换为目标分组的映射节点。' },
-			model: { label: '或模型 id（优先）', type: 'text', value: (matchedGroup || !commonTarget) ? '' : commonTarget, description: '例如 namespace:item/foo；填写后忽略上面的分组选择。' },
+			model: { label: '或模型 id（优先）', type: 'text', value: callModelPrefill(commonTarget, matchedGroup), description: '例如 namespace:item/foo；填写后忽略上面的分组选择。失效的旧 UUID 不会预填到这里。' },
 		},
 		onConfirm(result) {
 			try {
@@ -4189,7 +4196,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, copyImmToImda, migratePropPrefixes, formatMapping, orderedSelectedGroups, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, copyImmToImda, migratePropPrefixes, formatMapping, callModelPrefill, orderedSelectedGroups, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

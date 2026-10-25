@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.24', api.VERSION, '0.68.24');
+eq('版本是 0.68.25', api.VERSION, '0.68.25');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -754,6 +754,11 @@ const rangeCallJSON = JSON.stringify(rangeCallExporter.buildMapping());
 eq('range_dispatch 下的复调用被输出', rangeCallJSON.indexOf('rangecallfake') >= 0, true);
 eq('range 复调用不含占位字段', rangeCallJSON.indexOf('__imm_call_group'), -1);
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRangeRoot);
+/* ---------- 复调用模型 id 预填 ---------- */
+console.log('\n[复调用预填]');
+eq('失效 UUID 不预填模型 id', api.callModelPrefill('6d52650e-a35b-ca94-5ce5-de00d6a3cd51', ''), '');
+eq('匹配分组时不预填模型 id', api.callModelPrefill('some-uuid', 'some-uuid'), '');
+eq('模型 id 正常预填', api.callModelPrefill('ns:item/foo', ''), 'ns:item/foo');
 /* ---------- 属性前缀迁移 ---------- */
 console.log('\n[属性前缀迁移]');
 const prefixGroup = new global.Group({ name: 'prefixGroup', imm_type: 'composite', imm_index: 3 });
