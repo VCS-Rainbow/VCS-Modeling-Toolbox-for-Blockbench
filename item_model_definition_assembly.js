@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.3';
+const VERSION = '0.68.4';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -366,7 +366,16 @@ function installAnimationPropertiesPatch() {
 	};
 }
 
-/* ============================== 导出器/* ============================== 导出器 ============================== */
+/* ============================== 导出器/* ============================== 对象创建约定 ============================== */
+/** 硬性约定：新建 Group/Locator/Cube 必须 add + init 都调用（先 add 后 init） */
+function addAndInit(node, parent) {
+	if (!node) return node;
+	try { if (parent) node.addTo(parent); else node.addTo(); } catch (e) { /* ignore */ }
+	try { if (typeof node.init === 'function') node.init(); } catch (e) { /* ignore */ }
+	return node;
+}
+
+/* ============================== 导出器 ============================== */
 
 class Exporter {
 	constructor(settings) {
@@ -1299,13 +1308,11 @@ function bakeTimelineToCallTags() {
 	try { Undo.initEdit({ outliner: true, groups: oldTimeline, elements: [] }); } catch (e) { /* ignore */ }
 	for (const old of oldTimeline) { try { old.remove(); } catch (e) { /* ignore */ } }
 	const timeline = new Group({ name: '[timeline]', imm_type: 'range_dispatch_timeline', imm_property: 'minecraft:custom_model_data', imm_index: num(projectValue('imm_anim_index', 0)) || 0, origin: [8, 8, 8], rotation: [0, 0, 0] });
-	try { timeline.addTo(); } catch (e) { /* ignore */ }
-	try { timeline.init(); } catch (e) { /* ignore */ }
+	addAndInit(timeline, null);
 	for (let frame = 0; frame < sampled.poses.length; frame++) {
 		try {
 			const locator = new Locator({ name: 'frame ' + frame, position: [8, 8, 8], rotation: [0, 0, 0] });
-			try { locator.addTo(timeline); } catch (e) { locator.addTo(); }
-			try { locator.init(); } catch (e) { /* ignore */ }
+			addAndInit(locator, timeline);
 			locator.imm_frame = frame;
 			locator.imm_pose = JSON.stringify(sampled.poses[frame]);
 			locator.imm_call_target = 'timeline';
@@ -2215,22 +2222,18 @@ function generateDecreasingCallSequence(name, step) {
 	const sequenceName = String(name || '').trim() || '[sequence]';
 	try { Undo.initEdit({ outliner: true, groups, elements: [] }); } catch (e) { /* ignore */ }
 	const container = new Group({ name: sequenceName, imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
-	try { if (parent) container.addTo(parent); else container.addTo(); } catch (e) { container.addTo(); }
-	try { container.init(); } catch (e) { /* ignore */ }
+	addAndInit(container, parent);
 	const first = new Group({ name: '[' + groups.length + '] 本体', imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
-	try { first.addTo(container); } catch (e) { /* ignore */ }
-	try { first.init(); } catch (e) { /* ignore */ }
+	addAndInit(first, container);
 	for (const group of groups) { try { group.addTo(first); } catch (e) { /* ignore */ } }
 	let created = 0;
 	for (let count = groups.length - step; count >= 1; count -= step) {
 		const node = new Group({ name: '[' + count + '] 复调用', imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
-		try { node.addTo(container); } catch (e) { /* ignore */ }
-		try { node.init(); } catch (e) { /* ignore */ }
+		addAndInit(node, container);
 		for (const group of groups.slice(0, count)) {
 			try {
 				const locator = new Locator({ name: '调用 ' + labelOf(group), position: (group.origin || [0, 0, 0]).slice(), rotation: (group.rotation || [0, 0, 0]).slice(), ignore_inherited_scale: true });
-				try { locator.addTo(node); } catch (e) { locator.addTo(); }
-				try { locator.init(); } catch (e) { /* ignore */ }
+				addAndInit(locator, node);
 				locator.imm_call_target = group.uuid;
 				created++;
 			} catch (error) { console.warn('[装配] 创建序列复调用失败', error); }
