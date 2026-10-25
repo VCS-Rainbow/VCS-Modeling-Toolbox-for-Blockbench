@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.57';
+const VERSION = '0.68.58';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -292,11 +292,11 @@ function attachAnimationTimelineMenu() {
 	if (typeof Animation === 'undefined' || !Animation || !Animation.prototype) return false;
 	const menu = Animation.prototype.menu;
 	if (!menu || typeof menu.addAction !== 'function') return false;
-	if (menu.__imdaTimelineAdded) return true;
 	if (!actions.animationTimeline) return false;
-	try { menu.addAction(new MenuSeparator('imda_timeline_sep')); } catch (e) { /* ignore */ }
-	try { menu.addAction(actions.animationTimeline); menu.__imdaTimelineAdded = true; } catch (e) { return false; }
-	return true;
+	const hasAction = () => { try { return Array.isArray(menu.structure) && menu.structure.some(item => item === actions.animationTimeline || (item && item.id === actions.animationTimeline.id)); } catch (e) { return false; } };
+	if (menu.__imdaTimelineAdded && hasAction()) return true;
+	menu.__imdaTimelineAdded = false;
+	try { if (!hasAction()) { menu.addAction(new MenuSeparator('imda_timeline_sep')); menu.addAction(actions.animationTimeline); } menu.__imdaTimelineAdded = true; return true; } catch (e) { return false; }
 }
 
 function installAnimationPropertiesPatch() {
@@ -4338,7 +4338,7 @@ Plugin.register('item_model_definition_assembly', {
 		try { installAnimationPropertiesPatch(); } catch (e) { /* ignore */ }
 		try { attachAnimationTimelineMenu(); } catch (e) { /* ignore */ }
 		
-		try { if (typeof Blockbench !== 'undefined' && Blockbench.on) Blockbench.on('load_project', () => { try { migrateLegacyAll(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
+		try { if (typeof Blockbench !== 'undefined' && Blockbench.on) Blockbench.on('load_project', () => { try { migrateLegacyAll(); } catch (e) { /* ignore */ } try { attachAnimationTimelineMenu(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
 		console.log('[装配] onload 开始，版本 ' + VERSION);
 		try {
 		try {
@@ -4474,7 +4474,7 @@ Plugin.register('item_model_definition_assembly', {
 		tool(actions.pivotRestore);
 		tool(actions.pivotFromSource);
 
-		try { attachAnimationTimelineMenu(); } catch (e) { /* ignore */ }
+		try { attachAnimationTimelineMenu(); setTimeout(() => { try { attachAnimationTimelineMenu(); } catch (e) { /* ignore */ } }, 800); } catch (e) { /* ignore */ }
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
 		// 面板会自动出现在「视图 → 面板」里，不再占用 Tools 菜单
 		attachGroupMenu();
