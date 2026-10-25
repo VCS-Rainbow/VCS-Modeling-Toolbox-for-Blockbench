@@ -2,6 +2,10 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.67.8
+- 时间轴根统一包回 `composite`，`range_dispatch` 作为子节点；用于排查根为 range_dispatch 时 display 不生效、模型朝上的问题。
+- 单测 173 项。
+
 ## 0.67.7
 - 默认 display 只输出手持槽位（thirdperson/firstperson）；GUI/地面/固定/head 仅在项目设置「display 输出全部槽位」开启时输出，避免被 Blockbench 预置的 gui 旋转带成朝上。
 - 单测 171 项。

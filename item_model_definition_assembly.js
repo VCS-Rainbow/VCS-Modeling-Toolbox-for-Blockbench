@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.67.7';
+const VERSION = '0.67.8';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1122,7 +1122,7 @@ class Exporter {
 		}
 		this.timelinePoses = null; this.timelineSkip = null;
 		if (!nodes.length) return null;
-		return nodes.length === 1 ? nodes[0] : { type: 'minecraft:composite', models: nodes };
+		return { type: 'minecraft:composite', models: nodes };
 	}
 
 	buildMapping() {

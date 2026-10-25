@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.67.7', api.VERSION, '0.67.7');
+eq('版本是 0.67.8', api.VERSION, '0.67.8');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -675,12 +675,14 @@ const savedGroupAllAuto = global.Group.all; global.Group.all = [autoGroup];
 const autoAnimator = { keyframes: [{}], channels: { rotation: [{}], position: [{}] }, interpolate(ch) { if (ch === 'rotation') return [0, 0, 0]; if (ch === 'position') return [0, Number(global.Animation.selected.time) * 10, 0]; return [1, 1, 1]; } };
 global.Animation = { selected: { length: 0.1, time: 0, getBoneAnimator(group) { return group === autoGroup ? autoAnimator : null; } }, all: [] };
 const autoMapping = api.createExporter().buildMapping();
-eq('自动输出 range_dispatch', autoMapping.model.type, 'minecraft:range_dispatch');
-eq('时间轴节点带 node_name', autoMapping.model.node_name, '* timeline');
-eq('自动输出两帧', autoMapping.model.entries.length, 2);
-eq('帧阈值 0/1', autoMapping.model.entries.map(e => e.threshold), [0, 1]);
-eq('帧节点名', autoMapping.model.entries[0].model.node_name, 'frame 0.0.0.1');
-eq('逐帧 transformation 不同', JSON.stringify(autoMapping.model.entries[0].model) !== JSON.stringify(autoMapping.model.entries[1].model), true);
+eq('时间轴根是 composite', autoMapping.model.type, 'minecraft:composite');
+const autoRange = autoMapping.model.models.find(n => n.type === 'minecraft:range_dispatch');
+eq('自动输出 range_dispatch', !!autoRange, true);
+eq('时间轴节点带 node_name', autoRange.node_name, '* timeline');
+eq('自动输出两帧', autoRange.entries.length, 2);
+eq('帧阈值 0/1', autoRange.entries.map(e => e.threshold), [0, 1]);
+eq('帧节点名', autoRange.entries[0].model.node_name, 'frame 0.0.0.1');
+eq('逐帧 transformation 不同', JSON.stringify(autoRange.entries[0].model) !== JSON.stringify(autoRange.entries[1].model), true);
 delete global.Animation;
 global.Group.all = savedGroupAllAuto;
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRootAuto);
