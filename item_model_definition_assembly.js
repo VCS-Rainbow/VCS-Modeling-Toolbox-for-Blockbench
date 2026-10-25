@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.66.7';
+const VERSION = '0.66.8';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -950,7 +950,7 @@ class Exporter {
 		const index = (group.imm_index != null) ? num(group.imm_index) : num(projectValue('imm_anim_index', 0));
 		const makeRange = (entries, name) => {
 			const node = { type: 'minecraft:range_dispatch', property: 'minecraft:' + prop };
-			if (name && group.uuid !== '__imm_auto_timeline') node.node_name = name;
+			if (name) node.node_name = name;
 			if (prop === 'custom_model_data') node.index = clean(index);
 			node.entries = entries;
 			return node;
@@ -1002,7 +1002,7 @@ class Exporter {
 				this.timelinePoses = null;
 				if (nodes.length) entries.push({ threshold: frame, model: nodes.length === 1 ? nodes[0] : { type: 'minecraft:composite', models: nodes } });
 			}
-			if (entries.length) staticNodes.push(makeRange(entries, null));
+			if (entries.length) staticNodes.push(makeRange(entries, group.uuid === '__imm_auto_timeline' ? '[动画时间轴]' : labelOf(group)));
 		}
 		this.timelinePoses = null; this.timelineSkip = null;
 		if (!staticNodes.length) return null;
