@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.5';
+const VERSION = '0.68.6';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2247,11 +2247,14 @@ function generateCallSequence(options) {
 	const container = new Group({ name: sequenceName, imm_type: type, origin: [8, 8, 8], rotation: [0, 0, 0] });
 	if (type === 'range_dispatch') { container.imm_property = property; container.imm_index = index; }
 	addAndInit(container, parent);
+	const generatedGroups = [container];
+	const generatedLocators = [];
 	let created = 0;
 	for (let i = 0; i < counts.length; i++) {
 		const count = counts[i];
 		const isBody = count === total;
-		const node = new Group({ name: '[' + count + '] ' + (isBody ? '本体' : '复调用'), imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
+		const node = new Group({ name: sequenceName + ' #' + (i + 1), imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
+		generatedGroups.push(node);
 		if (type === 'range_dispatch') node.imm_threshold = thresholdStart + i * thresholdStep;
 		addAndInit(node, container);
 		if (isBody) {
@@ -2262,12 +2265,13 @@ function generateCallSequence(options) {
 			try {
 				const locator = new Locator({ name: '调用 ' + labelOf(group), position: (group.origin || [0, 0, 0]).slice(), rotation: (group.rotation || [0, 0, 0]).slice(), ignore_inherited_scale: true });
 				addAndInit(locator, node);
+				generatedLocators.push(locator);
 				locator.imm_call_target = group.uuid;
 				created++;
 			} catch (error) { console.warn('[装配] 创建序列复调用失败', error); }
 		}
 	}
-	try { Undo.finishEdit('生成复调用序列'); } catch (e) { /* ignore */ }
+	try { Undo.finishEdit('生成复调用序列', { outliner: true, groups: groups.concat(generatedGroups), elements: generatedLocators }); } catch (e) { /* ignore */ }
 	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 	try { Project.saved = false; } catch (e) { /* ignore */ }
 	try { simInvalidate(); } catch (e) { /* ignore */ }
