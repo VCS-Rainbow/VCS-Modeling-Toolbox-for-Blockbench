@@ -283,3 +283,7 @@ Blockbench 5.x 的实现方式有两条，本插件都接上了：
 重启 Blockbench 即自动加载。
 
 注意：如果同时安装了 animated_java，它的 **Blockbench Patch Manager** 会在启动时卸载并重载插件，可能把本插件留在未加载状态（表现为需要手动刷新）。遇到时在插件列表里禁用 Patch Manager，或重启后手动重载一次本插件。
+
+## 枢轴算法
+
+枢轴归中、参考源文件重建枢轴点的统一算法与注意事项见 [PIVOT_ALGORITHM.md](PIVOT_ALGORITHM.md)。

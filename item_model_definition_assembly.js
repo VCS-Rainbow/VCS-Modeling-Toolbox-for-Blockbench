@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.54';
+const VERSION = '0.68.56';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1918,6 +1918,11 @@ function pivotContentPoints(group) {
 }
 
 /** 把分组（及其后代）的内容整体平移 d（本分组本地坐标） */
+/** 平均点：分组枢轴归中与源模型几何中心必须共用这一套 */
+function averagePoints(points) {
+	if (!points || !points.length) return null;
+	return [0, 1, 2].map(a => points.reduce((sum, p) => sum + p[a], 0) / points.length);
+}
 function pivotTranslateContents(group, delta) {
 	for (const child of (group.children || [])) {
 		if (isCube(child)) {
@@ -1955,7 +1960,7 @@ function fixGroupPivot(group) {
 	const q = pivotQuat(group);
 	const origin = (group.origin || [0, 0, 0]).slice();
 	const rendered = points.map(p => rotateAroundQuat(q, origin, p));
-	const target = [0, 1, 2].map(i => rendered.reduce((sum, p) => sum + p[i], 0) / rendered.length);
+	const target = averagePoints(rendered);
 	try { group.imda_pivot_offset = JSON.stringify(rotVec(quatMatrix(pivotConj(q)), [origin[0] - target[0], origin[1] - target[1], origin[2] - target[2]])); } catch (e) { /* ignore */ }
 	const delta = [target[0] - origin[0], target[1] - origin[1], target[2] - origin[2]];
 	const back = rotVec(quatMatrix(pivotConj(q)), delta);
@@ -2084,30 +2089,43 @@ function sourceModelGeometryCenter(reference) {
 	if (resolved.error) return { error: resolved.error };
 	const elements = resolved.elements || [];
 	if (!elements.length) return { error: '源模型没有 elements。' };
-	// 建立 element 下标 → 祖先分组链；Java 模型里元素受 groups 的 origin/rotation 影响
 	const chains = new Map();
-	const walkGroups = (nodes, chain) => {
+	const walkSourceGroups = (nodes, chain) => {
 		for (const src of (nodes || [])) {
 			if (!src || typeof src !== 'object') continue;
 			const next = chain.concat([{ origin: Array.isArray(src.origin) ? src.origin : [0, 0, 0], rotation: Array.isArray(src.rotation) ? src.rotation : [0, 0, 0] }]);
 			for (const child of (src.children || [])) if (typeof child === 'number') chains.set(child, next);
-			walkGroups((src.children || []).filter(c => c && typeof c === 'object'), next);
+			walkSourceGroups((src.children || []).filter(c => c && typeof c === 'object'), next);
 		}
 	};
-	walkGroups(resolved.groups || [], []);
-	const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+	walkSourceGroups(resolved.groups || [], []);
+	const sourceRotationEuler = (rotation) => {
+		if (!rotation || typeof rotation !== 'object') return [0, 0, 0];
+		if (rotation.axis) {
+			const angle = Number(rotation.angle) || 0;
+			if (rotation.axis === 'x') return [angle, 0, 0];
+			if (rotation.axis === 'y') return [0, angle, 0];
+			return [0, 0, angle];
+		}
+		return [Number(rotation.x) || 0, Number(rotation.y) || 0, Number(rotation.z) || 0];
+	};
+	const points = [];
 	for (let index = 0; index < elements.length; index++) {
 		const el = elements[index];
 		if (!el || !Array.isArray(el.from) || !Array.isArray(el.to)) continue;
-		const chain = chains.get(index) || [];
-		for (const cx of [el.from[0], el.to[0]]) for (const cy of [el.from[1], el.to[1]]) for (const cz of [el.from[2], el.to[2]]) {
-			let point = [Number(cx) || 0, Number(cy) || 0, Number(cz) || 0];
-			for (const group of chain) point = rotateAroundQuat({ x: 0, y: 0, z: 0, w: 1 }, group.origin, point), point = rotateAroundQuat((() => { const q = readQuaternion({ rotation: group.rotation }); return q || { x: 0, y: 0, z: 0, w: 1 }; })(), group.origin, point);
-			for (let a = 0; a < 3; a++) { min[a] = Math.min(min[a], point[a]); max[a] = Math.max(max[a], point[a]); }
+		let center = [0, 1, 2].map(a => (Number(el.from[a]) + Number(el.to[a])) / 2);
+		const elq = readQuaternion({ rotation: sourceRotationEuler(el.rotation) });
+		const elOrigin = Array.isArray(el.rotation && el.rotation.origin) ? el.rotation.origin : [0, 0, 0];
+		if (elq) center = rotateAroundQuat(elq, elOrigin, center);
+		for (const group of (chains.get(index) || [])) {
+			const q = readQuaternion({ rotation: group.rotation });
+			if (q) center = rotateAroundQuat(q, group.origin, center);
 		}
+		points.push(center);
 	}
-	if (!isFinite(min[0])) return { error: '源模型没有有效几何。' };
-	return { center: [0, 1, 2].map(a => (min[a] + max[a]) / 2), min, max };
+	if (!points.length) return { error: '源模型没有有效几何。' };
+	const center = averagePoints(points);
+	return { center, count: points.length };
 }
 
 function selectedCallTags() {
@@ -4470,7 +4488,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callModelPrefill, orderedSelectedGroups, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callModelPrefill, orderedSelectedGroups, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
