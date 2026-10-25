@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.66';
+const VERSION = '0.68.67';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2727,8 +2727,11 @@ function instantiateCallTags() {
 				if (targetGroup) {
 					created = (typeof targetGroup.duplicate === 'function') ? targetGroup.duplicate() : ((typeof targetGroup.clone === 'function') ? targetGroup.clone() : null);
 					if (created) {
+				const oldOrigin = Array.isArray(created.origin) ? created.origin.slice() : [0, 0, 0];
+				const nextOrigin = Array.isArray(locator.position) ? locator.position.slice() : oldOrigin;
 				created.name = locator.name || (labelOf(targetGroup) + ' 实例');
-				created.origin = Array.isArray(locator.position) ? locator.position.slice() : (created.origin || [0, 0, 0]);
+				try { pivotTranslateContents(created, [nextOrigin[0] - oldOrigin[0], nextOrigin[1] - oldOrigin[1], nextOrigin[2] - oldOrigin[2]]); } catch (e) { /* ignore */ }
+				created.origin = nextOrigin;
 				created.rotation = Array.isArray(locator.rotation) ? locator.rotation.slice() : (created.rotation || [0, 0, 0]);
 				created.selected = false;
 			}
