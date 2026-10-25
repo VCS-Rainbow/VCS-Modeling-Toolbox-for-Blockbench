@@ -9,7 +9,8 @@
 - 插件：**VCS' Modeling Toolbox（VMT）**
 - 模块：**Item Model Definition Assembly（IMDA）**，中文“物品模型定义装配”
 - 格式 id：`item_model_definition_assembly`
-- `imm_*` 是历史兼容前缀；`Tools → 迁移属性前缀（imm_ → imda_）` 可复制或重命名到 `imda_*`
+- **`imda_*` 是主键**，项目设置页读新键；`imm_*` 是隐藏兼容别名
+- `Tools → 迁移属性前缀（imm_ → imda_）` 可复制或重命名旧数据
 
 ## 安装 / 使用
 

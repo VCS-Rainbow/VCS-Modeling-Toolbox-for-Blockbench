@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.66.3', api.VERSION, '0.66.3');
+eq('版本是 0.66.4', api.VERSION, '0.66.4');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -85,8 +85,9 @@ eq('下拉含 26.3', Object.prototype.hasOwnProperty.call(versionOptions, '26.3'
 eq('26.2 选项带格式号 88', /88/.test(String(versionOptions['26.2'])), true);
 eq('1.21.5 选项标注 pack_format', /pack_format/.test(String(versionOptions['1.21.5'])), true);
 global.Project.imm_pack_version = '';
+global.Project.imda_pack_version = '';
 api.ensurePackVersion();
-eq('老项目空值自动补 26.2（下拉不会落到第一项）', global.Project.imm_pack_version, '26.2');
+eq('老项目空值自动补 26.2（下拉不会落到第一项）', global.Project.imda_pack_version, '26.2');
 
 /* ---------- pack.mcmeta 版本表 ---------- */
 console.log('\n[pack.mcmeta]');
@@ -689,8 +690,8 @@ eq('重命名写入 imda_type', prefixGroup2.imda_type, 'model');
 eq('重命名删除旧键', Object.prototype.hasOwnProperty.call(prefixGroup2, 'imm_type'), false);
 global.Project.imm_pack_path = 'C:/pack';
 api.migratePropPrefixes(true);
-eq('迁移不动 Project 资源包路径', global.Project.imm_pack_path, 'C:/pack');
-eq('迁移不生成 Project imda_pack_path', global.Project.imda_pack_path, undefined);
+eq('迁移写入 Project imda_pack_path', global.Project.imda_pack_path, 'C:/pack');
+eq('迁移删除 Project imm_pack_path', Object.prototype.hasOwnProperty.call(global.Project, 'imm_pack_path'), false);
 delete global.Project.imm_pack_path;
 
 /* ---------- 汇总 ---------- */

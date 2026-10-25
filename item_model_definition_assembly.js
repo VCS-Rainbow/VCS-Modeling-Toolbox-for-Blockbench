@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.66.3';
+const VERSION = '0.66.4';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -212,18 +212,29 @@ const rotVec = (m, v) => [
 
 function projectValue(name, fallback) {
 	if (typeof Project === 'undefined' || !Project) return fallback;
-	const v = Project[name];
-	return (v === undefined || v === null || v === '') ? fallback : v;
+	const newName = String(name).startsWith('imm_') ? String(name).replace(/^imm_/, 'imda_') : name;
+	const v = Project[newName];
+	if (v !== undefined && v !== null && v !== '') return v;
+	const legacy = Project[name];
+	return (legacy === undefined || legacy === null || legacy === '') ? fallback : legacy;
 }
-
+function setProjectValue(name, value) {
+	if (typeof Project === 'undefined' || !Project) return;
+	Project[name] = value;
+	const newName = String(name).startsWith('imm_') ? String(name).replace(/^imm_/, 'imda_') : name;
+	Project[newName] = value;
+}
 /* ---------- 属性前缀兼容：imm_*（旧） / imda_*（新） ---------- */
 function adoptImdaProps(node) {
 	if (!node) return node;
 	try {
 		for (const key of Object.keys(node)) {
-			if (!key.startsWith('imda_')) continue;
-			const legacy = 'imm_' + key.slice(5);
-			node[legacy] = node[key];
+			if (key.startsWith('imda_')) {
+				node['imm_' + key.slice(5)] = node[key];
+			} else if (key.startsWith('imm_')) {
+				const next = 'imda_' + key.slice(4);
+				if (node[next] === undefined) node[next] = node[key];
+			}
 		}
 	} catch (e) { /* ignore */ }
 	return node;
@@ -250,7 +261,7 @@ function copyImmToImda(node, removeLegacy) {
 }
 function migratePropPrefixes(removeLegacy) {
 	const nodes = [];
-	// Project 级设置（资源包路径等）不做迁移：设置页仍读 imm_*，避免设置被清空
+	if (typeof Project !== 'undefined' && Project) nodes.push(Project);
 	for (const group of ((typeof Group !== 'undefined' && Group.all) ? Group.all : [])) nodes.push(group);
 	for (const locator of ((typeof Locator !== 'undefined' && Locator.all) ? Locator.all : [])) nodes.push(locator);
 	for (const cube of ((typeof Cube !== 'undefined' && Cube.all) ? Cube.all : [])) nodes.push(cube);
@@ -1234,7 +1245,7 @@ function packMcmetaFormat(mcmeta) {
 /** 老项目没有 imm_pack_version 时补默认值，避免项目设置的下拉落到第一项（26.3） */
 function ensurePackVersion() {
 	try {
-		if (typeof Project !== 'undefined' && Project && !Project.imm_pack_version) Project.imm_pack_version = DEFAULT_PACK_VERSION;
+		if (typeof Project !== 'undefined' && Project && !projectValue('imm_pack_version', '')) setProjectValue('imm_pack_version', DEFAULT_PACK_VERSION);
 	} catch (e) { /* ignore */ }
 }
 
@@ -1256,7 +1267,7 @@ function createPackProject(root) {
 		const data = { pack: built.pack };
 		fsmod.mkdirSync(root, { recursive: true });
 		Blockbench.writeFile(pathmod.join(root, 'pack.mcmeta'), { content: JSON.stringify(data, null, '\t'), savetype: 'text' });
-		if (typeof Project !== 'undefined' && Project) { Project.imm_pack_path = root; Project.saved = false; }
+		if (typeof Project !== 'undefined' && Project) { setProjectValue('imm_pack_path', root); Project.saved = false; }
 		const field = built.pack.min_format != null
 			? ('min_format/max_format=' + packFormatLabel(built.version))
 			: ('pack_format=' + built.pack.pack_format);
@@ -1271,7 +1282,7 @@ function createPackProject(root) {
 async function pickPackPath() {
 	const picked = await pickPack();
 	if (!picked) return;
-	try { Project.imm_pack_path = picked; Project.saved = false; } catch (e) { /* ignore */ }
+	try { setProjectValue('imm_pack_path', picked); Project.saved = false; } catch (e) { /* ignore */ }
 	const pathmod = getPath();
 	const fsmod = getScopedFs(picked);
 	if (pathmod && fsmod && !readPackMcmeta(fsmod, pathmod, picked)) {
@@ -1314,7 +1325,7 @@ function mergeToPack() {
 			message: '该目录下没有 pack.mcmeta：\n' + root + '\n\n选择其它目录，或为它创建 pack.mcmeta。',
 			buttons: ['取消', '选择…', '创建 pack.mcmeta'], confirm: 2, cancel: 0,
 		}, (button) => {
-			if (button === 1) pickPack().then(picked => { if (picked) { Project.imm_pack_path = picked; runMerge(picked); } });
+			if (button === 1) pickPack().then(picked => { if (picked) { setProjectValue('imm_pack_path', picked); runMerge(picked); } });
 			else if (button === 2 && createPackProject(root)) runMerge(root);
 		});
 		return;
@@ -1394,7 +1405,7 @@ function runMerge(root) {
 				content: JSON.stringify({ version: 1, files: Array.from(plan.current) }, null, 2),
 				savetype: 'text',
 			});
-			Project.imm_pack_path = plan.root;
+			setProjectValue('imm_pack_path', plan.root);
 			Project.saved = false;
 			Blockbench.showQuickMessage('已合并 ' + written + ' 个文件' + (removed ? ('，清理 ' + removed + ' 个') : '') + ' → 按 F3+T 重载', 5000);
 		} catch (error) {
@@ -3446,14 +3457,16 @@ function openSimulator() {
 function registerProperties() {
 	const cond = { formats: [FORMAT_ID] };
 	const P = (target, type, name, options) => {
-		const prop = new Property(target, type, name, Object.assign({ condition: cond, exposed: true }, options));
-		if (String(name).startsWith('imm_')) {
-			try { new Property(target, type, String(name).replace(/^imm_/, 'imda_'), Object.assign({ condition: cond, exposed: false }, options)); } catch (e) { /* ignore */ }
+		let primaryName = name;
+		let legacyName = null;
+		if (String(name).startsWith('imm_')) { primaryName = String(name).replace(/^imm_/, 'imda_'); legacyName = name; }
+		const prop = new Property(target, type, primaryName, Object.assign({ condition: cond, exposed: true }, options));
+		if (legacyName) {
+			try { new Property(target, type, legacyName, Object.assign({ condition: cond, exposed: false }, options)); } catch (e) { /* ignore */ }
 		}
 		return prop;
 	};
-
-	P(ModelProject, 'string', 'imm_namespace', { label: '命名空间（可带子空间，如 sqsptst:weapon/shotgun）', default: 'custom' });
+P(ModelProject, 'string', 'imm_namespace', { label: '命名空间（可带子空间，如 sqsptst:weapon/shotgun）', default: 'custom' });
 	P(ModelProject, 'boolean', 'imm_center_pivot', { label: '旋转枢轴用 (0.5,0.5,0.5)（= 像素 8,8,8）', default: false });
 	P(ModelProject, 'boolean', 'imm_block_display', { label: '模型附带“显示调整”页的 display', default: true });
 P(ModelProject, 'number', 'imm_anim_fps', { label: '时间轴 FPS', default: 20, min: 1, max: 120 });
