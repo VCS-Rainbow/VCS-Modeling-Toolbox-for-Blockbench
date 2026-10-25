@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.51', api.VERSION, '0.68.51');
+eq('版本是 0.68.52', api.VERSION, '0.68.52');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -794,6 +794,15 @@ eq('internal 子项直接上溯到 model', global.Outliner.selected.indexOf(selM
 global.Outliner.selected.length = 0; selInternal.selected = true; global.Outliner.selected.push(selInternal);
 api.guardBoxSelection();
 eq('只选 internal 分组也上溯到 model', global.Outliner.selected.indexOf(selModel) >= 0, true);
+/* ---------- 枢轴记录重建 ---------- */
+console.log('\n[枢轴记录]');
+const recordPivotGroup = new global.Group({ name: 'recordPivotGroup', imda_type: 'composite', origin: [0, 0, 0], rotation: [0, 0, 0] });
+const recordPivotCube = new global.Cube({ from: [10, 0, 0], to: [12, 0, 0], origin: [11, 0, 0], rotation: [0, 0, 0] });
+recordPivotCube.parent = recordPivotGroup; recordPivotGroup.children.push(recordPivotCube);
+api.fixGroupPivot(recordPivotGroup);
+eq('归中后枢轴在几何中心', recordPivotGroup.origin[0], 11);
+api.restoreGroupPivotFromRecord(recordPivotGroup);
+eq('从记录恢复到原枢轴', recordPivotGroup.origin[0], 0);
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);

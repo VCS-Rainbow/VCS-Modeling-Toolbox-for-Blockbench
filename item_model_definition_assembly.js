@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.51';
+const VERSION = '0.68.52';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1939,6 +1939,7 @@ function centerCubePivot(cube, target) {
 	const moved = Math.hypot(target[0] - num(old[0]), target[1] - num(old[1]), target[2] - num(old[2]));
 	if (moved <= 1e-9) { cube.origin = target.slice(); return 0; }
 	const d = [num(old[0]) - target[0], num(old[1]) - target[1], num(old[2]) - target[2]];
+	try { cube.imda_pivot_offset = JSON.stringify(rotVec(quatMatrix(pivotConj(pivotQuat(cube))), d)); } catch (e) { /* ignore */ }
 	const back = rotVec(quatMatrix(pivotConj(pivotQuat(cube))), d);
 	const shift = [back[0] - d[0], back[1] - d[1], back[2] - d[2]];
 	addVec(cube.from, shift);
@@ -1955,6 +1956,7 @@ function fixGroupPivot(group) {
 	const origin = (group.origin || [0, 0, 0]).slice();
 	const rendered = points.map(p => rotateAroundQuat(q, origin, p));
 	const target = [0, 1, 2].map(i => rendered.reduce((sum, p) => sum + p[i], 0) / rendered.length);
+	try { group.imda_pivot_offset = JSON.stringify(rotVec(quatMatrix(pivotConj(q)), [origin[0] - target[0], origin[1] - target[1], origin[2] - target[2]])); } catch (e) { /* ignore */ }
 	const delta = [target[0] - origin[0], target[1] - origin[1], target[2] - origin[2]];
 	const back = rotVec(quatMatrix(pivotConj(q)), delta);
 	const shift = [delta[0] - back[0], delta[1] - back[1], delta[2] - back[2]];
@@ -2010,6 +2012,138 @@ function applyPivotFix(selectedOnly) {
 	Blockbench.showQuickMessage(((fixed || cubesFixed)
 		? ('枢轴归位：' + fixed + ' 个分组、' + cubesFixed + ' 个方块枢轴已归中' + (cubesFixed ? ('（方块平均 ' + (cubeTotal / cubesFixed).toFixed(1) + 'px，最大 ' + cubeMax.toFixed(1) + 'px）') : ''))
 		: '所有分组和方块枢轴已经在几何中心附近'), 4000);
+}
+
+function pivotOffsetOf(node) {
+	try { const value = JSON.parse(String(node && node.imda_pivot_offset || '')); if (Array.isArray(value) && value.length === 3) return value.map(Number); } catch (e) { /* ignore */ }
+	return null;
+}
+
+function groupContentCenter(group) {
+	const points = pivotContentPoints(group);
+	if (!points.length) return Array.isArray(group.origin) ? group.origin.slice() : [0, 0, 0];
+	const q = pivotQuat(group), origin = group.origin || [0, 0, 0];
+	const rendered = points.map(p => rotateAroundQuat(q, origin, p));
+	return [0, 1, 2].map(i => rendered.reduce((sum, p) => sum + p[i], 0) / rendered.length);
+}
+
+function moveGroupPivot(group, target) {
+	const old = (group.origin || [0, 0, 0]).slice();
+	const d = [target[0] - old[0], target[1] - old[1], target[2] - old[2]];
+	const back = rotVec(quatMatrix(pivotConj(pivotQuat(group))), d);
+	const shift = [d[0] - back[0], d[1] - back[1], d[2] - back[2]];
+	pivotTranslateContents(group, shift);
+	group.origin = target.slice();
+	return Math.hypot(d[0], d[1], d[2]);
+}
+
+function restoreGroupPivotFromRecord(group) {
+	const offset = pivotOffsetOf(group);
+	if (!offset) return 0;
+	const center = groupContentCenter(group);
+	const world = rotVec(quatMatrix(pivotQuat(group)), offset);
+	return moveGroupPivot(group, [center[0] + world[0], center[1] + world[1], center[2] + world[2]]);
+}
+
+function restoreCubePivotFromRecord(cube) {
+	const offset = pivotOffsetOf(cube);
+	if (!offset || !isGroup(cube.parent)) return 0;
+	const world = rotVec(quatMatrix(pivotQuat(cube)), offset);
+	const base = Array.isArray(cube.parent.origin) ? cube.parent.origin : [0, 0, 0];
+	const target = [base[0] + world[0], base[1] + world[1], base[2] + world[2]];
+	return centerCubePivot(cube, target);
+}
+
+function restorePivotFromRecordDialog() {
+	const groups = selectedGroups();
+	const scope = groups.length ? groups : ((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root.filter(isGroup) : []);
+	const allGroups = [];
+	walkGroups(scope, g => allGroups.push(g));
+	const cubes = [];
+	for (const g of allGroups) for (const c of (g.children || [])) if (isCube(c)) cubes.push(c);
+	if (!allGroups.length && !cubes.length) { Blockbench.showQuickMessage('没有可重建枢轴的分组，请先选中分组。', 2500); return; }
+	try { Undo.initEdit({ groups: allGroups, elements: cubes }); } catch (e) { /* ignore */ }
+	let restoredGroups = 0, restoredCubes = 0;
+	for (const g of allGroups) {
+		if (restoreGroupPivotFromRecord(g) > 0.001) restoredGroups++;
+		for (const c of (g.children || [])) if (isCube(c) && restoreCubePivotFromRecord(c) > 0.001) restoredCubes++;
+	}
+	try { Undo.finishEdit('从记录重建枢轴点'); } catch (e) { /* ignore */ }
+	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+	try { Project.saved = false; } catch (e) { /* ignore */ }
+	simInvalidate();
+	Blockbench.showQuickMessage('从记录重建枢轴点：' + restoredGroups + ' 个分组、' + restoredCubes + ' 个方块', 4000);
+}
+
+function sourceModelGeometryCenter(reference) {
+	const root = String(projectValue('imda_pack_path', '') || '').trim();
+	if (!root) return { error: '先在项目设置里填写资源包工程路径。' };
+	const pathmod = getPath(), fsmod = getScopedFs(root);
+	if (!pathmod || !fsmod) return { error: '需要桌面版 Blockbench 才能读取源模型。' };
+	const resolved = resolveJavaModel(pathmod, fsmod, root, reference);
+	if (resolved.error) return { error: resolved.error };
+	const elements = resolved.elements || [];
+	if (!elements.length) return { error: '源模型没有 elements。' };
+	const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+	for (const el of elements) {
+		if (!el || !Array.isArray(el.from) || !Array.isArray(el.to)) continue;
+		for (let a = 0; a < 3; a++) { min[a] = Math.min(min[a], Number(el.from[a]), Number(el.to[a])); max[a] = Math.max(max[a], Number(el.from[a]), Number(el.to[a])); }
+	}
+	if (!isFinite(min[0])) return { error: '源模型没有有效几何。' };
+	return { center: [0, 1, 2].map(a => (min[a] + max[a]) / 2), min, max };
+}
+
+function selectedCallTags() {
+	const found = [];
+	try { for (const node of ((typeof Outliner !== 'undefined' && Outliner && Outliner.selected) ? Outliner.selected : [])) { if (isLocator(node) && String(node.imda_call_target || '').trim() && found.indexOf(node) < 0) found.push(node); } } catch (e) { /* ignore */ }
+	return found;
+}
+
+function rebuildPivotFromSourceDialog() {
+	const groups = selectedGroups();
+	const calls = selectedCallTags();
+	if (!groups.length && !calls.length) { Blockbench.showMessageBox({ title: '没有目标', message: '先选中要重建枢轴的分组或复调用标签。', icon: 'info' }); return; }
+	const firstGroup = groups.find(g => String(g.imda_model || '').trim());
+	const defaultRef = firstGroup ? String(firstGroup.imda_model || '').trim() : '';
+	new Dialog({
+		id: 'imda_rebuild_pivot_source',
+		title: '参考源文件重建枢轴点',
+		width: 560,
+		form: {
+			reference: { label: '源模型 id', type: 'text', value: defaultRef, description: '例如 sqsp:item/inker/jet_rifle/sac.full；几何中心会相对模型坐标原点计算。' },
+			info: { label: '范围', type: 'textarea', readonly: true, value: '分组 ' + groups.length + ' 个；复调用标签 ' + calls.length + ' 个\n只移动复调用标签，普通 Locator 不会处理。' },
+		},
+		onConfirm(result) {
+			const reference = String(result.reference || '').trim();
+			if (!reference) return;
+			const source = sourceModelGeometryCenter(reference);
+			if (source.error) { Blockbench.showMessageBox({ title: '读取源模型失败', message: source.error, icon: 'error' }); return; }
+			const sourceOffset = source.center;
+			const undoGroups = [], undoElements = [];
+			for (const g of groups) { undoGroups.push(g); for (const c of (g.children || [])) if (isCube(c)) undoElements.push(c); }
+			undoElements.push(...calls);
+			try { Undo.initEdit({ groups: undoGroups, elements: undoElements }); } catch (e) { /* ignore */ }
+			let groupCount = 0, callCount = 0;
+			for (const group of groups) {
+				fixGroupPivot(group);
+				const local = rotVec(quatMatrix(pivotConj(pivotQuat(group))), sourceOffset);
+				const current = Array.isArray(group.origin) ? group.origin : [0, 0, 0];
+				moveGroupPivot(group, [current[0] - local[0], current[1] - local[1], current[2] - local[2]]);
+				groupCount++;
+			}
+			for (const locator of calls) {
+				const local = rotVec(quatMatrix(pivotConj(pivotQuat(locator))), sourceOffset);
+				const pos = Array.isArray(locator.position) ? locator.position : [0, 0, 0];
+				locator.position = [pos[0] - local[0], pos[1] - local[1], pos[2] - local[2]];
+				callCount++;
+			}
+			try { Undo.finishEdit('参考源文件重建枢轴点'); } catch (e) { /* ignore */ }
+			try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+			try { Project.saved = false; } catch (e) { /* ignore */ }
+			simInvalidate();
+			Blockbench.showQuickMessage('参考源文件重建枢轴点：' + groupCount + ' 个分组、' + callCount + ' 个复调用标签；源偏移 [' + sourceOffset.map(v => v.toFixed(3)).join(', ') + ']', 5000);
+		},
+	}).show();
 }
 
 function diagnoseSimView() {
@@ -4077,6 +4211,8 @@ P(ModelProject, 'number', 'imda_extra_composite_layers', { label: '调试：额�
 	P(Group, 'string', 'imda_display_mode', { label: '强制统一显示调整', default: 'copy' });
 	try { new Property(Group, 'string', 'imda_model_shift', { default: '', exposed: false, condition: cond }); } catch (e) { /* ignore */ }
 	try { new Property(Group, 'string', 'imda_model_origin', { default: '', exposed: false, condition: cond }); } catch (e) { /* ignore */ }
+	try { new Property(Group, 'string', 'imda_pivot_offset', { default: '', exposed: false, condition: cond }); } catch (e) { /* ignore */ }
+	try { new Property(Cube, 'string', 'imda_pivot_offset', { default: '', exposed: false, condition: cond }); } catch (e) { /* ignore */ }
 	if (typeof Locator !== 'undefined') {
 		try { new Property(Locator, 'string', 'imda_call_target', { label: '复调用目标（分组 UUID 或模型 id）', default: '', exposed: false }); } catch (e) { /* ignore */ }
 		try { new Property(Locator, 'number', 'imda_frame', { default: 0, exposed: false }); } catch (e) { /* ignore */ }
@@ -4255,7 +4391,9 @@ Plugin.register('item_model_definition_assembly', {
 		actions.check = new Action('imda_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
 		actions.pack = new Action('imda_pick_pack', { name: '选择资源包工程路径…', description: '打开系统文件夹选择框，设为资源包工程目录', icon: 'folder_open', category: 'file', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: pickPackPath });
 		actions.sim = new Action('imda_simulate', { name: '模拟输入…', description: '按 custom_model_data / selected 预览分支命中', icon: 'play_circle', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const panel = buildSimPanel(false); if (panel) { panel.show(); return; } openSimulator(); } });
-		actions.pivot = new Action('imda_fix_pivot', { name: '枢轴归位（对齐几何中心）…', description: '把分组 origin 移到几何中心，补偿方块坐标，外观不变', icon: 'center_focus_strong', category: 'tools', condition, click: openPivotFix });
+		actions.pivot = new Action('imda_fix_pivot', { name: '枢轴归位（对齐几何中心）…', description: '把分组 origin 移到几何中心，补偿方块坐标，外观不变', icon: 'center_focus_strong', category: 'tools', condition, click: openPivotFix });
+		actions.pivotRestore = new Action('imda_restore_pivot', { name: '从记录重建枢轴点…', description: '按「枢轴归位」保存的局部偏移，把分组/方块枢轴移回原来的位置', icon: 'restore', category: 'tools', condition, click: restorePivotFromRecordDialog });
+		actions.pivotFromSource = new Action('imda_pivot_from_source', { name: '参考源文件重建枢轴点…', description: '读取源模型几何中心相对原点的偏移，按当前旋转换算为局部坐标，移动分组枢轴和复调用标签并保持外观', icon: 'my_location', category: 'tools', condition, click: rebuildPivotFromSourceDialog });
 		actions.props = new Action('imda_group_props', { name: '编辑分组映射属性…', description: '映射类型 / 引用模型 / property 等', icon: 'tune', category: 'tools', condition, click: editGroupProps });
 		actions.boxToggle = new Action('imda_box_toggle', { name: '开关：框选方块时改选所属分组', description: '切换“一次选中多个方块时自动改为选中其父分组”', icon: 'select_all', category: 'tools', click: () => { if (!immBoxSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !boxGroupsEnabled(); setBoxSelectGroups(next); try { if (typeof immBoxSetting.save === 'function') immBoxSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('框选方块改选所属分组：' + (next ? '开' : '关') + (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID ? '（装配格式内强制开启）' : ''), 2600); } });
 		actions.batchToggle = new Action('imda_batch_toggle', { name: '开关：批量选组时取消元素选择', description: '切换“同时选中多个分组时自动取消方块/定位点选择”', icon: 'select_all', category: 'tools', click: () => { if (!immBatchSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !batchGroupsOnlyEnabled(); setBatchGroupsOnly(next); try { if (typeof immBatchSetting.save === 'function') immBatchSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('批量选择时取消单个元素：' + (next ? '开' : '关'), 2200); } });
@@ -4295,6 +4433,8 @@ Plugin.register('item_model_definition_assembly', {
 		tool(actions.boxToggle);
 		tool(actions.batchToggle);
 		tool(actions.pivot);
+		tool(actions.pivotRestore);
+		tool(actions.pivotFromSource);
 
 		try { attachAnimationTimelineMenu(); } catch (e) { /* ignore */ }
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
@@ -4313,7 +4453,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callModelPrefill, orderedSelectedGroups, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callModelPrefill, orderedSelectedGroups, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
