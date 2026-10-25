@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.67.6';
+const VERSION = '0.67.7';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -387,6 +387,7 @@ class Exporter {
 		this.textureNames = new Set();
 		this.negativeCount = 0;
 		this.projectDisplay = readProjectDisplay();
+		this.displayAllSlots = settings.display_all_slots === true;
 		this.timelinePoses = null;
 		this.timelineSkip = null;
 		this.groupShifts = new Map();
@@ -878,7 +879,10 @@ class Exporter {
 		if (!this.blockDisplay) return {};
 		const base = JSON.parse(JSON.stringify(BLOCK_DISPLAY));
 		const custom = this.projectDisplay || {};
-		for (const slot of Object.keys(custom)) base[slot] = custom[slot];
+		for (const slot of Object.keys(custom)) {
+			if (!this.displayAllSlots && !/thirdperson|firstperson/.test(slot)) continue;
+			base[slot] = custom[slot];
+		}
 		return base;
 	}
 
@@ -1299,6 +1303,7 @@ function createExporter() {
 		item_id: sanitizePath(String(projectValue('model_identifier', '') || (Project && Project.name) || 'item'), 'item'),
 		center_pivot: projectValue('imm_center_pivot', false) === true,
 		block_display: projectValue('imm_block_display', true) !== false,
+		display_all_slots: projectValue('imda_display_all_slots', false) === true,
 	});
 }
 
@@ -3662,7 +3667,8 @@ P(ModelProject, 'string', 'imm_namespace', { label: '命名空间（可带子空
 P(ModelProject, 'number', 'imm_anim_fps', { label: '时间轴 FPS', default: 20, min: 1, max: 120 });
 P(ModelProject, 'number', 'imm_anim_index', { label: '时间轴 custom_model_data index', default: 0 });
 P(ModelProject, 'string', 'imm_anim_property', { label: '时间轴 range_dispatch property', default: 'custom_model_data' });
-P(ModelProject, 'boolean', 'imm_export_node_names', { label: '输出 node_name（来源分组名）', default: true });
+P(ModelProject, 'boolean', 'imda_display_all_slots', { label: 'display 输出全部槽位（GUI/地面/固定）', default: false });
+	P(ModelProject, 'boolean', 'imm_export_node_names', { label: '输出 node_name（来源分组名）', default: true });
 	P(ModelProject, 'boolean', 'imm_anim_auto', { label: '导出时自动采样动画时间轴', default: true });
 	P(ModelProject, 'boolean', 'imm_hide_unavailable', { label: '隐藏当前条件下不可用的分组', default: true });
 	P(ModelProject, 'string', 'imm_pack_path', { label: '资源包工程路径（pack.mcmeta 所在目录）', default: '' });

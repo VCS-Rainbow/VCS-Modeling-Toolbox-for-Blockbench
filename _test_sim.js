@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.67.6', api.VERSION, '0.67.6');
+eq('版本是 0.67.7', api.VERSION, '0.67.7');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -639,12 +639,14 @@ global.Project.display_settings = {
   gui: { export() { return { scale: [1.25, 1.25, 1.25] }; } },
   thirdperson_righthand: { export() { return { rotation: [0, -90, 55], translation: [0, 4, 0.5], scale: [0.85, 0.85, 0.85] }; } },
 };
+global.Project.imda_display_all_slots = true;
 const displayExporter = api.createExporter();
 displayExporter.addModel([dispCube], 'displayFromProject');
 eq('display 使用显示调整页的 gui', displayExporter.models[0].data.display.gui.scale, [1.25, 1.25, 1.25]);
 eq('display 使用显示调整页的手持', displayExporter.models[0].data.display.thirdperson_righthand.scale, [0.85, 0.85, 0.85]);
 eq('未在显示调整页出现的上下文不输出', displayExporter.models[0].data.display.ground, undefined);
 delete global.Project.display_settings;
+delete global.Project.imda_display_all_slots;
 const parsedNs = api.parseNamespaceSetting('sqsptst:weapon/shotgun');
 eq('命名空间解析', parsedNs.namespace, 'sqsptst');
 eq('子空间解析', parsedNs.subpath, 'weapon/shotgun');
