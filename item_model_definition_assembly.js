@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.25';
+const VERSION = '0.68.26';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2485,6 +2485,10 @@ function editCallTag(locator) {
 	const selected = [];
 	try { if (typeof Outliner !== 'undefined' && Array.isArray(Outliner.selected)) for (const item of Outliner.selected) { if (typeof Locator !== 'undefined' && item instanceof Locator) selected.push(item); } } catch (e) { /* ignore */ }
 	try { if (typeof Locator !== 'undefined' && Locator && Array.isArray(Locator.selected)) for (const item of Locator.selected) if (selected.indexOf(item) < 0) selected.push(item); } catch (e) { /* ignore */ }
+	try {
+		const walkSelected = (nodes) => { for (const node of (nodes || [])) { if (typeof Locator !== 'undefined' && node instanceof Locator && node.selected && selected.indexOf(node) < 0) selected.push(node); if (isGroup(node)) walkSelected(node.children); } };
+		walkSelected((typeof Outliner !== 'undefined' && Outliner) ? Outliner.root : []);
+	} catch (e) { /* ignore */ }
 	if (locator && selected.indexOf(locator) < 0) selected.push(locator);
 	let locators = selected.filter((item, index) => item && selected.indexOf(item) === index);
 	if (!locators.length) return;
@@ -2520,6 +2524,10 @@ function editCallTag(locator) {
 				const target = model || String(result.target || '').trim();
 				try { Undo.initEdit({ elements: locators }); } catch (e) { /* ignore */ }
 				for (const item of locators) item.imm_call_target = target;
+				console.log('[装配] 编辑复调用标签', locators.length, '→', target);
+				if (target && target.indexOf(':') < 0 && typeof Group !== 'undefined' && Array.isArray(Group.all) && !Group.all.some(g => g && g.uuid === target)) {
+					Blockbench.showMessageBox({ title: '目标分组不存在', message: '目标 UUID 不在当前项目里：' + target + '\n请重新选择目标分组。', icon: 'warning' });
+				}
 				try { Undo.finishEdit('编辑复调用标签'); } catch (e) { /* ignore */ }
 				simInvalidate();
 				try { Canvas.updateAll(); } catch (e) { /* ignore */ }
