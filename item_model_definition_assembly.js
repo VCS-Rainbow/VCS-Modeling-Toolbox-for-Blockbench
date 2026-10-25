@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.7';
+const VERSION = '0.68.8';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -950,7 +950,11 @@ class Exporter {
 			for (let i = node.length - 1; i >= 0; i--) {
 				const item = node[i];
 				if (item && typeof item === 'object' && item.__imm_call_group) {
-					const target = this.groupNodeCache ? this.groupNodeCache.get(item.__imm_call_group) : null;
+				let target = this.groupNodeCache ? this.groupNodeCache.get(item.__imm_call_group) : null;
+				if (!target) {
+					try { target = this.buildNode(item.__imm_call_group, sanitizePath(labelOf(item.__imm_call_group), 'group'), [0, 0, 0]); } catch (e) { target = null; }
+					if (target) this.groupNodeCache.set(item.__imm_call_group, target);
+				}
 					if (!target) { this.warn('复调用目标没有可导出的映射节点，已跳过。'); node.splice(i, 1); continue; }
 					const clone = JSON.parse(JSON.stringify(target));
 					this.stripCallPlaceholders(clone);
@@ -2388,6 +2392,31 @@ function instantiateCallTags() {
 		try { Project.saved = false; } catch (e) { /* ignore */ }
 		Blockbench.showQuickMessage('已实例化 ' + done + ' 个复调用标签', 3000);
 	});
+}
+
+/** 把选中分组转换为复调用标签：原分组停止直接导出，标签在同位置调用它 */
+function convertSelectedGroupsToCallTags() {
+	if (typeof Locator === 'undefined') { Blockbench.showMessageBox({ title: '不支持定位点', message: '当前 Blockbench 没有 Locator。', icon: 'warning' }); return; }
+	const groups = selectedGroups();
+	if (!groups.length) { Blockbench.showMessageBox({ title: '请先选中分组', message: '在 outliner 里选中要转换的分组。', icon: 'info' }); return; }
+	try { Undo.initEdit({ outliner: true, groups, elements: [] }); } catch (e) { /* ignore */ }
+	const locators = [];
+	let converted = 0;
+	for (const group of groups) {
+		try {
+			const locator = new Locator({ name: '调用 ' + labelOf(group), position: (group.origin || [0, 0, 0]).slice(), rotation: (group.rotation || [0, 0, 0]).slice(), ignore_inherited_scale: true });
+			addAndInit(locator, group.parent || null);
+			locator.imm_call_target = group.uuid;
+			group.export = false;
+			locators.push(locator);
+			converted++;
+		} catch (error) { console.warn('[装配] 转换为复调用标签失败', error); }
+	}
+	try { Undo.finishEdit('将分组转换为复调用标签', { outliner: true, groups, elements: locators }); } catch (e) { /* ignore */ }
+	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+	try { Project.saved = false; } catch (e) { /* ignore */ }
+	try { simInvalidate(); } catch (e) { /* ignore */ }
+	Blockbench.showQuickMessage('已转换 ' + converted + ' 个分组为复调用标签（原分组停止直接导出）', 4000);
 }
 
 /** 编辑一个复调用 Locator 的目标（分组 UUID 或模型 id） */
@@ -4020,7 +4049,8 @@ Plugin.register('item_model_definition_assembly', {
 	actions.instantiateCalls = new Action('imm_instantiate_calls', { name: '实例化所有复调用标签', description: '把复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner), click: () => instantiateCallTags() });
 	actions.animationTimeline = new Action('imda_animation_timeline', { name: '时间轴属性…', description: '设置该动画导出时间轴使用的 range_dispatch property 与 index', icon: 'timeline', category: 'animation', condition: () => typeof Animation !== 'undefined' && !!Animation.selected, click: () => showAnimationTimelineDialog() });
 	actions.migratePrefix = new Action('imm_migrate_prefix', { name: '迁移属性前缀（imm_ → imda_）…', description: '把项目里所有 imm_* 属性迁移到 imda_*：可复制（保留旧键）或重命名（删除旧键）', icon: 'swap_horiz', category: 'tools', click: () => migratePrefixDialog() });
-	actions.sequence = new Action('imda_sequence', { name: '生成复调用序列…', description: '按大纲顺序生成递增/递减复调用序列，节点类型可选 range_dispatch / composite', icon: 'format_list_numbered', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID), click: () => openSequenceDialog() });
+	actions.sequence = new Action('imda_sequence', { name: '生成复调用序列…', description: '按大纲顺序生成递增/递减复调用序列，节点类型可选 range_dispatch / composite', icon: 'format_list_numbered', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID) && selectedGroups().length >= 2, click: () => openSequenceDialog() });
+	actions.convertCall = new Action('imda_convert_call', { name: '将分组转化为复调用标签', description: '在同位置创建 Locator 调用该分组，并让原分组停止直接导出', icon: 'content_copy', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID) && selectedGroups().length > 0, click: () => convertSelectedGroupsToCallTags() });
 	actions.normalize = new Action('imda_normalize', { name: '规范化结构（composite 内联模型）…', description: '把 composite 的直属 cubes 收进 inline 子分组，等价于导出结构', icon: 'account_tree', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID), click: () => openNormalizeDialog() });
 		actions.createModel = new Action('imm_create_model', { name: '从分组创建模型…', description: '把选中分组的方块烘焙成 models/item 模型，并改为引用（自动居中）', icon: 'file_upload', category: 'tools', condition, click: () => { const group = pickTargetGroup(); if (!group) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } createModelFromGroup(group); } });
 		actions.check = new Action('imm_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
@@ -4037,23 +4067,32 @@ Plugin.register('item_model_definition_assembly', {
 		addMenu(actions.merge, 'file.export');
 		placeInFileMenu(actions.pack, ['save_model', 'export', 'import']);
 		
-		addMenu(actions.check, 'tools');
-		addMenu(actions.createModel, 'tools');
-		addMenu(actions.call, 'tools');
-		addMenu(actions.import, 'tools');
-		addMenu(actions.props, 'tools');
-		addMenu(actions.editCall, 'tools');
-		addMenu(actions.batchToggle, 'tools');
-		addMenu(actions.boxToggle, 'tools');
-		addMenu(actions.pivot, 'tools');
-		addMenu(actions.viewDiag, 'tools');
-		addMenu(actions.bakeTimeline, 'tools');
-		addMenu(actions.removeTimeline, 'tools');
-		addMenu(actions.instantiateCalls, 'tools');
-		addMenu(actions.migratePrefix, 'tools');
-		addMenu(actions.animationTimeline, 'tools');
-		addMenu(actions.sequence, 'tools');
-		addMenu(actions.normalize, 'tools');
+		const toolsMenu = (typeof MenuBar !== 'undefined' && MenuBar.menus) ? MenuBar.menus.tools : null;
+		const toolSep = (id) => { try { if (toolsMenu && typeof MenuSeparator !== 'undefined') toolsMenu.addAction(new MenuSeparator(id)); } catch (e) { /* ignore */ } };
+		const tool = (action) => addMenu(action, 'tools');
+		toolSep('imda_group_structure');
+		tool(actions.check);
+		tool(actions.props);
+		tool(actions.import);
+		tool(actions.createModel);
+		tool(actions.normalize);
+		tool(actions.sequence);
+		toolSep('imda_group_calls');
+		tool(actions.call);
+		tool(actions.convertCall);
+		tool(actions.editCall);
+		tool(actions.instantiateCalls);
+		toolSep('imda_group_timeline');
+		tool(actions.animationTimeline);
+		tool(actions.bakeTimeline);
+		tool(actions.removeTimeline);
+		toolSep('imda_group_selection');
+		tool(actions.boxToggle);
+		tool(actions.batchToggle);
+		tool(actions.pivot);
+		tool(actions.viewDiag);
+		toolSep('imda_group_migrate');
+		tool(actions.migratePrefix);
 		try { attachAnimationTimelineMenu(); } catch (e) { /* ignore */ }
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
 		// 面板会自动出现在「视图 → 面板」里，不再占用 Tools 菜单
