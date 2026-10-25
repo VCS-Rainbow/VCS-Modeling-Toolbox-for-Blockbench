@@ -2,6 +2,12 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.67.1
+- 动画属性对话框注入 `时间轴 range_dispatch property`（custom_model_data / cooldown / count / damage / time / use_cycle / use_duration / compass）与 `时间轴 custom_model_data index` 字段。
+- 采样时把 `animator.keyframes` 回填到通道，并同步 `Timeline.time`；修复所有帧姿态相同。
+- 时间轴总控 `* timeline`；帧节点 `frame 时.分.秒.帧`；模型文件按分组路径命名、所有帧复用。
+- 单测 171 项。
+
 ## 0.67.0
 - 修逐帧姿态全部相同：采样时同步 `Timeline.time`，并把存档里 `animator.keyframes` 回填到 rotation/position 通道后再插值。
 - 时间轴命名：总控 range 为 `* timeline`；帧节点为 `frame 时.分.秒.帧`（帧从 1 起）。

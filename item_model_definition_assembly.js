@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.67.0';
+const VERSION = '0.67.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -268,6 +268,42 @@ function migratePropPrefixes(removeLegacy) {
 	let total = 0;
 	for (const node of nodes) total += copyImmToImda(node, removeLegacy);
 	return total;
+}
+
+/** 在 Blockbench 原生动画属性对话框里追加时间轴 range_dispatch 设置 */
+function installAnimationPropertiesPatch() {
+	if (typeof Dialog === 'undefined' || !Dialog || !Dialog.prototype || Dialog.prototype.__imdaPatched) return;
+	Dialog.prototype.__imdaPatched = true;
+	const originalShow = Dialog.prototype.show;
+	Dialog.prototype.show = function () {
+		try {
+			if (String(this.id || '') === 'animation_properties' && typeof Animation !== 'undefined' && Animation.selected) {
+				const animation = Animation.selected;
+				const form = this.form;
+				if (form && !form.imda_timeline_property) {
+					form._imda = '_';
+					form.imda_timeline_property = {
+						label: '时间轴 range_dispatch property',
+						type: 'select',
+						value: animation.imda_timeline_property || 'custom_model_data',
+						options: { custom_model_data: 'custom_model_data', cooldown: 'cooldown', count: 'count', damage: 'damage', time: 'time', use_cycle: 'use_cycle', use_duration: 'use_duration', compass: 'compass' },
+					};
+					form.imda_timeline_index = { label: '时间轴 custom_model_data index', type: 'number', value: num(animation.imda_timeline_index) };
+					const originalConfirm = this.onConfirm;
+					const self = this;
+					this.onConfirm = function (result) {
+						try {
+							if (result && result.imda_timeline_property !== undefined) animation.imda_timeline_property = result.imda_timeline_property;
+							if (result && result.imda_timeline_index !== undefined) animation.imda_timeline_index = num(result.imda_timeline_index);
+							try { Project.saved = false; } catch (e) { /* ignore */ }
+						} catch (e) { /* ignore */ }
+						if (typeof originalConfirm === 'function') return originalConfirm.call(self, result);
+					};
+				}
+			}
+		} catch (e) { /* ignore */ }
+		return originalShow.apply(this, arguments);
+	};
 }
 
 /* ============================== 导出器 ============================== */
@@ -3656,6 +3692,7 @@ Plugin.register('item_model_definition_assembly', {
 	contributes: { formats: [FORMAT_ID] },
 	onload() {
 		try { adoptImdaAll(); } catch (e) { /* ignore */ }
+		try { installAnimationPropertiesPatch(); } catch (e) { /* ignore */ }
 		try { if (typeof Blockbench !== 'undefined' && Blockbench.on) Blockbench.on('load_project', () => { try { adoptImdaAll(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
 		console.log('[装配] onload 开始，版本 ' + VERSION);
 		try {
