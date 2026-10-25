@@ -409,7 +409,7 @@ callExporter.addModel = () => ({ reference: 'ns:item/callfake', shift: [0, 0, 0]
 const callJSON = JSON.stringify(callExporter.buildMapping());
 eq('四个复调用标签都被输出', (callJSON.match(/ns:item\/callfake/g) || []).length, 5);
 eq('复调用标签位置生效', /0\.125/.test(callJSON), true);
-eq('复调用使用标签名', callJSON.indexOf('"node_name": "调用 targetGroup"') >= 0, true);
+eq('复调用使用标签名', /"node_name":"调用 targetGroup"/.test(callJSON), true);
 eq('导出结果不含占位字段', callJSON.indexOf('__imm_call_group'), -1);
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRoot3);
 global.Group.all.splice(global.Group.all.indexOf(targetGroup), 1);
