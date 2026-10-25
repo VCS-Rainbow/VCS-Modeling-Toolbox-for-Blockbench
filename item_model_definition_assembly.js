@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.70';
+const VERSION = '0.68.71';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -872,7 +872,7 @@ class Exporter {
 				try {
 					const callNode = this.buildCallNode(locator);
 					if (!callNode) continue;
-					const rawThreshold = String(locator.imda_call_threshold == null ? '' : locator.imda_call_threshold).trim();
+					const rawThreshold = String((callOverridesOf(locator).threshold == null ? '' : callOverridesOf(locator).threshold)).trim();
 					const threshold = /^-?\d+(\.\d+)?$/.test(rawThreshold) ? Number(rawThreshold) : branch_index;
 					node.entries.push({ threshold: clean(threshold), model: callNode });
 					branch_index++;
@@ -992,7 +992,7 @@ class Exporter {
 		let group = null;
 		try { if (typeof Group !== 'undefined' && Array.isArray(Group.all)) group = Group.all.find(g => g && g.uuid === target) || null; } catch (e) { /* ignore */ }
 		if (!group) { this.warn('复调用标签 “' + labelOf(locator) + '” 找不到目标分组：' + target); return null; }
-		return { type: 'minecraft:empty', __imda_call_group: group, __imda_call_name: String(locator.name || labelOf(locator)), __imda_call_pose: { position: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() }, __imda_call_overrides: { property: String(locator.imda_call_property || '').trim(), index: String(locator.imda_call_index == null ? '' : locator.imda_call_index).trim(), scale: String(locator.imda_call_scale == null ? '' : locator.imda_call_scale).trim(), threshold: String(locator.imda_call_threshold == null ? '' : locator.imda_call_threshold).trim() } };
+		return { type: 'minecraft:empty', __imda_call_group: group, __imda_call_name: String(locator.name || labelOf(locator)), __imda_call_pose: { position: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() }, __imda_call_overrides: callOverridesOf(locator) };
 	}
 
 	/** 把占位替换为目标分组的映射节点（深拷贝，保留 transformation） */
@@ -1011,8 +1011,9 @@ class Exporter {
 		try {
 			const ov = placeholder.__imda_call_overrides || {};
 			if (ov.property) result.property = 'minecraft:' + String(ov.property).replace(/^minecraft:/, '');
-			if (ov.index !== '') result.index = clean(num(ov.index));
-			if (ov.scale !== '') result.scale = clean(num(ov.scale));
+			for (const key of ['index', 'scale', 'period']) if (ov[key] !== undefined && ov[key] !== '') result[key] = clean(num(ov[key]));
+			for (const key of ['wobble', 'normalize', 'remaining', 'ignore_default']) if (ov[key] === 'true' || ov[key] === 'false') result[key] = ov[key] === 'true';
+			for (const key of ['component', 'predicate', 'value', 'keybind', 'target', 'source', 'condition']) if (ov[key] !== undefined && ov[key] !== '') result[key] = String(ov[key]);
 		} catch (e) { /* ignore */ }
 		if (placeholder.__imda_call_name) result.node_name = placeholder.__imda_call_name;
 		return result;
@@ -2817,6 +2818,44 @@ function callModelPrefill(target, matchedGroup) {
 	return value.indexOf(':') >= 0 ? value : '';
 }
 
+function callOverridesOf(locator) {
+	let parsed = {};
+	try { parsed = JSON.parse(String(locator && locator.imda_call_overrides || '{}')) || {}; } catch (e) { parsed = {}; }
+	const legacy = { threshold: locator && locator.imda_call_threshold, property: locator && locator.imda_call_property, index: locator && locator.imda_call_index, scale: locator && locator.imda_call_scale };
+	for (const key of Object.keys(legacy)) if ((parsed[key] === undefined || parsed[key] === '') && legacy[key] !== undefined && legacy[key] !== '') parsed[key] = legacy[key];
+	return parsed;
+}
+
+function callOverrideFields(source, locator) {
+	const src = source || {};
+	const ov = callOverridesOf(locator);
+	const val = (key) => String(ov[key] == null ? '' : ov[key]);
+	const desc = (text) => text + '\n源节点值：' + JSON.stringify(src) + '';
+	const srcType = String(src.imda_type || 'composite').replace(/^minecraft:/, '');
+	const isRange = srcType === 'range_dispatch';
+	const isCondition = srcType === 'condition';
+	const isSelect = srcType === 'select';
+	const fields = {
+		sourceType: { label: '源映射类型（只读）', type: 'text', value: srcType, readonly: true, description: '复调用的类型始终跟随目标分组，不能单独修改。' },
+		threshold: { label: '阈值覆盖（父级 range_dispatch）', type: 'text', value: val('threshold'), description: '留空=不覆盖，沿用分支序号；数字则作为 entries[].threshold。' },
+		property: { label: 'property 覆盖', type: 'select', value: val('property'), options: { '': '（不覆盖）', selected: 'selected', broken: 'broken', damaged: 'damaged', carried: 'carried', custom_model_data: 'custom_model_data', has_component: 'has_component', component: 'component', keybind_down: 'keybind_down', compass: 'compass', count: 'count', damage: 'damage', time: 'time', use_cycle: 'use_cycle', use_duration: 'use_duration', 'bundle/fullness': 'bundle/fullness', cooldown: 'cooldown', 'crossbow/pull': 'crossbow/pull' }, description: '留空=不覆盖；源节点属性：' + String(src.imda_property || '（空）') },
+		index: { label: 'index 覆盖', type: 'text', value: val('index'), description: '留空=不覆盖；源节点 index：' + String(src.imda_index == null ? '' : src.imda_index) },
+		scale: { label: 'scale 覆盖', type: 'text', value: val('scale'), description: '留空=不覆盖；源节点 scale：' + String(src.imda_scale == null ? '' : src.imda_scale) },
+		component: { label: 'component 覆盖', type: 'text', value: val('component'), description: 'has_component 用；留空不覆盖。' },
+		predicate: { label: 'predicate 覆盖', type: 'text', value: val('predicate'), description: 'component 用；留空不覆盖。' },
+		value: { label: 'value 覆盖（JSON）', type: 'text', value: val('value'), description: 'component 用；留空不覆盖。' },
+		keybind: { label: 'keybind 覆盖', type: 'text', value: val('keybind'), description: 'keybind_down 用；留空不覆盖。' },
+		target: { label: 'compass target 覆盖', type: 'select', value: val('target'), options: { '': '（不覆盖）', lodestone: 'lodestone', none: 'none', spawn: 'spawn', recovery: 'recovery' }, description: '留空不覆盖。' },
+		source: { label: 'time source 覆盖', type: 'select', value: val('source'), options: { '': '（不覆盖）', daytime: 'daytime', random: 'random', moon_phase: 'moon_phase' }, description: '留空不覆盖。' },
+		wobble: { label: 'wobble 覆盖', type: 'select', value: val('wobble'), options: { '': '（不覆盖）', true: 'true', false: 'false' }, description: '留空不覆盖。' },
+		normalize: { label: 'normalize 覆盖', type: 'select', value: val('normalize'), options: { '': '（不覆盖）', true: 'true', false: 'false' }, description: '留空不覆盖。' },
+		period: { label: 'period 覆盖', type: 'text', value: val('period'), description: '留空不覆盖。' },
+		remaining: { label: 'remaining 覆盖', type: 'select', value: val('remaining'), options: { '': '（不覆盖）', true: 'true', false: 'false' }, description: '留空不覆盖。' },
+		condition: { label: 'condition 覆盖', type: 'select', value: val('condition'), options: { '': '（不覆盖）', on_true: 'on_true', on_false: 'on_false' }, description: '父级 condition 分支；留空不覆盖。' },
+	};
+	return fields;
+}
+
 function editCallTag(locator) {
 	const selected = [];
 	try { if (typeof Outliner !== 'undefined' && Array.isArray(Outliner.selected)) for (const item of Outliner.selected) { if (typeof Locator !== 'undefined' && item instanceof Locator) selected.push(item); } } catch (e) { /* ignore */ }
@@ -2853,23 +2892,25 @@ function editCallTag(locator) {
 		form: {
 			target: { label: '目标分组', type: 'select', value: matchedGroup, options, description: '批量编辑时会把所有选中标签指向同一目标；导出时替换为目标分组的映射节点。' },
 			model: { label: '或模型 id（优先）', type: 'text', value: callModelPrefill(commonTarget, matchedGroup), description: '例如 namespace:item/foo；填写后忽略上面的分组选择。失效的旧 UUID 不会预填到这里。' },
-			sourceType: { label: '源映射类型（跟随源）', type: 'text', value: (groups.find(g => g.uuid === matchedGroup) || {}).imda_type || '', readonly: true, description: '复调用不能改映射类型；导出时保持与源节点一致。' },
-			threshold: { label: '阈值覆盖（父级 range_dispatch 时生效）', type: 'text', value: String(first.imda_call_threshold == null ? '' : first.imda_call_threshold), description: '留空则沿用目标分组的 imda_threshold 或分支序号。' },
-			property: { label: 'property 覆盖', type: 'text', value: String(first.imda_call_property || ''), description: '如 custom_model_data / cooldown / count / damage / time / use_cycle / use_duration；留空跟随源。' },
-			index: { label: 'index 覆盖', type: 'text', value: String(first.imda_call_index == null ? '' : first.imda_call_index), description: 'custom_model_data 下标；留空跟随源。' },
-			scale: { label: 'scale 覆盖', type: 'text', value: String(first.imda_call_scale == null ? '' : first.imda_call_scale), description: 'range_dispatch 的 scale；留空跟随源。' },
+			...callOverrideFields(groups.find(g => g.uuid === matchedGroup) || null, first),
 		},
 		onConfirm(result) {
 			try {
 				const model = String(result.model || '').trim();
 				const target = model || String(result.target || '').trim();
 				try { Undo.initEdit({ elements: locators }); } catch (e) { /* ignore */ }
+				const overrides = {};
+				for (const key of ['threshold', 'property', 'index', 'scale', 'component', 'predicate', 'value', 'keybind', 'target', 'source', 'wobble', 'normalize', 'period', 'remaining', 'condition']) {
+					const text = String(result[key] == null ? '' : result[key]).trim();
+					if (text !== '') overrides[key] = text;
+				}
 				for (const item of locators) {
 					item.imda_call_target = target;
-					item.imda_call_threshold = String(result.threshold == null ? '' : result.threshold).trim();
-					item.imda_call_property = String(result.property || '').trim();
-					item.imda_call_index = String(result.index == null ? '' : result.index).trim();
-					item.imda_call_scale = String(result.scale == null ? '' : result.scale).trim();
+					item.imda_call_overrides = JSON.stringify(overrides);
+					item.imda_call_threshold = overrides.threshold || '';
+					item.imda_call_property = overrides.property || '';
+					item.imda_call_index = overrides.index || '';
+					item.imda_call_scale = overrides.scale || '';
 				}
 				console.log('[装配] 编辑复调用标签', locators.length, '→', target);
 				if (target && target.indexOf(':') < 0 && typeof Group !== 'undefined' && Array.isArray(Group.all) && !Group.all.some(g => g && g.uuid === target)) {
@@ -4404,6 +4445,7 @@ P(ModelProject, 'number', 'imda_extra_composite_layers', { label: '调试：额�
 		try { new Property(Locator, 'string', 'imda_call_property', { label: '复调用 property 覆盖', default: '', exposed: false }); } catch (e) { /* ignore */ }
 		try { new Property(Locator, 'string', 'imda_call_index', { label: '复调用 index 覆盖', default: '', exposed: false }); } catch (e) { /* ignore */ }
 		try { new Property(Locator, 'string', 'imda_call_scale', { label: '复调用 scale 覆盖', default: '', exposed: false }); } catch (e) { /* ignore */ }
+		try { new Property(Locator, 'string', 'imda_call_overrides', { label: '复调用映射属性覆盖（JSON）', default: '', exposed: false }); } catch (e) { /* ignore */ }
 		try { new Property(Locator, 'number', 'imda_frame', { default: 0, exposed: false }); } catch (e) { /* ignore */ }
 		try { new Property(Locator, 'string', 'imda_pose', { default: '', exposed: false }); } catch (e) { /* ignore */ }
 	}
@@ -4642,7 +4684,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

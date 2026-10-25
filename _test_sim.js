@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.70', api.VERSION, '0.68.70');
+eq('版本是 0.68.71', api.VERSION, '0.68.71');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -838,6 +838,13 @@ global.Group.all.push(seqTarget); global.Outliner.root.length = 0; global.Outlin
 global.Outliner.selected.length = 0; global.Outliner.selected.push(seqCallA, seqCallB);
 const seqAuto = api.orderedSequenceItems();
 eq('只选同目标 Locator 时自动补目标分组', seqAuto[0] === seqTarget && seqAuto.length === 3, true);
+/* ---------- 复调用覆盖 ---------- */
+console.log('\n[复调用覆盖]');
+const ovLocator = new global.Locator({ name: 'ov', position: [0,0,0], rotation: [0,0,0] });
+ovLocator.imda_call_overrides = JSON.stringify({ property: 'cooldown', index: '2', threshold: '4' });
+const ovParsed = api.callOverridesOf(ovLocator);
+eq('复调用覆盖 property', ovParsed.property, 'cooldown');
+eq('复调用覆盖 threshold', ovParsed.threshold, '4');
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);
