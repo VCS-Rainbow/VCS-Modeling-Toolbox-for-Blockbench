@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.16';
+const VERSION = '0.68.17';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -3921,6 +3921,21 @@ P(ModelProject, 'number', 'imda_extra_composite_layers', { label: '调试：额�
 	P(Group, 'string', 'imm_tints', { label: 'tints（JSON，仅 model / composite 自带模型）', default: '' });
 }
 
+function cleanOwnMenu(menu) {
+	if (!menu || !Array.isArray(menu.structure)) return;
+	try {
+		menu.structure = menu.structure.filter(item => {
+			if (!item) return true;
+			const id = String(item.id || '');
+			if (id.startsWith('imda_') || id.startsWith('imm_')) return false;
+			const name = String(item.name || '');
+			if (name.startsWith('==VCS') || name.startsWith('[ 模型装配 ]')) return false;
+			return true;
+		});
+		menu.__imdaTimelineAdded = false;
+	} catch (e) { /* ignore */ }
+}
+
 let menuAttached = false;
 let locatorMenuAttached = false;
 function attachGroupMenu() {
@@ -4068,7 +4083,8 @@ Plugin.register('item_model_definition_assembly', {
 		
 		const toolsMenu = (typeof MenuBar !== 'undefined' && MenuBar.menus) ? MenuBar.menus.tools : null;
 		const toolSep = (id, label) => { try { if (toolsMenu && typeof MenuSeparator !== 'undefined') toolsMenu.addAction(new MenuSeparator(id, label)); } catch (e) { /* ignore */ } };
-		const toolHeading = (label) => { try { if (toolsMenu) toolsMenu.addAction({ name: label, click: null }); } catch (e) { /* ignore */ } };
+		const toolHeading = (label) => { try { if (toolsMenu) toolsMenu.addAction({ id: 'imda_vmt_heading', name: label, icon: 'label', click: null }); } catch (e) { /* ignore */ } };
+		cleanOwnMenu(toolsMenu);
 		const tool = (action) => addMenu(action, 'tools');
 		toolHeading('==VCS Modeling Toolbox==');
 		toolSep('imda_group_assembly', '[ 模型装配 ]');
