@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.37';
+const VERSION = '0.68.27';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -226,36 +226,63 @@ const rotVec = (m, v) => [
 
 function projectValue(name, fallback) {
 	if (typeof Project === 'undefined' || !Project) return fallback;
-	const v = Project[name];
-	return (v === undefined || v === null || v === '') ? fallback : v;
+	const newName = String(name).startsWith('imm_') ? String(name).replace(/^imm_/, 'imda_') : name;
+	const v = Project[newName];
+	if (v !== undefined && v !== null && v !== '') return v;
+	const legacy = Project[name];
+	return (legacy === undefined || legacy === null || legacy === '') ? fallback : legacy;
 }
 function setProjectValue(name, value) {
 	if (typeof Project === 'undefined' || !Project) return;
 	Project[name] = value;
+	const newName = String(name).startsWith('imm_') ? String(name).replace(/^imm_/, 'imda_') : name;
+	Project[newName] = value;
 }
-
-/* ---------- 旧前缀迁移：imm_* → imda_*（仅在加载/导出时执行一次） ---------- */
-function migrateLegacyNode(node) {
+/* ---------- 属性前缀兼容：imm_*（旧） / imda_*（新） ---------- */
+function adoptImdaProps(node) {
+	if (!node) return node;
+	try {
+		for (const key of Object.keys(node)) {
+			if (key.startsWith('imda_')) {
+				const legacy = 'imm_' + key.slice(5);
+				if (node[legacy] === undefined) node[legacy] = node[key];
+				else if ((node[key] === '' || node[key] === null) && node[legacy] !== '') node[key] = node[legacy];
+			} else if (key.startsWith('imm_')) {
+				const next = 'imda_' + key.slice(4);
+				if (node[next] === undefined) node[next] = node[key];
+			}
+		}
+	} catch (e) { /* ignore */ }
+	return node;
+}
+function adoptImdaAll() {
+	if (typeof Project !== 'undefined' && Project) adoptImdaProps(Project);
+	for (const group of ((typeof Group !== 'undefined' && Group.all) ? Group.all : [])) adoptImdaProps(group);
+	for (const locator of ((typeof Locator !== 'undefined' && Locator.all) ? Locator.all : [])) adoptImdaProps(locator);
+	for (const cube of ((typeof Cube !== 'undefined' && Cube.all) ? Cube.all : [])) adoptImdaProps(cube);
+}
+function copyImmToImda(node, removeLegacy) {
 	if (!node) return 0;
-	const OLD = 'i' + 'mm_';
 	let count = 0;
 	try {
 		for (const key of Object.keys(node)) {
-			if (!key.startsWith(OLD)) continue;
-			const next = 'imda_' + key.slice(OLD.length);
-			if (node[next] === undefined) node[next] = node[key];
-			try { delete node[key]; } catch (e) { /* ignore */ }
+			if (!key.startsWith('imm_')) continue;
+			const next = 'imda_' + key.slice(4);
+			node[next] = node[key];
 			count++;
+			if (removeLegacy) { try { delete node[key]; } catch (e) { /* ignore */ } }
 		}
 	} catch (e) { /* ignore */ }
 	return count;
 }
-function migrateLegacyAll() {
+function migratePropPrefixes(removeLegacy) {
+	const nodes = [];
+	if (typeof Project !== 'undefined' && Project) nodes.push(Project);
+	for (const group of ((typeof Group !== 'undefined' && Group.all) ? Group.all : [])) nodes.push(group);
+	for (const locator of ((typeof Locator !== 'undefined' && Locator.all) ? Locator.all : [])) nodes.push(locator);
+	for (const cube of ((typeof Cube !== 'undefined' && Cube.all) ? Cube.all : [])) nodes.push(cube);
 	let total = 0;
-	if (typeof Project !== 'undefined' && Project) total += migrateLegacyNode(Project);
-	for (const group of ((typeof Group !== 'undefined' && Group.all) ? Group.all : [])) total += migrateLegacyNode(group);
-	for (const locator of ((typeof Locator !== 'undefined' && Locator.all) ? Locator.all : [])) total += migrateLegacyNode(locator);
-	for (const cube of ((typeof Cube !== 'undefined' && Cube.all) ? Cube.all : [])) total += migrateLegacyNode(cube);
+	for (const node of nodes) total += copyImmToImda(node, removeLegacy);
 	return total;
 }
 
@@ -509,7 +536,7 @@ class Exporter {
 		if (!count) { this.warn('方块 “' + labelOf(cube) + '” 没有带纹理的面，已跳过。'); return null; }
 
 		const element = { from: cleanAll(from), to: cleanAll(to), faces };
-		const rotation = cube.__imda_omit_rotation ? null : this.elementRotation(cube);
+		const rotation = cube.__imm_omit_rotation ? null : this.elementRotation(cube);
 		if (rotation) element.rotation = rotation;
 		if (cube.shade === false) element.shade = false;
 		return element;
@@ -592,7 +619,7 @@ class Exporter {
 
 		const d = Array.isArray(shift) ? shift : [0, 0, 0];
 		const dp = Array.isArray(parent_shift) ? parent_shift : [0, 0, 0];
-		const translate = (node && Array.isArray(node.__imda_translate)) ? node.__imda_translate : null;
+		const translate = (node && Array.isArray(node.__imm_translate)) ? node.__imm_translate : null;
 		const hasShift = Math.abs(d[0]) + Math.abs(d[1]) + Math.abs(d[2]) > 1e-6;
 		if (Math.abs(q.w) > 1 - 1e-7 && !hasShift && !(translate && translate.some(v => Math.abs(num(v)) > 1e-6))) return null;
 
@@ -651,16 +678,16 @@ class Exporter {
 		return MAPPING_TYPES.indexOf(t) >= 0 ? t : 'composite';
 	}
 
-	/** 按来源类型构造 tints；imda_tints 的原始 JSON 优先 */
+	/** 按来源类型构造 tints；imm_tints 的原始 JSON 优先 */
 	buildTints(group) {
 		// 纹理着色：索引为空 → 不输出任何 tints；类型默认 custom_model_data
-		const index_text = String(group.imda_tint_index == null ? '' : group.imda_tint_index).trim();
+		const index_text = String(group.imm_tint_index == null ? '' : group.imm_tint_index).trim();
 		if (!/^-?\d+$/.test(index_text)) return null;
 		// 明确选择“不生成 tints”（空字符串）时直接退出；只有从未设置（undefined）才按默认 custom_model_data
-		if (group.imda_tint_type === '' || group.imda_tint_type === 'none') return null;
+		if (group.imm_tint_type === '' || group.imm_tint_type === 'none') return null;
 		const index = Number(index_text);
-		const type = (String(group.imda_tint_type == null ? 'custom_model_data' : group.imda_tint_type).replace(/^minecraft:/, '').trim()) || 'custom_model_data';
-		const value_text = String(group.imda_tint_value == null ? '' : group.imda_tint_value).trim();
+		const type = (String(group.imm_tint_type == null ? 'custom_model_data' : group.imm_tint_type).replace(/^minecraft:/, '').trim()) || 'custom_model_data';
+		const value_text = String(group.imm_tint_value == null ? '' : group.imm_tint_value).trim();
 		if (type === 'custom_model_data') return [{ type: 'custom_model_data', index, default: index }];
 		if (type === 'constant') return [{ type: 'constant', value: value_text.length ? Number(value_text) : 0 }];
 		if (type === 'grass') return [{ type: 'grass' }];
@@ -712,14 +739,14 @@ class Exporter {
 	}
 
 	buildNode(group, hint, parent_shift) {
-		if (this.normalizeType(group.imda_type) === 'range_dispatch_timeline') return this.buildTimelineNode(group, hint, parent_shift);
+		if (this.normalizeType(group.imm_type) === 'range_dispatch_timeline') return this.buildTimelineNode(group, hint, parent_shift);
 		const pose = this.timelinePoses ? this.timelinePoses.get(group.uuid || group.name) : null;
 		if (pose) {
 			group = Object.assign({}, group, {
 				origin: Array.isArray(pose.origin) ? pose.origin.slice() : group.origin,
 				rotation: Array.isArray(pose.rotation) ? pose.rotation.slice() : group.rotation,
 				children: group.children,
-				__imda_translate: Array.isArray(pose.position) ? pose.position.slice() : null,
+				__imm_translate: Array.isArray(pose.position) ? pose.position.slice() : null,
 			});
 		} else if (this.timelinePoses && this.groupNodeCache.has(group) && !this.nodeIsEmpty(this.groupNodeCache.get(group)) && !this.hasPoseInSubtree(group)) {
 			return this.groupNodeCache.get(group);
@@ -727,20 +754,20 @@ class Exporter {
 		const children = (group.children || []).filter(c => c && c.export !== false);
 		const childGroups = children.filter(isGroup).filter(c => !this.timelineSkip || !this.timelineSkip.has(c));
 		const cubes = children.filter(isCube);
-		const type = this.normalizeType(group.imda_type);
+		const type = this.normalizeType(group.imm_type);
 
 		const inlineCubes = [];
 		const ownCubes = [];
 		for (const cube of cubes) (this.needsOwnNode(cube) ? ownCubes : inlineCubes).push(cube);
 
 		let built = null;
-		if (type === 'model' && group.imda_model) {
+		if (type === 'model' && group.imm_model) {
 			let shift = [0, 0, 0];
 			try {
-				const parsed = JSON.parse(String(group.imda_model_shift || ''));
+				const parsed = JSON.parse(String(group.imm_model_shift || ''));
 				if (Array.isArray(parsed) && parsed.length === 3 && parsed.every(v => isFinite(Number(v)))) shift = parsed.map(Number);
 			} catch (e) { /* ignore */ }
-			built = { reference: String(group.imda_model).trim(), shift };
+			built = { reference: String(group.imm_model).trim(), shift };
 		}
 		else if (inlineCubes.length) built = this.addModel(inlineCubes, hint);
 
@@ -767,22 +794,22 @@ class Exporter {
 		if (type === 'model') {
 			const ref = built ? built.reference : (extras[0] ? extras[0].model : null);
 			if (!ref) { this.warn('分组 “' + labelOf(group) + '” 是 model 类型但没有可用模型，已跳过。'); return null; }
-			node.model = this.unifyReferenceDisplay(ref, group.imda_display_mode);
+			node.model = this.unifyReferenceDisplay(ref, group.imm_display_mode);
 			const tints = this.buildTints(group);
 			if (tints) node.tints = tints;
 			return node;
 		}
 
 		if (type === 'select') {
-			const prop = String(group.imda_property || 'custom_model_data').replace(/^minecraft:/, '').trim() || 'custom_model_data';
+			const prop = String(group.imm_property || 'custom_model_data').replace(/^minecraft:/, '').trim() || 'custom_model_data';
 			node.property = 'minecraft:' + prop;
-			if (prop === 'custom_model_data') node.index = clean(num(group.imda_index));
-			else if (prop === 'component') node.component = String(group.imda_component || '');
+			if (prop === 'custom_model_data') node.index = clean(num(group.imm_index));
+			else if (prop === 'component') node.component = String(group.imm_component || '');
 			node.cases = [];
 			for (const child of childGroups) {
 				const childNode = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'), own_shift);
 				if (!childNode) continue;
-				node.cases.push({ when: this.parseWhen(child.imda_case_when), model: childNode });
+				node.cases.push({ when: this.parseWhen(child.imm_case_when), model: childNode });
 			}
 			let fallback = built ? { type: 'minecraft:model', model: built.reference } : (extras[0] || null);
 			if (calls.length) fallback = this.composeWithCalls(fallback, calls);
@@ -792,35 +819,35 @@ class Exporter {
 		}
 
 		if (type === 'range_dispatch') {
-			if (group.imda_tints) this.warn('分组 "' + labelOf(group) + '" 的 tints 只在 model / composite 生效，range_dispatch 已忽略。');
-			node.property = String(group.imda_property || 'minecraft:custom_model_data');
+			if (group.imm_tints) this.warn('分组 "' + labelOf(group) + '" 的 tints 只在 model / composite 生效，range_dispatch 已忽略。');
+			node.property = String(group.imm_property || 'minecraft:custom_model_data');
 			// custom_model_data 必须有 index，未填时默认 0
 			if (node.property === 'minecraft:custom_model_data' && node.index === undefined) node.index = 0;
 			const numeric = node.property.replace(/^minecraft:/, '');
 			if (numeric === 'compass') {
-				if (group.imda_range_target) node.target = String(group.imda_range_target);
-				if (group.imda_range_wobble === false) node.wobble = false;
+				if (group.imm_range_target) node.target = String(group.imm_range_target);
+				if (group.imm_range_wobble === false) node.wobble = false;
 			} else if (numeric === 'count' || numeric === 'damage') {
-				if (group.imda_range_normalize === false) node.normalize = false;
+				if (group.imm_range_normalize === false) node.normalize = false;
 			} else if (numeric === 'time') {
-				if (group.imda_range_source) node.source = String(group.imda_range_source);
-				if (group.imda_range_wobble === false) node.wobble = false;
+				if (group.imm_range_source) node.source = String(group.imm_range_source);
+				if (group.imm_range_wobble === false) node.wobble = false;
 			} else if (numeric === 'use_cycle') {
-				const period = num(group.imda_range_period);
+				const period = num(group.imm_range_period);
 				if (period > 0) node.period = clean(period);
 			} else if (numeric === 'use_duration') {
-				if (group.imda_range_remaining === true) node.remaining = true;
+				if (group.imm_range_remaining === true) node.remaining = true;
 			}
-			const scale = num(group.imda_scale);
+			const scale = num(group.imm_scale);
 			if (scale && scale !== 1) node.scale = clean(scale);
-			if (String(group.imda_index || '').length) node.index = clean(group.imda_index);
+			if (String(group.imm_index || '').length) node.index = clean(group.imm_index);
 			node.entries = [];
 			let branch_index = 0;
 			for (const child of childGroups) {
 				const childNode = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'), own_shift);
 				if (!childNode) continue;
-				const manual = num(child.imda_threshold);
-				const formatted = this.evalThreshold(group.imda_threshold_format, branch_index);
+				const manual = num(child.imm_threshold);
+				const formatted = this.evalThreshold(group.imm_threshold_format, branch_index);
 				node.entries.push({ threshold: clean(formatted !== null ? formatted : (manual !== 0 ? manual : branch_index)), model: childNode });
 				branch_index++;
 			}
@@ -850,18 +877,18 @@ class Exporter {
 		if (!models.length) { this.warn('分组 “' + labelOf(group) + '” 没有可导出内容，已跳过。'); return null; }
 
 		if (type === 'condition') {
-			const pred = String(group.imda_property || 'minecraft:selected').replace(/^minecraft:/, '').trim() || 'selected';
+			const pred = String(group.imm_property || 'minecraft:selected').replace(/^minecraft:/, '').trim() || 'selected';
 						node.property = 'minecraft:' + pred;
-						if (pred === 'custom_model_data') node.index = clean(num(group.imda_index));
+						if (pred === 'custom_model_data') node.index = clean(num(group.imm_index));
 						else if (pred === 'has_component') {
-							node.component = String(group.imda_component || '');
-							if (group.imda_ignore_default) node.ignore_default = true;
+							node.component = String(group.imm_component || '');
+							if (group.imm_ignore_default) node.ignore_default = true;
 						} else if (pred === 'component') {
-							node.predicate = String(group.imda_predicate || '');
-							const raw = String(group.imda_value == null ? '' : group.imda_value).trim();
+							node.predicate = String(group.imm_predicate || '');
+							const raw = String(group.imm_value == null ? '' : group.imm_value).trim();
 							if (raw.length) { try { node.value = JSON.parse(raw); } catch (e) { node.value = raw; } }
 						} else if (pred === 'keybind_down') {
-							node.keybind = String(group.imda_keybind || '');
+							node.keybind = String(group.imm_keybind || '');
 						}
 			node.on_true = models[built ? 1 : 0] || { type: 'minecraft:empty' };
 			node.on_false = models[built ? 2 : 1] || { type: 'minecraft:empty' };
@@ -887,7 +914,7 @@ class Exporter {
 	}
 
 	readReferenceModel(reference) {
-		const root = String(projectValue('imda_pack_path', '') || '').trim();
+		const root = String(projectValue('imm_pack_path', '') || '').trim();
 		if (!root) return null;
 		try {
 			const pathmod = getPath();
@@ -931,18 +958,18 @@ class Exporter {
 	}
 
 	buildCallNode(locator) {
-		const target = String((locator && locator.imda_call_target) || '').trim();
+		const target = String((locator && locator.imm_call_target) || '').trim();
 		if (!target) return null;
 		if (target.indexOf(':') >= 0) return { type: 'minecraft:model', model: target };
 		let group = null;
 		try { if (typeof Group !== 'undefined' && Array.isArray(Group.all)) group = Group.all.find(g => g && g.uuid === target) || null; } catch (e) { /* ignore */ }
 		if (!group) { this.warn('复调用标签 “' + labelOf(locator) + '” 找不到目标分组：' + target); return null; }
-		return { type: 'minecraft:empty', __imda_call_group: group, __imda_call_name: String(locator.name || labelOf(locator)), __imda_call_pose: { position: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() } };
+		return { type: 'minecraft:empty', __imm_call_group: group, __imm_call_name: String(locator.name || labelOf(locator)), __imm_call_pose: { position: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() } };
 	}
 
 	/** 把占位替换为目标分组的映射节点（深拷贝，保留 transformation） */
 	resolveCallTarget(placeholder) {
-		const group = placeholder && placeholder.__imda_call_group;
+		const group = placeholder && placeholder.__imm_call_group;
 		if (!group) return null;
 		let target = this.groupNodeCache ? this.groupNodeCache.get(group) : null;
 		if (!target) {
@@ -952,8 +979,8 @@ class Exporter {
 		if (!target) { this.warn('复调用目标没有可导出的映射节点，已跳过。'); return null; }
 		const clone = JSON.parse(JSON.stringify(target));
 		this.stripCallPlaceholders(clone);
-		const result = this.wrapCallPose(clone, group, placeholder.__imda_call_pose) || clone;
-		if (placeholder.__imda_call_name) result.node_name = placeholder.__imda_call_name;
+		const result = this.wrapCallPose(clone, group, placeholder.__imm_call_pose) || clone;
+		if (placeholder.__imm_call_name) result.node_name = placeholder.__imm_call_name;
 		return result;
 	}
 
@@ -983,7 +1010,7 @@ class Exporter {
 		if (Array.isArray(node)) {
 			for (let i = node.length - 1; i >= 0; i--) {
 				const item = node[i];
-				if (item && typeof item === 'object' && item.__imda_call_group) {
+				if (item && typeof item === 'object' && item.__imm_call_group) {
 					const clone = this.resolveCallTarget(item);
 					if (clone) node[i] = clone; else node.splice(i, 1);
 				} else this.resolveCallPlaceholders(item);
@@ -992,7 +1019,7 @@ class Exporter {
 		}
 		for (const key of Object.keys(node)) {
 			const value = node[key];
-			if (value && typeof value === 'object' && value.__imda_call_group) {
+			if (value && typeof value === 'object' && value.__imm_call_group) {
 				const clone = this.resolveCallTarget(value);
 				if (clone) node[key] = clone; else delete node[key];
 			} else if (value && typeof value === 'object') this.resolveCallPlaceholders(value);
@@ -1004,7 +1031,7 @@ class Exporter {
 		if (Array.isArray(node)) {
 			for (let i = node.length - 1; i >= 0; i--) {
 				const item = node[i];
-				if (item && typeof item === 'object' && item.__imda_call_group) node[i] = { type: 'minecraft:empty' };
+				if (item && typeof item === 'object' && item.__imm_call_group) node[i] = { type: 'minecraft:empty' };
 				else this.stripCallPlaceholders(item);
 			}
 			return;
@@ -1018,8 +1045,8 @@ class Exporter {
 	/** 映射节点记录来源分组名（可在项目设置关闭） */
 	applyNodeName(node, group) {
 		if (!node || !group) return node;
-		if (projectValue('imda_export_node_names', true) === false) return node;
-		if (group.uuid === '__imda_auto_timeline') return node;
+		if (projectValue('imm_export_node_names', true) === false) return node;
+		if (group.uuid === '__imm_auto_timeline') return node;
 		node.node_name = String((group && group.name) || labelOf(group));
 		return node;
 	}
@@ -1045,21 +1072,21 @@ class Exporter {
 		return false;
 	}
 
-	/** range_dispatch(timeline)：优先用 Locator 的 imda_frame/imda_pose，否则自动采样当前动画 */
+	/** range_dispatch(timeline)：优先用 Locator 的 imm_frame/imm_pose，否则自动采样当前动画 */
 	buildTimelineNode(group, hint, parent_shift) {
 		const frames = new Map();
 		for (const locator of (group.children || []).filter(isLocator)) {
-			const frame = num(locator.imda_frame);
+			const frame = num(locator.imm_frame);
 			if (!isFinite(frame) || frame < 0) continue;
 			let pose = {};
-			try { pose = JSON.parse(String(locator.imda_pose || '{}')); } catch (e) { pose = {}; }
+			try { pose = JSON.parse(String(locator.imm_pose || '{}')); } catch (e) { pose = {}; }
 			const map = frames.get(frame) || new Map();
 			for (const uuid of Object.keys(pose || {})) if (pose[uuid] && typeof pose[uuid] === 'object') map.set(uuid, pose[uuid]);
 			frames.set(frame, map);
 		}
-		this.timelineFps = Math.max(1, num(projectValue('imda_anim_fps', 20)) || 20);
-		this.timelineProperty = group.imda_property || 'custom_model_data';
-		this.timelineIndex = (group.imda_index != null) ? num(group.imda_index) : num(projectValue('imda_anim_index', 0));
+		this.timelineFps = Math.max(1, num(projectValue('imm_anim_fps', 20)) || 20);
+		this.timelineProperty = group.imm_property || 'custom_model_data';
+		this.timelineIndex = (group.imm_index != null) ? num(group.imm_index) : num(projectValue('imm_anim_index', 0));
 		if (!frames.size) return this.buildAutoTimeline(group, hint, parent_shift);
 		return this.buildFrameEntries(group, Array.from(frames.keys()).sort((a, b) => a - b), frames, hint, parent_shift);
 	}
@@ -1068,7 +1095,7 @@ class Exporter {
 	buildAutoTimeline(group, hint, parent_shift) {
 		const animation = (typeof Animation !== 'undefined' && Animation) ? (Animation.selected || (Array.isArray(Animation.all) ? Animation.all[0] : null)) : null;
 		if (!animation) { this.warn('时间轴分组没有帧标签，且当前没有选中动画。'); return null; }
-		const fps = Math.max(1, num(projectValue('imda_anim_fps', 20)) || 20);
+		const fps = Math.max(1, num(projectValue('imm_anim_fps', 20)) || 20);
 		let duration = num(animation.length);
 		if (!(duration > 0) && typeof Timeline !== 'undefined') duration = num(Timeline.length);
 		if (!(duration > 0)) { this.warn('动画长度为 0，无法自动输出时间轴。'); return null; }
@@ -1082,8 +1109,8 @@ class Exporter {
 			frames.set(frame, map);
 		}
 		this.timelineFps = fps;
-		this.timelineProperty = animation.imda_timeline_property || animation.imda_timeline_property || group.imda_property || projectValue('imda_anim_property', 'custom_model_data') || 'custom_model_data';
-		this.timelineIndex = (animation.imda_timeline_index != null) ? num(animation.imda_timeline_index) : ((animation.imda_timeline_index != null) ? num(animation.imda_timeline_index) : ((group.imda_index != null) ? num(group.imda_index) : num(projectValue('imda_anim_index', 0))));
+		this.timelineProperty = animation.imda_timeline_property || animation.imm_timeline_property || group.imm_property || projectValue('imm_anim_property', 'custom_model_data') || 'custom_model_data';
+		this.timelineIndex = (animation.imda_timeline_index != null) ? num(animation.imda_timeline_index) : ((animation.imm_timeline_index != null) ? num(animation.imm_timeline_index) : ((group.imm_index != null) ? num(group.imm_index) : num(projectValue('imm_anim_index', 0))));
 		return this.buildFrameEntries(group, Array.from(frames.keys()), frames, hint, parent_shift);
 	}
 
@@ -1118,8 +1145,8 @@ class Exporter {
 		const anyPose = sorted.some(frame => this.poseInFrame(group, frames.get(frame)));
 		if (!anyPose) { this.timelinePoses = null; this.timelineSkip = null; return this.buildNode(group, groupHint, parent_shift); }
 		const ownPose = sorted.some(frame => { const map = frames.get(frame); return map && map.has(group.uuid || group.name); });
-		const prop = String(this.timelineProperty || projectValue('imda_anim_property', 'custom_model_data') || 'custom_model_data').replace(/^minecraft:/, '').trim() || 'custom_model_data';
-		const index = (this.timelineIndex != null) ? this.timelineIndex : num(projectValue('imda_anim_index', 0));
+		const prop = String(this.timelineProperty || projectValue('imm_anim_property', 'custom_model_data') || 'custom_model_data').replace(/^minecraft:/, '').trim() || 'custom_model_data';
+		const index = (this.timelineIndex != null) ? this.timelineIndex : num(projectValue('imm_anim_index', 0));
 		const makeRange = (entries, name) => {
 			const node = { type: 'minecraft:range_dispatch', property: 'minecraft:' + prop };
 			if (name) node.node_name = name;
@@ -1168,7 +1195,7 @@ class Exporter {
 	}
 
 	buildFrameEntries(group, sorted, frames, hint, parent_shift) {
-		const roots = ((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []).filter(n => isGroup(n) && n !== group && this.normalizeType(n.imda_type) !== 'range_dispatch_timeline' && n.export !== false);
+		const roots = ((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []).filter(n => isGroup(n) && n !== group && this.normalizeType(n.imm_type) !== 'range_dispatch_timeline' && n.export !== false);
 		const animated = roots.some(root => sorted.some(frame => this.poseInFrame(root, frames.get(frame))));
 		if (!animated) return null;
 		const nodes = [];
@@ -1183,7 +1210,7 @@ class Exporter {
 
 	buildMapping() {
 		const root = (typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : [];
-		const timelineRoot = (root || []).find(node => isGroup(node) && this.normalizeType(node.imda_type) === 'range_dispatch_timeline');
+		const timelineRoot = (root || []).find(node => isGroup(node) && this.normalizeType(node.imm_type) === 'range_dispatch_timeline');
 if (timelineRoot) {
   const timelineNode = this.buildTimelineNode(timelineRoot, sanitizePath(labelOf(timelineRoot), 'timeline'), [0, 0, 0]);
   if (!timelineNode) throw new Error('时间轴分组没有可导出的帧。');
@@ -1191,8 +1218,8 @@ if (timelineRoot) {
   this.resolveCallPlaceholders(timelineResult.model);
   return timelineResult;
 }
-if (projectValue('imda_anim_auto', true) !== false && typeof Animation !== 'undefined' && Animation && (Animation.selected || (Array.isArray(Animation.all) && Animation.all.length))) {
-  const synthetic = { uuid: '__imda_auto_timeline', name: '[auto timeline]', imda_type: 'range_dispatch_timeline', imda_property: String(projectValue('imda_anim_property', 'custom_model_data') || 'custom_model_data'), imda_index: projectValue('imda_anim_index', 0), children: [] };
+if (projectValue('imm_anim_auto', true) !== false && typeof Animation !== 'undefined' && Animation && (Animation.selected || (Array.isArray(Animation.all) && Animation.all.length))) {
+  const synthetic = { uuid: '__imm_auto_timeline', name: '[auto timeline]', imm_type: 'range_dispatch_timeline', imm_property: String(projectValue('imm_anim_property', 'custom_model_data') || 'custom_model_data'), imm_index: projectValue('imm_anim_index', 0), children: [] };
   const autoNode = this.buildAutoTimeline(synthetic, 'timeline', [0, 0, 0]);
   if (autoNode) { const autoResult = { model: autoNode }; this.resolveCallPlaceholders(autoResult.model); return autoResult; }
 }
@@ -1331,24 +1358,24 @@ function sampleTimelinePoses(animation, fps, frameCount) {
 function bakeTimelineToCallTags() {
 	const animation = (typeof Animation !== 'undefined' && Animation) ? (Animation.selected || (Array.isArray(Animation.all) ? Animation.all[0] : null)) : null;
 	if (!animation) { Blockbench.showMessageBox({ title: '没有动画', message: '请先打开动画模式并选择一个动画。', icon: 'info' }); return; }
-	const fps = Math.max(1, num(projectValue('imda_anim_fps', 20)) || 20);
+	const fps = Math.max(1, num(projectValue('imm_anim_fps', 20)) || 20);
 	let duration = num(animation.length);
 	if (!(duration > 0) && typeof Timeline !== 'undefined') duration = num(Timeline.length);
 	if (!(duration > 0)) { Blockbench.showMessageBox({ title: '动画长度为 0', message: '时间轴上没有可采样的关键帧。', icon: 'info' }); return; }
 	const sampled = sampleTimelinePoses(animation, fps, Math.max(1, Math.ceil(duration * fps)));
 	if (!sampled.animated.length) { Blockbench.showMessageBox({ title: '没有关键帧', message: '当前动画里没有带关键帧的分组。', icon: 'info' }); return; }
-	const oldTimeline = (Outliner.root || []).filter(node => isGroup(node) && String(node.imda_type || '') === 'range_dispatch_timeline');
+	const oldTimeline = (Outliner.root || []).filter(node => isGroup(node) && String(node.imm_type || '') === 'range_dispatch_timeline');
 	try { Undo.initEdit({ outliner: true, groups: oldTimeline, elements: [] }); } catch (e) { /* ignore */ }
 	for (const old of oldTimeline) { try { old.remove(); } catch (e) { /* ignore */ } }
-	const timeline = new Group({ name: '[timeline]', imda_type: 'range_dispatch_timeline', imda_property: 'minecraft:custom_model_data', imda_index: num(projectValue('imda_anim_index', 0)) || 0, origin: [8, 8, 8], rotation: [0, 0, 0] });
+	const timeline = new Group({ name: '[timeline]', imm_type: 'range_dispatch_timeline', imm_property: 'minecraft:custom_model_data', imm_index: num(projectValue('imm_anim_index', 0)) || 0, origin: [8, 8, 8], rotation: [0, 0, 0] });
 	addAndInit(timeline, null);
 	for (let frame = 0; frame < sampled.poses.length; frame++) {
 		try {
 			const locator = new Locator({ name: 'frame ' + frame, position: [8, 8, 8], rotation: [0, 0, 0] });
 			addAndInit(locator, timeline);
-			locator.imda_frame = frame;
-			locator.imda_pose = JSON.stringify(sampled.poses[frame]);
-			locator.imda_call_target = 'timeline';
+			locator.imm_frame = frame;
+			locator.imm_pose = JSON.stringify(sampled.poses[frame]);
+			locator.imm_call_target = 'timeline';
 		} catch (error) { console.warn('[装配] 创建帧标签失败', error); }
 	}
 	try { Undo.finishEdit('解析时间轴为复调用标签'); } catch (e) { /* ignore */ }
@@ -1359,84 +1386,14 @@ function bakeTimelineToCallTags() {
 }
 
 function createExporter() {
-	migrateLegacyAll();
+	adoptImdaAll();
 	return new Exporter({
-		...(function(){ const parsed = parseNamespaceSetting(projectValue('imda_namespace', 'custom')); return { namespace: parsed.namespace, subpath: parsed.subpath }; })(),
+		...(function(){ const parsed = parseNamespaceSetting(projectValue('imm_namespace', 'custom')); return { namespace: parsed.namespace, subpath: parsed.subpath }; })(),
 		item_id: sanitizePath(String(projectValue('model_identifier', '') || (Project && Project.name) || 'item'), 'item'),
-		center_pivot: projectValue('imda_center_pivot', false) === true,
-		block_display: projectValue('imda_block_display', true) !== false,
+		center_pivot: projectValue('imm_center_pivot', false) === true,
+		block_display: projectValue('imm_block_display', true) !== false,
 		display_all_slots: projectValue('imda_display_all_slots', false) === true,
 	});
-}
-
-/** F5：触发 Blockbench 原本的 Export action（与按钮一致） */
-function findExportMenuItem(items) {
-	for (const raw of (items || [])) {
-		let item = raw;
-		if (typeof raw === 'string') {
-			item = (typeof BarItems !== 'undefined' && BarItems) ? BarItems[raw] : null;
-		}
-		if (!item) continue;
-		const name = String(item.name || '');
-		if (name.indexOf('物品模型映射') >= 0 || name.indexOf('Item Model Mapping') >= 0) return item;
-		if (Array.isArray(item.children)) {
-			const found = findExportMenuItem(item.children);
-			if (found) return found;
-		}
-	}
-	return null;
-}
-
-function bindF5ToOriginalExport() {
-	if (typeof MenuBar === 'undefined' || !MenuBar.menus) return false;
-	try {
-		const fileMenu = (typeof MenuBar !== 'undefined' && MenuBar.menus) ? MenuBar.menus.file : null;
-		if (!fileMenu) return false;
-		let item = findExportMenuItem(fileMenu.structure);
-		if (!item) {
-			try { item = Keybinds.actions.find(a => String(a.name || '').indexOf('物品模型映射') >= 0 || String(a.name || '').indexOf('Item Model Mapping') >= 0) || null; } catch (e) { item = null; }
-		}
-		if (!item) { console.warn('[装配] 未找到「导出物品模型映射」菜单项，F5 未绑定'); return false; }
-		if (!item.keybind || typeof item.keybind.set !== 'function') { console.warn('[装配] 导出菜单项没有 keybind，F5 未绑定', item.id || item.name); return false; }
-		item.keybind.set(new Keybind({ key: 116 })).save();
-		if (typeof Keybinds !== 'undefined' && Array.isArray(Keybinds.actions) && Keybinds.actions.indexOf(item) < 0 && item.id) {
-			try { Keybinds.actions.push(item); } catch (e) { /* ignore */ }
-		}
-		console.log('[装配] 已把 F5 绑定到', item.id || item.name);
-		return true;
-	} catch (error) { console.warn('[装配] 绑定 F5 失败', error); return false; }
-}
-
-function triggerOriginalExport() {
-	try {
-		const fileMenu = (typeof MenuBar !== 'undefined' && MenuBar.menus) ? MenuBar.menus.file : null;
-		const item = fileMenu ? findExportMenuItem(fileMenu.structure) : null;
-		if (item) {
-			if (typeof item.trigger === 'function') { item.trigger(); return; }
-			if (typeof item.click === 'function') { item.click(); return; }
-		}
-	} catch (error) { console.warn('[装配] 查找导出菜单失败', error); }
-	try { if (codec_object && typeof codec_object.export === 'function') { codec_object.export(); return; } } catch (error) { console.warn('[装配] codec.export 失败', error); }
-	try { exportMappingJSON(); } catch (error) { console.error(error); }
-}
-
-/** 快捷导出：只导出 items/*.json 映射文件 */
-function exportMappingJSON() {
-	try {
-		const exporter = createExporter();
-		const mapping = exporter.buildMapping();
-		Blockbench.export({
-			type: 'Item Model Mapping',
-			extensions: ['json'],
-			name: exporter.stem,
-			content: formatMapping(mapping),
-			savetype: 'text',
-		});
-		Blockbench.showQuickMessage('已导出物品模型映射 JSON', 2500);
-	} catch (error) {
-		console.error(error);
-		Blockbench.showMessageBox({ title: '导出失败', message: String((error && error.message) || error), icon: 'error' });
-	}
 }
 
 function compileAssembly() {
@@ -1507,7 +1464,7 @@ async function pickPack() {
 		Blockbench.showMessageBox({ title: '无法选择文件夹', message: '请在项目设置里填写「合并目标资源包路径」，或改用 zip 导出。', icon: 'warning' });
 		return null;
 	}
-	const picked = await Promise.resolve(Blockbench.pickDirectory({ resource_id: 'imda_pack', title: '选择目标资源包根目录' }));
+	const picked = await Promise.resolve(Blockbench.pickDirectory({ resource_id: 'imm_pack', title: '选择目标资源包根目录' }));
 	return picked || null;
 }
 
@@ -1541,9 +1498,9 @@ function packFormatLabel(version) {
 	return version.major + (version.minor ? '.' + version.minor : '');
 }
 
-/** 生成 pack.mcmeta 的 pack 段；versionId 缺省时取项目设置 imda_pack_version */
+/** 生成 pack.mcmeta 的 pack 段；versionId 缺省时取项目设置 imm_pack_version */
 function packMcmetaData(description, versionId) {
-	const version = findPackVersion(versionId || projectValue('imda_pack_version', DEFAULT_PACK_VERSION));
+	const version = findPackVersion(versionId || projectValue('imm_pack_version', DEFAULT_PACK_VERSION));
 	const pack = { description };
 	if (version.major >= PACK_MODERN_MIN_MAJOR) {
 		const value = version.minor ? [version.major, version.minor] : version.major;
@@ -1565,10 +1522,10 @@ function packMcmetaFormat(mcmeta) {
 	return null;
 }
 
-/** 老项目没有 imda_pack_version 时补默认值，避免项目设置的下拉落到第一项（26.3） */
+/** 老项目没有 imm_pack_version 时补默认值，避免项目设置的下拉落到第一项（26.3） */
 function ensurePackVersion() {
 	try {
-		if (typeof Project !== 'undefined' && Project && !projectValue('imda_pack_version', '')) setProjectValue('imda_pack_version', DEFAULT_PACK_VERSION);
+		if (typeof Project !== 'undefined' && Project && !projectValue('imm_pack_version', '')) setProjectValue('imm_pack_version', DEFAULT_PACK_VERSION);
 	} catch (e) { /* ignore */ }
 }
 
@@ -1590,7 +1547,7 @@ function createPackProject(root) {
 		const data = { pack: built.pack };
 		fsmod.mkdirSync(root, { recursive: true });
 		Blockbench.writeFile(pathmod.join(root, 'pack.mcmeta'), { content: JSON.stringify(data, null, '\t'), savetype: 'text' });
-		if (typeof Project !== 'undefined' && Project) { setProjectValue('imda_pack_path', root); Project.saved = false; }
+		if (typeof Project !== 'undefined' && Project) { setProjectValue('imm_pack_path', root); Project.saved = false; }
 		const field = built.pack.min_format != null
 			? ('min_format/max_format=' + packFormatLabel(built.version))
 			: ('pack_format=' + built.pack.pack_format);
@@ -1605,7 +1562,7 @@ function createPackProject(root) {
 async function pickPackPath() {
 	const picked = await pickPack();
 	if (!picked) return;
-	try { setProjectValue('imda_pack_path', picked); Project.saved = false; } catch (e) { /* ignore */ }
+	try { setProjectValue('imm_pack_path', picked); Project.saved = false; } catch (e) { /* ignore */ }
 	const pathmod = getPath();
 	const fsmod = getScopedFs(picked);
 	if (pathmod && fsmod && !readPackMcmeta(fsmod, pathmod, picked)) {
@@ -1638,7 +1595,7 @@ function chooseOrCreatePack() {
 
 function mergeToPack() {
 	if (typeof Project === 'undefined' || !Project) { Blockbench.showQuickMessage('请先打开项目', 3000); return; }
-	const root = String(projectValue('imda_pack_path', '') || '').trim();
+	const root = String(projectValue('imm_pack_path', '') || '').trim();
 	if (!root) { chooseOrCreatePack(); return; }
 	const checkPath = getPath();
 	const checkFs = getScopedFs(root);
@@ -1648,7 +1605,7 @@ function mergeToPack() {
 			message: '该目录下没有 pack.mcmeta：\n' + root + '\n\n选择其它目录，或为它创建 pack.mcmeta。',
 			buttons: ['取消', '选择…', '创建 pack.mcmeta'], confirm: 2, cancel: 0,
 		}, (button) => {
-			if (button === 1) pickPack().then(picked => { if (picked) { setProjectValue('imda_pack_path', picked); runMerge(picked); } });
+			if (button === 1) pickPack().then(picked => { if (picked) { setProjectValue('imm_pack_path', picked); runMerge(picked); } });
 			else if (button === 2 && createPackProject(root)) runMerge(root);
 		});
 		return;
@@ -1728,7 +1685,7 @@ function runMerge(root) {
 				content: JSON.stringify({ version: 1, files: Array.from(plan.current) }, null, 2),
 				savetype: 'text',
 			});
-			setProjectValue('imda_pack_path', plan.root);
+			setProjectValue('imm_pack_path', plan.root);
 			Project.saved = false;
 			Blockbench.showQuickMessage('已合并 ' + written + ' 个文件' + (removed ? ('，清理 ' + removed + ' 个') : '') + ' → 按 F3+T 重载', 5000);
 		} catch (error) {
@@ -1763,17 +1720,17 @@ function scheduleBranchSync(target) {
 
 function sortBranchChildren(parent) {
 	if (!parent || !Array.isArray(parent.children)) return 0;
-	const type = String(parent.imda_type || '').replace(/^minecraft:/, '');
+	const type = String(parent.imm_type || '').replace(/^minecraft:/, '');
 	if (type !== 'range_dispatch' && type !== 'condition') return 0;
 	const groups = parent.children.filter(isGroup);
 	if (groups.length < 2) return 0;
 	const keyOf = (child) => {
 		if (type === 'condition') {
-			const label = String(child.imda_condition || '').toLowerCase();
+			const label = String(child.imm_condition || '').toLowerCase();
 			if (label === 'on_true' || label === 'on_false') return label === 'on_true' ? 0 : 1;
 			return groups.indexOf(child);
 		}
-		return Number(child.imda_threshold) || 0;
+		return Number(child.imm_threshold) || 0;
 	};
 	const sorted = groups.slice().sort((a, b) => keyOf(a) - keyOf(b));
 	const unchanged = sorted.every((child, index) => child === groups[index]);
@@ -1788,34 +1745,34 @@ function sortBranchChildren(parent) {
 function resetTypeSpecificProps(group, newType) {
 	const type = String(newType || '').replace(/^minecraft:/, '');
 	const branchTypes = ['condition', 'range_dispatch', 'select'];
-	if (type !== 'condition' && type !== 'select') group.imda_condition = '';
-	if (type !== 'select') group.imda_case_when = '';
-	if (type !== 'range_dispatch') { group.imda_threshold_format = ''; group.imda_threshold = 0; }
+	if (type !== 'condition' && type !== 'select') group.imm_condition = '';
+	if (type !== 'select') group.imm_case_when = '';
+	if (type !== 'range_dispatch') { group.imm_threshold_format = ''; group.imm_threshold = 0; }
 	if (type === 'composite' || type === 'model' || type === 'empty') {
-		group.imda_property = '';
-		group.imda_component = '';
-		group.imda_ignore_default = false;
-		group.imda_predicate = '';
-		group.imda_value = '';
-		group.imda_keybind = '';
-		group.imda_range_target = '';
-		group.imda_range_source = '';
-		group.imda_range_period = 1;
-		group.imda_range_wobble = true;
-		group.imda_range_normalize = true;
-		group.imda_range_remaining = false;
+		group.imm_property = '';
+		group.imm_component = '';
+		group.imm_ignore_default = false;
+		group.imm_predicate = '';
+		group.imm_value = '';
+		group.imm_keybind = '';
+		group.imm_range_target = '';
+		group.imm_range_source = '';
+		group.imm_range_period = 1;
+		group.imm_range_wobble = true;
+		group.imm_range_normalize = true;
+		group.imm_range_remaining = false;
 	}
 	if (type === 'condition') {
-		group.imda_range_target = '';
-		group.imda_range_source = '';
-		group.imda_range_period = 1;
+		group.imm_range_target = '';
+		group.imm_range_source = '';
+		group.imm_range_period = 1;
 	}
 	if (type === 'range_dispatch' || type === 'select') {
-		group.imda_component = '';
-		group.imda_ignore_default = false;
-		group.imda_predicate = '';
-		group.imda_value = '';
-		group.imda_keybind = '';
+		group.imm_component = '';
+		group.imm_ignore_default = false;
+		group.imm_predicate = '';
+		group.imm_value = '';
+		group.imm_keybind = '';
 	}
 	return type;
 }
@@ -1826,7 +1783,7 @@ function stripChildPrefixes(group) {
 	for (const child of (group.children || []).filter(isGroup)) {
 		const base = String(child.name || '').replace(/^\[[^\]]*\]\s*/, '').replace(/^\u26a0\s*/, '');
 		if (base !== child.name) { child.name = base; changed++; }
-		if (child.imda_auto_disabled) { child.imda_auto_disabled = false; changed++; }
+		if (child.imm_auto_disabled) { child.imm_auto_disabled = false; changed++; }
 	}
 	return changed;
 }
@@ -1838,11 +1795,11 @@ function stripStrayBranchPrefixes() {
 	const walk = (nodes, parent) => {
 		for (const node of nodes || []) {
 			if (!isGroup(node)) continue;
-			const parentType = parent ? String(parent.imda_type || '').replace(/^minecraft:/, '') : '';
+			const parentType = parent ? String(parent.imm_type || '').replace(/^minecraft:/, '') : '';
 			if (branchTypes.indexOf(parentType) < 0) {
 				const base = String(node.name || '').replace(/^\[[^\]]*\]\s*/, '').replace(/^\u26a0\s*/, '');
 				if (base && base !== node.name) { node.name = base; changed++; }
-				if (node.imda_auto_disabled) { node.imda_auto_disabled = false; changed++; }
+				if (node.imm_auto_disabled) { node.imm_auto_disabled = false; changed++; }
 			}
 			walk(node.children, node);
 		}
@@ -2030,7 +1987,7 @@ function diagnoseSimView() {
 function openPivotFix() {
 	if (typeof Project === 'undefined' || !Project) { Blockbench.showQuickMessage('请先打开项目', 3000); return; }
 	new Dialog({
-		id: 'imda_fix_pivot',
+		id: 'imm_fix_pivot',
 		title: '枢轴归位（对齐几何中心）',
 		width: 560,
 		form: {
@@ -2047,7 +2004,7 @@ function openPivotFix() {
 }
 
 function syncBranchLabels(group) {
-	const type = String((group && group.imda_type) || '').replace(/^minecraft:/, '');
+	const type = String((group && group.imm_type) || '').replace(/^minecraft:/, '');
 	if (type !== 'range_dispatch' && type !== 'condition') return 0;
 	const children = (group.children || []).filter(isGroup);
 	let exporter = null;
@@ -2057,12 +2014,12 @@ function syncBranchLabels(group) {
 		if (type === 'condition') {
 			label = index === 0 ? 'on_true' : (index === 1 ? 'on_false' : null);
 		} else if (type === 'select') {
-			const when = String(child.imda_case_when || '').trim();
+			const when = String(child.imm_case_when || '').trim();
 			label = when ? when.replace(/^\[|\]$/g, '').split(',')[0].trim() : ('case' + index);
 		} else {
 			try { if (!exporter) exporter = createExporter(); } catch (e) { exporter = null; }
-			const formatted = exporter ? exporter.evalThreshold(group.imda_threshold_format, index) : null;
-			const manual = Number(child.imda_threshold) || 0;
+			const formatted = exporter ? exporter.evalThreshold(group.imm_threshold_format, index) : null;
+			const manual = Number(child.imm_threshold) || 0;
 			label = String(formatted !== null ? formatted : (manual !== 0 ? manual : index));
 		}
 		const base = String(child.name || '').replace(/^\[[^\]]*\]\s*/, '').replace(/^\u26a0\s*/, '');
@@ -2073,11 +2030,11 @@ function syncBranchLabels(group) {
 						const target = (ignored ? '\u26a0 ' : '') + base;
 						if (ignored) {
 							if (child.export !== false) { child.export = false; changed++; }
-							if (projectValue('imda_hide_unavailable', true) !== false && child.visibility !== false) { child.visibility = false; changed++; }
-						} else if (child.export === false && child.imda_auto_disabled) {
-							child.export = true; child.imda_auto_disabled = false; changed++;
+							if (projectValue('imm_hide_unavailable', true) !== false && child.visibility !== false) { child.visibility = false; changed++; }
+						} else if (child.export === false && child.imm_auto_disabled) {
+							child.export = true; child.imm_auto_disabled = false; changed++;
 						}
-						if (ignored) child.imda_auto_disabled = true;
+						if (ignored) child.imm_auto_disabled = true;
 						if (target !== child.name) { child.name = target; changed++; }
 						return;
 					}
@@ -2099,76 +2056,77 @@ function pickTargetGroup() {
 
 /** 把对话框结果写进一个分组（批量编辑复用） */
 function assignGroupMapProps(group, result) {
-	group.imda_type = result.imda_type;
-	resetTypeSpecificProps(group, result.imda_type);
-	const type = String(group.imda_type || '').replace(/^minecraft:/, '');
+	group.imm_type = result.imm_type;
+	resetTypeSpecificProps(group, result.imm_type);
+	const type = String(group.imm_type || '').replace(/^minecraft:/, '');
 	if (type !== 'range_dispatch' && type !== 'condition' && type !== 'select') stripChildPrefixes(group);
-	if (result.imda_model !== undefined) group.imda_model = result.imda_model;
-				if (result.imda_display_mode !== undefined) group.imda_display_mode = result.imda_display_mode;
-	if (result.imda_property !== undefined) group.imda_property = result.imda_property;
-	if (result.imda_component !== undefined) group.imda_component = result.imda_component;
-	if (result.imda_ignore_default !== undefined) group.imda_ignore_default = !!result.imda_ignore_default;
-	if (result.imda_predicate !== undefined) group.imda_predicate = result.imda_predicate;
-	if (result.imda_value !== undefined) group.imda_value = result.imda_value;
-	if (result.imda_keybind !== undefined) group.imda_keybind = result.imda_keybind;
-	if (result.imda_range_target !== undefined) group.imda_range_target = result.imda_range_target;
-	if (result.imda_range_source !== undefined) group.imda_range_source = result.imda_range_source;
-	if (result.imda_range_wobble !== undefined) group.imda_range_wobble = !!result.imda_range_wobble;
-	if (result.imda_range_normalize !== undefined) group.imda_range_normalize = !!result.imda_range_normalize;
-	if (result.imda_range_period !== undefined) group.imda_range_period = num(result.imda_range_period);
-	if (result.imda_range_remaining !== undefined) group.imda_range_remaining = !!result.imda_range_remaining;
-	if (result.imda_index !== undefined) group.imda_index = num(result.imda_index);
-	if (result.imda_threshold !== undefined) group.imda_threshold = num(result.imda_threshold);
-	if (result.imda_threshold_format !== undefined) group.imda_threshold_format = result.imda_threshold_format;
-	if (result.imda_condition !== undefined) group.imda_condition = result.imda_condition;
-	if (result.imda_scale !== undefined) group.imda_scale = num(result.imda_scale) || 1;
-	if (result.imda_tints !== undefined) group.imda_tints = result.imda_tints;
-	if (result.imda_align_center !== undefined) group.imda_align_center = !!result.imda_align_center;
-	if (result.imda_tint_type !== undefined) group.imda_tint_type = (result.imda_tint_type === '' ? 'none' : result.imda_tint_type);
-	if (result.imda_tint_index !== undefined) group.imda_tint_index = num(result.imda_tint_index);
-	if (result.imda_tint_value !== undefined) group.imda_tint_value = result.imda_tint_value;
+	if (result.imm_model !== undefined) group.imm_model = result.imm_model;
+				if (result.imm_display_mode !== undefined) group.imm_display_mode = result.imm_display_mode;
+	if (result.imm_property !== undefined) group.imm_property = result.imm_property;
+	if (result.imm_component !== undefined) group.imm_component = result.imm_component;
+	if (result.imm_ignore_default !== undefined) group.imm_ignore_default = !!result.imm_ignore_default;
+	if (result.imm_predicate !== undefined) group.imm_predicate = result.imm_predicate;
+	if (result.imm_value !== undefined) group.imm_value = result.imm_value;
+	if (result.imm_keybind !== undefined) group.imm_keybind = result.imm_keybind;
+	if (result.imm_range_target !== undefined) group.imm_range_target = result.imm_range_target;
+	if (result.imm_range_source !== undefined) group.imm_range_source = result.imm_range_source;
+	if (result.imm_range_wobble !== undefined) group.imm_range_wobble = !!result.imm_range_wobble;
+	if (result.imm_range_normalize !== undefined) group.imm_range_normalize = !!result.imm_range_normalize;
+	if (result.imm_range_period !== undefined) group.imm_range_period = num(result.imm_range_period);
+	if (result.imm_range_remaining !== undefined) group.imm_range_remaining = !!result.imm_range_remaining;
+	if (result.imm_index !== undefined) group.imm_index = num(result.imm_index);
+	if (result.imm_threshold !== undefined) group.imm_threshold = num(result.imm_threshold);
+	if (result.imm_threshold_format !== undefined) group.imm_threshold_format = result.imm_threshold_format;
+	if (result.imm_condition !== undefined) group.imm_condition = result.imm_condition;
+	if (result.imm_scale !== undefined) group.imm_scale = num(result.imm_scale) || 1;
+	if (result.imm_tints !== undefined) group.imm_tints = result.imm_tints;
+	if (result.imm_align_center !== undefined) group.imm_align_center = !!result.imm_align_center;
+	if (result.imm_tint_type !== undefined) group.imm_tint_type = (result.imm_tint_type === '' ? 'none' : result.imm_tint_type);
+	if (result.imm_tint_index !== undefined) group.imm_tint_index = num(result.imm_tint_index);
+	if (result.imm_tint_value !== undefined) group.imm_tint_value = result.imm_tint_value;
+	copyImmToImda(group, false);
 }
 
 function editGroupProps() {
-	migrateLegacyAll();
+	adoptImdaAll();
 	const group = pickTargetGroup();
 	const parent = (group && group.parent) || null;
-	const parent_type = String((parent && parent.imda_type) || '').replace(/^minecraft:/, '');
+	const parent_type = String((parent && parent.imm_type) || '').replace(/^minecraft:/, '');
 	if (!group) {
 		Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里点选一个分组。', icon: 'info' });
 		return;
 	}
 	new Dialog({
-		id: 'imda_group_props',
+		id: 'imm_group_props',
 		title: '分组映射属性 — ' + labelOf(group) + (selectedGroups().length > 1 ? ('（共 ' + selectedGroups().length + ' 个）') : ''),
 		width: 660,
 		form: {
-			imda_type: {
-				label: '映射类型（type）', description: '语法：{"type": "minecraft:<类型>"}\n作用：决定本节点是哪一种物品模型映射。\n可选：composite / model / range_dispatch / condition / empty', type: 'select', value: String(group.imda_type || 'composite'),
+			imm_type: {
+				label: '映射类型（type）', description: '语法：{"type": "minecraft:<类型>"}\n作用：决定本节点是哪一种物品模型映射。\n可选：composite / model / range_dispatch / condition / empty', type: 'select', value: String(group.imm_type || 'composite'),
 				options: { composite: 'composite', inline: 'inline（内联模型）', model: 'model（引用模型）', range_dispatch: 'range_dispatch', range_dispatch_timeline: 'range_dispatch(timeline)（逐帧时间轴）', condition: 'condition', select: 'select', empty: 'empty' },
 			},
-			imda_model: { label: '引用模型（model）', description: '语法：{"type": "minecraft:model", "model": "<命名空间>:item/<路径>"}\n作用：本节点直接引用一个 Java 版模型；\n留空则由本层方块生成模型文件。', type: 'text', value: String(group.imda_model || ''), condition: (r) => r.imda_type === 'model' },
-			imda_display_mode: { label: '强制统一显示调整', type: 'select', value: String(group.imda_display_mode || 'copy'), options: { copy: '生成模型副本', none: '不处理', overwrite: '覆盖源模型参数' }, description: '引用模型的 display 与当前“显示调整”页不一致时：\n生成副本 = 在项目里生成一份改好 display 的模型副本（默认）\n不处理 = 保持原模型\n覆盖源模型参数 = 直接改写资源包里的原模型文件', condition: (r) => r.imda_type === 'model' },
-			imda_property: { label: 'property（谓词 / 属性）', type: 'select', value: String(group.imda_property || ''), options: { '': '（未设置）', selected: 'selected', broken: 'broken', damaged: 'damaged', carried: 'carried', extended_view: 'extended_view', using_item: 'using_item', view_entity: 'view_entity', 'fishing_rod/cast': 'fishing_rod/cast', 'bundle/has_selected_item': 'bundle/has_selected_item', custom_model_data: 'custom_model_data', has_component: 'has_component', component: 'component', keybind_down: 'keybind_down', compass: 'compass（range）', count: 'count（range）', damage: 'damage（range）', time: 'time（range）', use_cycle: 'use_cycle（range）', use_duration: 'use_duration（range）', 'bundle/fullness': 'bundle/fullness（range）', cooldown: 'cooldown（range）', 'crossbow/pull': 'crossbow/pull（range）', context_dimension: 'context_dimension（select）', block_state: 'block_state（select）', local_time: 'local_time（select）' }, description: 'condition：谓词（selected / broken / custom_model_data / has_component / component / keybind_down …）；\nrange_dispatch：数值属性（custom_model_data / compass / count / damage / time / use_cycle / use_duration）', condition: (r) => r.imda_type === 'range_dispatch' || r.imda_type === 'condition' },
-			imda_component: { label: 'component（has_component 用）', type: 'text', value: String(group.imda_component || ''), description: '语法："component": "minecraft:lodestone_tracker"', condition: (r) => r.imda_property === 'has_component' },
-			imda_ignore_default: { label: 'ignore_default', type: 'checkbox', value: !!group.imda_ignore_default, description: 'has_component：组件值与默认值相同时是否视为不存在', condition: (r) => r.imda_property === 'has_component' },
-			imda_predicate: { label: 'predicate（component 用）', type: 'text', value: String(group.imda_predicate || ''), description: '语法："predicate": "minecraft:stored_enchantments"', condition: (r) => r.imda_property === 'component' },
-			imda_value: { label: 'value（component 用，JSON）', type: 'text', value: String(group.imda_value == null ? '' : group.imda_value), description: '语法："value": [ { ... } ]', condition: (r) => r.imda_property === 'component' },
-			imda_keybind: { label: 'keybind（keybind_down 用）', type: 'text', value: String(group.imda_keybind || ''), description: '语法："keybind": "key.jump"', condition: (r) => r.imda_property === 'keybind_down' },			imda_index: { label: '分派下标（index）', description: '语法："index": 0\n作用：仅 range_dispatch，指定从 property 的哪个下标取值。', type: 'number', value: num(group.imda_index), condition: (r) => r.imda_type === 'range_dispatch' },
-			imda_threshold_format: { label: '分支编号格式（entries[].threshold）', type: 'text', value: String(group.imda_threshold_format || ''), description: '语法：i → 0,1,2；2i 或 i*2 → 0,2,4；10+2i → 10,12,14；0,1,3 → 字面列表；2:2i → 每个值重复 2 次、索引从 1 起（2,2,4,4,6,6…）。\n作用：range_dispatch 的子分组按顺序取这些阈值；留空为 0,1,2…', condition: (r) => r.imda_type === 'range_dispatch' },
-			imda_threshold: { label: '分支编号 / 阈值（entries[].threshold）', type: 'number', value: num(group.imda_threshold), description: '语法：{"threshold": 0}\n作用：父分组为 range_dispatch 时，本分组的阈值；修改后自动按阈值重排。', condition: (r) => r.imda_type === 'range_dispatch' || parent_type === 'range_dispatch' },
-			imda_condition: { label: '分支条件（on_true / on_false）', type: 'select', value: String(group.imda_condition || ''), options: { '': '（按位置）', on_true: 'on_true', on_false: 'on_false' }, description: '语法："on_true" / "on_false"\n作用：父分组为 condition 时决定本分支走哪一支；修改后自动重排。', condition: (r) => parent_type === 'condition' },
-			imda_scale: { label: '数值缩放（scale）', description: '语法："scale": 1.0\n作用：仅 range_dispatch，property 数值乘以该倍数后再查阈值。', type: 'number', value: num(group.imda_scale) || 1, condition: (r) => r.imda_type === 'range_dispatch' },
-						imda_tint_type: { label: '纹理着色类型（tints[].type）', description: '语法："tints": [{"type": "<类型>"}]\n作用：染色来源类型（默认 custom_model_data）。\n可选：custom_model_data / constant / dye / potion / grass / team\n仅“纹理着色索引”非空时生效。', type: 'select', value: String(group.imda_tint_type == null ? 'custom_model_data' : (group.imda_tint_type === 'none' ? '' : group.imda_tint_type)), options: { '': '（不生成 tints）', custom_model_data: 'custom_model_data', constant: 'constant', dye: 'dye', potion: 'potion', grass: 'grass', team: 'team' }, description: '纹理着色来源类型；保存为键 imda_tint_type', condition: (r) => r.imda_type === 'model' || r.imda_type === 'composite' },
-			imda_range_target: { label: 'compass target', type: 'select', value: String(group.imda_range_target || ''), options: { '': '（未设置）', lodestone: 'lodestone', none: 'none', spawn: 'spawn', recovery: 'recovery' }, description: '语法："target": "spawn"\n作用：compass 必填，指定指南针指向目标。', condition: (r) => r.imda_property === 'compass' },
-			imda_range_source: { label: 'time source', type: 'select', value: String(group.imda_range_source || ''), options: { '': '（未设置）', daytime: 'daytime', random: 'random', moon_phase: 'moon_phase' }, description: '语法："source": "daytime"\n作用：time 必填，指定时间来源。', condition: (r) => r.imda_property === 'time' },
-			imda_range_wobble: { label: 'wobble（摆动浮动）', type: 'checkbox', value: group.imda_range_wobble !== false, description: '默认 true；关闭后摆动立即平滑到正确值。', condition: (r) => r.imda_property === 'compass' || r.imda_property === 'time' },
-			imda_range_normalize: { label: 'normalize（归一化）', type: 'checkbox', value: group.imda_range_normalize !== false, description: '默认 true：返回 0~1 进度而非原始值（count / damage）。', condition: (r) => r.imda_property === 'count' || r.imda_property === 'damage' },
-			imda_range_period: { label: 'period（周期）', type: 'number', value: num(group.imda_range_period) || 1, description: '语法："period": 10.0\n作用：use_cycle 的取模周期（>0）。', condition: (r) => r.imda_property === 'use_cycle' },
-			imda_range_remaining: { label: 'remaining（用剩余时间）', type: 'checkbox', value: group.imda_range_remaining === true, description: '默认 false；true 时使用剩余使用时间。', condition: (r) => r.imda_property === 'use_duration' },
-			imda_align_center: { label: '导入时自动对齐到模型中点', type: 'checkbox', value: group.imda_align_center === true, description: '勾选后导入引用模型时，把模型包围盒中点移到 (8,8,8)，偏移写入本层 translation。', condition: (r) => r.imda_type === 'model' },
-			imda_tint_index: { label: '纹理着色索引（tints[].index）', description: '语法："tints": [{"type": "custom_model_data", "index": 0, "default": 0}]\n作用：custom_model_data 的下标。\n留空：不输出 tints，模型不染色。', type: 'text', value: String(group.imda_tint_index == null ? '' : group.imda_tint_index), condition: (r) => (r.imda_type === 'model' || r.imda_type === 'composite') && r.imda_tint_type === 'custom_model_data' },
-			imda_tint_value: { label: '纹理着色值（tints[].value / .default）', description: '语法：{"type": "constant", "value": -1} 或 {"type": "dye", "default": -1}\n作用：constant 填 ARGB 整数；\ndye / potion / team 可填默认颜色。', type: 'text', value: String(group.imda_tint_value == null ? '' : group.imda_tint_value), condition: (r) => (r.imda_type === 'model' || r.imda_type === 'composite') && ['constant', 'dye', 'potion', 'team'].indexOf(r.imda_tint_type) >= 0 },
+			imm_model: { label: '引用模型（model）', description: '语法：{"type": "minecraft:model", "model": "<命名空间>:item/<路径>"}\n作用：本节点直接引用一个 Java 版模型；\n留空则由本层方块生成模型文件。', type: 'text', value: String(group.imm_model || ''), condition: (r) => r.imm_type === 'model' },
+			imm_display_mode: { label: '强制统一显示调整', type: 'select', value: String(group.imm_display_mode || 'copy'), options: { copy: '生成模型副本', none: '不处理', overwrite: '覆盖源模型参数' }, description: '引用模型的 display 与当前“显示调整”页不一致时：\n生成副本 = 在项目里生成一份改好 display 的模型副本（默认）\n不处理 = 保持原模型\n覆盖源模型参数 = 直接改写资源包里的原模型文件', condition: (r) => r.imm_type === 'model' },
+			imm_property: { label: 'property（谓词 / 属性）', type: 'select', value: String(group.imm_property || ''), options: { '': '（未设置）', selected: 'selected', broken: 'broken', damaged: 'damaged', carried: 'carried', extended_view: 'extended_view', using_item: 'using_item', view_entity: 'view_entity', 'fishing_rod/cast': 'fishing_rod/cast', 'bundle/has_selected_item': 'bundle/has_selected_item', custom_model_data: 'custom_model_data', has_component: 'has_component', component: 'component', keybind_down: 'keybind_down', compass: 'compass（range）', count: 'count（range）', damage: 'damage（range）', time: 'time（range）', use_cycle: 'use_cycle（range）', use_duration: 'use_duration（range）', 'bundle/fullness': 'bundle/fullness（range）', cooldown: 'cooldown（range）', 'crossbow/pull': 'crossbow/pull（range）', context_dimension: 'context_dimension（select）', block_state: 'block_state（select）', local_time: 'local_time（select）' }, description: 'condition：谓词（selected / broken / custom_model_data / has_component / component / keybind_down …）；\nrange_dispatch：数值属性（custom_model_data / compass / count / damage / time / use_cycle / use_duration）', condition: (r) => r.imm_type === 'range_dispatch' || r.imm_type === 'condition' },
+			imm_component: { label: 'component（has_component 用）', type: 'text', value: String(group.imm_component || ''), description: '语法："component": "minecraft:lodestone_tracker"', condition: (r) => r.imm_property === 'has_component' },
+			imm_ignore_default: { label: 'ignore_default', type: 'checkbox', value: !!group.imm_ignore_default, description: 'has_component：组件值与默认值相同时是否视为不存在', condition: (r) => r.imm_property === 'has_component' },
+			imm_predicate: { label: 'predicate（component 用）', type: 'text', value: String(group.imm_predicate || ''), description: '语法："predicate": "minecraft:stored_enchantments"', condition: (r) => r.imm_property === 'component' },
+			imm_value: { label: 'value（component 用，JSON）', type: 'text', value: String(group.imm_value == null ? '' : group.imm_value), description: '语法："value": [ { ... } ]', condition: (r) => r.imm_property === 'component' },
+			imm_keybind: { label: 'keybind（keybind_down 用）', type: 'text', value: String(group.imm_keybind || ''), description: '语法："keybind": "key.jump"', condition: (r) => r.imm_property === 'keybind_down' },			imm_index: { label: '分派下标（index）', description: '语法："index": 0\n作用：仅 range_dispatch，指定从 property 的哪个下标取值。', type: 'number', value: num(group.imm_index), condition: (r) => r.imm_type === 'range_dispatch' },
+			imm_threshold_format: { label: '分支编号格式（entries[].threshold）', type: 'text', value: String(group.imm_threshold_format || ''), description: '语法：i → 0,1,2；2i 或 i*2 → 0,2,4；10+2i → 10,12,14；0,1,3 → 字面列表；2:2i → 每个值重复 2 次、索引从 1 起（2,2,4,4,6,6…）。\n作用：range_dispatch 的子分组按顺序取这些阈值；留空为 0,1,2…', condition: (r) => r.imm_type === 'range_dispatch' },
+			imm_threshold: { label: '分支编号 / 阈值（entries[].threshold）', type: 'number', value: num(group.imm_threshold), description: '语法：{"threshold": 0}\n作用：父分组为 range_dispatch 时，本分组的阈值；修改后自动按阈值重排。', condition: (r) => r.imm_type === 'range_dispatch' || parent_type === 'range_dispatch' },
+			imm_condition: { label: '分支条件（on_true / on_false）', type: 'select', value: String(group.imm_condition || ''), options: { '': '（按位置）', on_true: 'on_true', on_false: 'on_false' }, description: '语法："on_true" / "on_false"\n作用：父分组为 condition 时决定本分支走哪一支；修改后自动重排。', condition: (r) => parent_type === 'condition' },
+			imm_scale: { label: '数值缩放（scale）', description: '语法："scale": 1.0\n作用：仅 range_dispatch，property 数值乘以该倍数后再查阈值。', type: 'number', value: num(group.imm_scale) || 1, condition: (r) => r.imm_type === 'range_dispatch' },
+						imm_tint_type: { label: '纹理着色类型（tints[].type）', description: '语法："tints": [{"type": "<类型>"}]\n作用：染色来源类型（默认 custom_model_data）。\n可选：custom_model_data / constant / dye / potion / grass / team\n仅“纹理着色索引”非空时生效。', type: 'select', value: String(group.imm_tint_type == null ? 'custom_model_data' : (group.imm_tint_type === 'none' ? '' : group.imm_tint_type)), options: { '': '（不生成 tints）', custom_model_data: 'custom_model_data', constant: 'constant', dye: 'dye', potion: 'potion', grass: 'grass', team: 'team' }, description: '纹理着色来源类型；保存为键 imm_tint_type', condition: (r) => r.imm_type === 'model' || r.imm_type === 'composite' },
+			imm_range_target: { label: 'compass target', type: 'select', value: String(group.imm_range_target || ''), options: { '': '（未设置）', lodestone: 'lodestone', none: 'none', spawn: 'spawn', recovery: 'recovery' }, description: '语法："target": "spawn"\n作用：compass 必填，指定指南针指向目标。', condition: (r) => r.imm_property === 'compass' },
+			imm_range_source: { label: 'time source', type: 'select', value: String(group.imm_range_source || ''), options: { '': '（未设置）', daytime: 'daytime', random: 'random', moon_phase: 'moon_phase' }, description: '语法："source": "daytime"\n作用：time 必填，指定时间来源。', condition: (r) => r.imm_property === 'time' },
+			imm_range_wobble: { label: 'wobble（摆动浮动）', type: 'checkbox', value: group.imm_range_wobble !== false, description: '默认 true；关闭后摆动立即平滑到正确值。', condition: (r) => r.imm_property === 'compass' || r.imm_property === 'time' },
+			imm_range_normalize: { label: 'normalize（归一化）', type: 'checkbox', value: group.imm_range_normalize !== false, description: '默认 true：返回 0~1 进度而非原始值（count / damage）。', condition: (r) => r.imm_property === 'count' || r.imm_property === 'damage' },
+			imm_range_period: { label: 'period（周期）', type: 'number', value: num(group.imm_range_period) || 1, description: '语法："period": 10.0\n作用：use_cycle 的取模周期（>0）。', condition: (r) => r.imm_property === 'use_cycle' },
+			imm_range_remaining: { label: 'remaining（用剩余时间）', type: 'checkbox', value: group.imm_range_remaining === true, description: '默认 false；true 时使用剩余使用时间。', condition: (r) => r.imm_property === 'use_duration' },
+			imm_align_center: { label: '导入时自动对齐到模型中点', type: 'checkbox', value: group.imm_align_center === true, description: '勾选后导入引用模型时，把模型包围盒中点移到 (8,8,8)，偏移写入本层 translation。', condition: (r) => r.imm_type === 'model' },
+			imm_tint_index: { label: '纹理着色索引（tints[].index）', description: '语法："tints": [{"type": "custom_model_data", "index": 0, "default": 0}]\n作用：custom_model_data 的下标。\n留空：不输出 tints，模型不染色。', type: 'text', value: String(group.imm_tint_index == null ? '' : group.imm_tint_index), condition: (r) => (r.imm_type === 'model' || r.imm_type === 'composite') && r.imm_tint_type === 'custom_model_data' },
+			imm_tint_value: { label: '纹理着色值（tints[].value / .default）', description: '语法：{"type": "constant", "value": -1} 或 {"type": "dye", "default": -1}\n作用：constant 填 ARGB 整数；\ndye / potion / team 可填默认颜色。', type: 'text', value: String(group.imm_tint_value == null ? '' : group.imm_tint_value), condition: (r) => (r.imm_type === 'model' || r.imm_type === 'composite') && ['constant', 'dye', 'potion', 'team'].indexOf(r.imm_tint_type) >= 0 },
 		},
 		onConfirm(result) {
 			try {
@@ -2178,13 +2136,13 @@ function editGroupProps() {
 				if (targets.indexOf(group) < 0) targets.unshift(group);
 				Undo.initEdit({ groups: targets });
 				const tintIndexOf = (g) => {
-					const raw = String(g.imda_tints || '').trim();
+					const raw = String(g.imm_tints || '').trim();
 					if (/^-?\d+$/.test(raw)) return Number(raw);
 					try {
 						const parsed = raw ? JSON.parse(raw) : null;
 						if (Array.isArray(parsed) && parsed.length && typeof parsed[0].index === 'number') return parsed[0].index;
 					} catch (e) { /* ignore */ }
-					const index_text = String(g.imda_tint_index == null ? '' : g.imda_tint_index).trim();
+					const index_text = String(g.imm_tint_index == null ? '' : g.imm_tint_index).trim();
 					return /^-?\d+$/.test(index_text) ? Number(index_text) : undefined;
 				};
 				let tinted = 0, sortedCount = 0, relabeled = 0;
@@ -2223,7 +2181,7 @@ function editGroupProps() {
 				Undo.finishEdit('修改分组映射属性');
 				simInvalidate();
 				try { Canvas.updateAll(); } catch (e) { /* ignore */ }
-				const modelRef = String(group.imda_model || '').trim();
+				const modelRef = String(group.imm_model || '').trim();
 				if (targets.length === 1 && modelRef) {
 					const existingCubes = (group.children || []).filter(isCube).length;
 					const runImport = () => { try { importModelReference(group); } catch (e) { console.error('[装配] 导入失败', e); } };
@@ -2262,7 +2220,7 @@ function callSelectedGroup() {
 			const locator = new Locator({ name: '调用 ' + labelOf(group), position: (group.origin || [0, 0, 0]).slice(), rotation: (group.rotation || [0, 0, 0]).slice(), ignore_inherited_scale: true });
 			if (group.parent) locator.addTo(group.parent); else locator.addTo();
 			try { locator.init(); } catch (e) { /* ignore */ }
-			locator.imda_call_target = group.uuid;
+			locator.imm_call_target = group.uuid;
 			created++;
 		} catch (error) { console.error('[装配] 创建复调用标签失败', error); }
 	}
@@ -2273,11 +2231,35 @@ function callSelectedGroup() {
 	Blockbench.showQuickMessage('已创建 ' + created + ' 个复调用标签', 3000);
 }
 
-/** 属性前缀迁移：imda_* → imda_*（默认复制，可选删除旧键） */
+/** 属性前缀迁移：imm_* → imda_*（默认复制，可选删除旧键） */
+function migratePrefixDialog() {
+	new Dialog({
+		id: 'imm_migrate_prefix',
+		title: '迁移属性前缀（imm_ → imda_）',
+		width: 460,
+		form: {
+			mode: { label: '迁移方式', type: 'select', value: 'copy', options: { copy: '复制到 imda_（保留旧键）', rename: '重命名（删除旧键）' }, description: '复制：旧插件仍可读；重命名：数据改用 imda_*，插件会在导出/编辑时自动同步。' },
+		},
+		onConfirm(result) {
+			try {
+				try { Undo.initEdit({ outliner: true, elements: [] }); } catch (e) { /* ignore */ }
+				const remove = String(result.mode || 'copy') === 'rename';
+				const count = migratePropPrefixes(remove);
+				try { Undo.finishEdit('迁移属性前缀'); } catch (e) { /* ignore */ }
+				try { Project.saved = false; } catch (e) { /* ignore */ }
+				try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+				Blockbench.showQuickMessage('已迁移 ' + count + ' 个 imm_* 属性到 imda_*' + (remove ? '（删除旧键）' : '（保留旧键）'), 4000);
+			} catch (error) {
+				Blockbench.showMessageBox({ title: '迁移失败', message: String((error && error.message) || error), icon: 'error' });
+			}
+		},
+	}).show();
+}
+
 /** 把所有 composite 分组的直属 cube 收进 inline 子分组，等价于导出时的内联模型 */
 function normalizeCompositeCubes() {
 	const groups = (typeof Group !== 'undefined' && Group.all) ? Group.all.slice() : [];
-	const targets = groups.filter(group => group && (group.imda_type === undefined || group.imda_type === '' || group.imda_type === 'composite'));
+	const targets = groups.filter(group => group && (group.imm_type === undefined || group.imm_type === '' || group.imm_type === 'composite'));
 	if (!targets.length) { Blockbench.showQuickMessage('没有 composite 分组。', 2500); return 0; }
 	let moved = 0;
 	const created = [];
@@ -2286,7 +2268,7 @@ function normalizeCompositeCubes() {
 	for (const group of targets) {
 		const cubes = (group.children || []).filter(c => isCube(c));
 		if (!cubes.length) continue;
-		const inline = new Group({ name: labelOf(group) + ' [inline]', imda_type: 'inline', origin: [8, 8, 8], rotation: [0, 0, 0] });
+		const inline = new Group({ name: labelOf(group) + ' [inline]', imm_type: 'inline', origin: [8, 8, 8], rotation: [0, 0, 0] });
 		addAndInit(inline, group);
 		try { if (typeof inline.createUniqueName === 'function') inline.createUniqueName(); } catch (e) { /* ignore */ }
 		for (const cube of cubes) {
@@ -2359,8 +2341,8 @@ function generateCallSequence(options) {
 	const thresholdStart = num(options.thresholdStart);
 	const thresholdStep = num(options.thresholdStep);
 	try { Undo.initEdit({ outliner: true, groups, elements: [] }); } catch (e) { /* ignore */ }
-	const container = new Group({ name: sequenceName, imda_type: type, origin: [8, 8, 8], rotation: [0, 0, 0] });
-	if (type === 'range_dispatch') { container.imda_property = property; container.imda_index = index; }
+	const container = new Group({ name: sequenceName, imm_type: type, origin: [8, 8, 8], rotation: [0, 0, 0] });
+	if (type === 'range_dispatch') { container.imm_property = property; container.imm_index = index; }
 	addAndInit(container, parent);
 	const generatedGroups = [container];
 	const generatedLocators = [];
@@ -2368,9 +2350,9 @@ function generateCallSequence(options) {
 	for (let i = 0; i < counts.length; i++) {
 		const count = counts[i];
 		const isBody = count === total;
-		const node = new Group({ name: sequenceName + ' #' + (i + 1), imda_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
+		const node = new Group({ name: sequenceName + ' #' + (i + 1), imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
 		generatedGroups.push(node);
-		if (type === 'range_dispatch') node.imda_threshold = thresholdStart + i * thresholdStep;
+		if (type === 'range_dispatch') node.imm_threshold = thresholdStart + i * thresholdStep;
 		addAndInit(node, container);
 		if (isBody) {
 			for (const group of groups) { try { group.addTo(node); } catch (e) { /* ignore */ } }
@@ -2381,7 +2363,7 @@ function generateCallSequence(options) {
 				const locator = new Locator({ name: '调用 ' + labelOf(group), position: (group.origin || [0, 0, 0]).slice(), rotation: (group.rotation || [0, 0, 0]).slice(), ignore_inherited_scale: true });
 				addAndInit(locator, node);
 				generatedLocators.push(locator);
-				locator.imda_call_target = group.uuid;
+				locator.imm_call_target = group.uuid;
 				created++;
 			} catch (error) { console.warn('[装配] 创建序列复调用失败', error); }
 		}
@@ -2417,7 +2399,7 @@ function openSequenceDialog() {
 
 /** 移除项目里所有 range_dispatch(timeline) 分组及其帧标签 */
 function removeTimelineTags() {
-	const groups = ((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []).filter(node => isGroup(node) && String(node.imda_type || '') === 'range_dispatch_timeline');
+	const groups = ((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []).filter(node => isGroup(node) && String(node.imm_type || '') === 'range_dispatch_timeline');
 	if (!groups.length) { Blockbench.showQuickMessage('没有动画时间线复调用标签。', 2500); return; }
 	try { Undo.initEdit({ outliner: true, groups, elements: [] }); } catch (e) { /* ignore */ }
 	for (const group of groups) { try { group.remove(); } catch (e) { /* ignore */ } }
@@ -2430,7 +2412,7 @@ function removeTimelineTags() {
 /** 把所有复调用 Locator 实例化成真实的分组/模型节点 */
 function instantiateCallTags() {
 	const locators = [];
-	const walk = (nodes) => { for (const node of (nodes || [])) { if (isLocator(node) && String(node.imda_call_target || '').trim()) locators.push(node); else if (isGroup(node)) walk(node.children); } };
+	const walk = (nodes) => { for (const node of (nodes || [])) { if (isLocator(node) && String(node.imm_call_target || '').trim()) locators.push(node); else if (isGroup(node)) walk(node.children); } };
 	walk((typeof Outliner !== 'undefined' && Outliner) ? Outliner.root : []);
 	if (!locators.length) { Blockbench.showQuickMessage('没有复调用标签。', 2500); return; }
 	Blockbench.showMessageBox({
@@ -2443,7 +2425,7 @@ function instantiateCallTags() {
 		let done = 0;
 		for (const locator of locators) {
 			try {
-				const target = String(locator.imda_call_target || '').trim();
+				const target = String(locator.imm_call_target || '').trim();
 				const groups = (typeof Group !== 'undefined' && Group.all) ? Group.all : [];
 				const targetGroup = groups.find(g => g && g.uuid === target);
 				const parent = locator.parent || null;
@@ -2452,7 +2434,7 @@ function instantiateCallTags() {
 					created = (typeof targetGroup.clone === 'function') ? targetGroup.clone() : null;
 					if (created) { created.name = labelOf(targetGroup) + ' 实例'; created.selected = false; }
 				} else if (target) {
-					created = new Group({ name: '实例 ' + target.split(':').pop(), imda_type: 'model', imda_model: target, origin: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() });
+					created = new Group({ name: '实例 ' + target.split(':').pop(), imm_type: 'model', imm_model: target, origin: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() });
 				}
 				if (!created) continue;
 				if (parent) created.addTo(parent); else created.addTo();
@@ -2480,7 +2462,7 @@ function convertSelectedGroupsToCallTags() {
 		try {
 			const locator = new Locator({ name: '调用 ' + labelOf(group), position: (group.origin || [0, 0, 0]).slice(), rotation: (group.rotation || [0, 0, 0]).slice(), ignore_inherited_scale: true });
 			addAndInit(locator, group.parent || null);
-			locator.imda_call_target = group.uuid;
+			locator.imm_call_target = group.uuid;
 			group.export = false;
 			locators.push(locator);
 			converted++;
@@ -2513,7 +2495,7 @@ function editCallTag(locator) {
 	let locators = selected.filter((item, index) => item && selected.indexOf(item) === index);
 	if (!locators.length) return;
 	const first = locators[0];
-	const currentTargets = locators.map(l => String(l.imda_call_target || '').trim());
+	const currentTargets = locators.map(l => String(l.imm_call_target || '').trim());
 	const commonTarget = currentTargets.every(t => t === currentTargets[0]) ? currentTargets[0] : '';
 	const groups = [];
 	const walk = (nodes) => {
@@ -2531,7 +2513,7 @@ function editCallTag(locator) {
 		if (group.uuid === commonTarget) matchedGroup = group.uuid;
 	}
 	new Dialog({
-		id: 'imda_edit_call',
+		id: 'imm_edit_call',
 		title: '编辑复调用标签' + (locators.length > 1 ? ('（' + locators.length + ' 个）') : (' — ' + (first.name || 'Locator'))),
 		width: 560,
 		form: {
@@ -2543,7 +2525,7 @@ function editCallTag(locator) {
 				const model = String(result.model || '').trim();
 				const target = model || String(result.target || '').trim();
 				try { Undo.initEdit({ elements: locators }); } catch (e) { /* ignore */ }
-				for (const item of locators) item.imda_call_target = target;
+				for (const item of locators) item.imm_call_target = target;
 				console.log('[装配] 编辑复调用标签', locators.length, '→', target);
 				if (target && target.indexOf(':') < 0 && typeof Group !== 'undefined' && Array.isArray(Group.all) && !Group.all.some(g => g && g.uuid === target)) {
 					Blockbench.showMessageBox({ title: '目标分组不存在', message: '目标 UUID 不在当前项目里：' + target + '\n请重新选择目标分组。', icon: 'warning' });
@@ -2563,7 +2545,7 @@ function editCallTag(locator) {
 
 function createModelFromGroup(group) {
 	if (!group) return;
-	const root = String(projectValue('imda_pack_path', '') || '').trim();
+	const root = String(projectValue('imm_pack_path', '') || '').trim();
 	if (!root) {
 		Blockbench.showMessageBox({ title: '需要资源包工程', message: '先通过 File → 选择资源包工程路径… 设置目标资源包，再创建模型。', icon: 'warning' });
 		return;
@@ -2574,7 +2556,7 @@ function createModelFromGroup(group) {
 		return;
 	}
 	new Dialog({
-		id: 'imda_create_model',
+		id: 'imm_create_model',
 		title: '从分组创建模型',
 		width: 560,
 		form: {
@@ -2606,9 +2588,9 @@ function createModelFromGroup(group) {
 				return;
 			}
 			try { Undo.initEdit({ groups: [group] }); } catch (e) { /* ignore */ }
-			group.imda_type = 'model';
-			group.imda_model = built.reference;
-			group.imda_model_shift = JSON.stringify(built.shift);
+			group.imm_type = 'model';
+			group.imm_model = built.reference;
+			group.imm_model_shift = JSON.stringify(built.shift);
 			try { Undo.finishEdit('从分组创建模型'); } catch (e) { /* ignore */ }
 			try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 			try { Project.saved = false; } catch (e) { /* ignore */ }
@@ -2634,7 +2616,7 @@ function checkStructure() {
 	const walk = (nodes, depth) => {
 		for (const node of nodes) {
 			if (!isGroup(node)) continue;
-			const type = String(node.imda_type || 'composite').replace(/^minecraft:/, '');
+			const type = String(node.imm_type || 'composite').replace(/^minecraft:/, '');
 			lines.push('  '.repeat(depth) + '• ' + labelOf(node) + ' [' + type + '] cubes=' + (node.children || []).filter(isCube).length);
 			lines.push('  '.repeat(depth + 1) + 'origin=' + fmt(node.origin || [0, 0, 0]) + ' rot=' + fmt(node.rotation || [0, 0, 0]) + ' ' + info(node));
 			walk(node.children || [], depth + 1);
@@ -2732,16 +2714,16 @@ let lastImportAt = 0;
 
 function importModelReference(group) {
 	if (importingModel) { console.warn('[装配] 忽略重复导入（进行中）'); return false; }
-	const importKey = String((group && group.uuid) || '') + '|' + String((group && group.imda_model) || '');
+	const importKey = String((group && group.uuid) || '') + '|' + String((group && group.imm_model) || '');
 	// 冷却已回退：不再按时间拒绝重复导入
 	importingModel = true;
 	lastImportKey = importKey;
 	lastImportAt = Date.now();
 	setTimeout(() => { importingModel = false; }, 1200);
 	if (!group) return false;
-	const reference = String(group.imda_model || '').trim();
+	const reference = String(group.imm_model || '').trim();
 	if (!reference) return false;
-	const root = String(projectValue('imda_pack_path', '') || '').trim();
+	const root = String(projectValue('imm_pack_path', '') || '').trim();
 	if (!root) {
 		Blockbench.showMessageBox({ title: '缺少资源包工程路径', message: '请先在项目设置里指定资源包工程路径（pack.mcmeta 所在目录）。', icon: 'warning' });
 		return false;
@@ -2761,7 +2743,7 @@ function importModelReference(group) {
 		Undo.initEdit({ groups: [group], elements: (group.children || []).filter(isCube) });
 		// 清空原有子项与方块
 		// 确保分组可见（可能被“隐藏不可用分支”关闭过）
-		try { group.visibility = true; group.export = true; group.imda_auto_disabled = false; } catch (e) { /* ignore */ }
+		try { group.visibility = true; group.export = true; group.imm_auto_disabled = false; } catch (e) { /* ignore */ }
 		let import_holder = group; // 直接导入到目标分组（其 mesh 已初始化）
 		// 导入前清空本分组原有元素（保持“替换”语义）
 		for (const old_child of (group.children || []).slice()) {
@@ -2772,9 +2754,9 @@ function importModelReference(group) {
 		// 模型文件里的 groups → Blockbench 分组（内联模型）；children 可以是元素下标或子分组对象
 		const importedGroups = [];
 		// 目标分组的着色配置要下发给所有导入子分组
-		const sourceTintType = group.imda_tint_type;
+		const sourceTintType = group.imm_tint_type;
 		const hasSourceTint = sourceTintType !== undefined && sourceTintType !== null && sourceTintType !== '' && sourceTintType !== 'none';
-		const sourceTintIndex = String(group.imda_tint_index == null ? '' : group.imda_tint_index).trim();
+		const sourceTintIndex = String(group.imm_tint_index == null ? '' : group.imm_tint_index).trim();
 		const elementGroup = {};
 		const buildImportGroups = (list, parentNode) => {
 			for (const src of (list || [])) {
@@ -2788,12 +2770,12 @@ function importModelReference(group) {
 					node = new Group({ name: String(src.name || 'group'), origin, rotation }).addTo(parentNode);
 					try { if (typeof node.init === 'function') node.init(); } catch (e) { /* ignore */ }
 					try { if (typeof node.createUniqueName === 'function') node.createUniqueName(); } catch (e) { /* ignore */ }
-					node.imda_type = 'inline';
+					node.imm_type = 'inline';
 					if (hasSourceTint) {
-						node.imda_tint_type = sourceTintType;
-						if (group.imda_tint_index !== undefined) node.imda_tint_index = group.imda_tint_index;
-						if (group.imda_tint_value !== undefined) node.imda_tint_value = group.imda_tint_value;
-						if (group.imda_tints !== undefined) node.imda_tints = group.imda_tints;
+						node.imm_tint_type = sourceTintType;
+						if (group.imm_tint_index !== undefined) node.imm_tint_index = group.imm_tint_index;
+						if (group.imm_tint_value !== undefined) node.imm_tint_value = group.imm_tint_value;
+						if (group.imm_tints !== undefined) node.imm_tints = group.imm_tints;
 					}
 					importedGroups.push(node);
 				} catch (error) { console.warn('[装配] 创建导入分组失败', error); continue; }
@@ -2889,7 +2871,7 @@ function importModelReference(group) {
 			applyTint(group.children);
 		}
 		// 自动对齐：把模型包围盒中点移到 (8,8,8)，偏移写进本层 translation
-		if (group.imda_align_center === true && created.length) {
+		if (group.imm_align_center === true && created.length) {
 			const min = [Infinity, Infinity, Infinity];
 			const max = [-Infinity, -Infinity, -Infinity];
 			for (const cube of created) {
@@ -2900,9 +2882,9 @@ function importModelReference(group) {
 					if (hi > max[a]) max[a] = hi;
 				}
 			}
-			group.imda_offset = [0, 1, 2].map(a => (min[a] + max[a]) / 2 - 8);
+			group.imm_offset = [0, 1, 2].map(a => (min[a] + max[a]) / 2 - 8);
 		} else {
-			group.imda_offset = [0, 0, 0];
+			group.imm_offset = [0, 0, 0];
 		}
 		Undo.finishEdit('导入引用模型');
 		try { if (typeof unselectAll === 'function') unselectAll(); } catch (e) { /* ignore */ }
@@ -3004,10 +2986,10 @@ function simTintColorOf(cube) {
 	// 分组明确“不生成 tints”时不着色
 	const group = cube.parent;
 	if (!group) return null;
-	if (group.imda_tint_type === '' || group.imda_tint_type === 'none') return null;
-	const type = String(group.imda_tint_type == null ? 'custom_model_data' : group.imda_tint_type).replace(/^minecraft:/, '').trim() || 'custom_model_data';
+	if (group.imm_tint_type === '' || group.imm_tint_type === 'none') return null;
+	const type = String(group.imm_tint_type == null ? 'custom_model_data' : group.imm_tint_type).replace(/^minecraft:/, '').trim() || 'custom_model_data';
 	if (type !== 'custom_model_data') return null;
-	const indexText = String(group.imda_tint_index == null ? '' : group.imda_tint_index).trim();
+	const indexText = String(group.imm_tint_index == null ? '' : group.imm_tint_index).trim();
 	if (!/^-?\d+$/.test(indexText)) return null;
 	let hasTintedFace = false;
 	for (const dir of FACE_KEYS) {
@@ -3189,7 +3171,7 @@ function setBoxSelectGroups(value) {
 function isBuiltInModelGroup(group) {
 	let node = group;
 	while (node && isGroup(node)) {
-		const type = String(node.imda_type || '').replace(/^minecraft:/, '');
+		const type = String(node.imm_type || '').replace(/^minecraft:/, '');
 		if (type === 'inline') return true;
 		node = node.parent;
 	}
@@ -3391,10 +3373,10 @@ function simSlotLabel(key, slot) {
 
 
 function buildSimPanel(show_panel) {
-	if (!sim_panel) { try { if (typeof Panels !== 'undefined' && Panels['imda_sim_panel']) sim_panel = Panels['imda_sim_panel']; } catch (e) { /* ignore */ } }
+	if (!sim_panel) { try { if (typeof Panels !== 'undefined' && Panels['imm_sim_panel']) sim_panel = Panels['imm_sim_panel']; } catch (e) { /* ignore */ } }
 	if (sim_panel) { if (show_panel !== false) sim_panel.show(); return sim_panel; }
 	if (typeof Panel === 'undefined' || typeof document === 'undefined') return null;
-	sim_panel = new Panel('imda_sim_panel', { name: '模拟输入', icon: 'play_circle', condition: { formats: [FORMAT_ID] }, default_position: { slot: 'right_bar', float: false }, resizable: true, growable: true });
+	sim_panel = new Panel('imm_sim_panel', { name: '模拟输入', icon: 'play_circle', condition: { formats: [FORMAT_ID] }, default_position: { slot: 'right_bar', float: false }, resizable: true, growable: true });
 	const root = document.createElement('div');
 	root.style.cssText = 'padding:8px;display:flex;flex-direction:column;gap:4px;font-size:12px;overflow:auto;height:100%';
 	const mk = (tag, props, style) => { const el = document.createElement(tag); Object.assign(el, props || {}); if (style) el.style.cssText = style; return el; };
@@ -3590,17 +3572,17 @@ function collectInputUsage() {
 	const walk = (nodes) => {
 		for (const node of nodes || []) {
 			if (!node || !isGroup(node)) continue;
-			const type = String(node.imda_type || '').replace(/^minecraft:/, '');
-			const propRaw = String(node.imda_property || '').replace(/^minecraft:/, '').trim();
+			const type = String(node.imm_type || '').replace(/^minecraft:/, '');
+			const propRaw = String(node.imm_property || '').replace(/^minecraft:/, '').trim();
 			const prop = propRaw || ((type === 'range_dispatch' || type === 'select' || type === 'condition') ? 'custom_model_data' : '');
-			const index = Number(node.imda_index) || 0;
+			const index = Number(node.imm_index) || 0;
 			const name = labelOf(node);
 			const branchChildren = (node.children || []).filter(isGroup).map(c => labelOf(c));
 			// colors：按分组 tints 配置（custom_model_data + index）关联；明确“不生成”则不关联
 			const tintIndices = new Set();
-			if (node.imda_tint_type !== '' && node.imda_tint_type !== 'none') {
-				const tintType = String(node.imda_tint_type == null ? 'custom_model_data' : node.imda_tint_type).replace(/^minecraft:/, '').trim() || 'custom_model_data';
-				const rawTintIndex = String(node.imda_tint_index == null ? '' : node.imda_tint_index).trim();
+			if (node.imm_tint_type !== '' && node.imm_tint_type !== 'none') {
+				const tintType = String(node.imm_tint_type == null ? 'custom_model_data' : node.imm_tint_type).replace(/^minecraft:/, '').trim() || 'custom_model_data';
+				const rawTintIndex = String(node.imm_tint_index == null ? '' : node.imm_tint_index).trim();
 				if (tintType === 'custom_model_data' && /^-?\d+$/.test(rawTintIndex)) tintIndices.add(Number(rawTintIndex));
 			}
 			for (const tintIndex of tintIndices) add('colors', tintIndex, name, []);
@@ -3883,7 +3865,7 @@ function openSimulator() {
 		return;
 	}
 	new Dialog({
-		id: 'imda_simulator',
+		id: 'imm_simulator',
 		title: '模拟输入 — 预览分支命中',
 		width: 720,
 		form: {
@@ -3946,20 +3928,29 @@ function registerProperties() {
 			new Property(Animation, 'number', 'imda_timeline_index', { default: 0, label: '时间轴 custom_model_data index' });
 		} } catch (e) { /* ignore */ }
 	const cond = { formats: [FORMAT_ID] };
-	const P = (target, type, name, options) => new Property(target, type, name, Object.assign({ condition: cond, exposed: true }, options));
-P(ModelProject, 'string', 'imda_namespace', { label: '命名空间（可带子空间，如 sqsptst:weapon/shotgun）', default: 'custom' });
-	P(ModelProject, 'boolean', 'imda_center_pivot', { label: '旋转枢轴用 (0.5,0.5,0.5)（= 像素 8,8,8）', default: false });
-	P(ModelProject, 'boolean', 'imda_block_display', { label: '模型附带“显示调整”页的 display', default: true });
-P(ModelProject, 'number', 'imda_anim_fps', { label: '时间轴 FPS', default: 20, min: 1, max: 120 });
-P(ModelProject, 'number', 'imda_anim_index', { label: '时间轴 custom_model_data index', default: 0 });
-P(ModelProject, 'string', 'imda_anim_property', { label: '时间轴 range_dispatch property', default: 'custom_model_data' });
+	const P = (target, type, name, options) => {
+		let primaryName = name;
+		let legacyName = null;
+		if (String(name).startsWith('imm_')) { primaryName = String(name).replace(/^imm_/, 'imda_'); legacyName = name; }
+		const prop = new Property(target, type, primaryName, Object.assign({ condition: cond, exposed: true }, options));
+		if (legacyName) {
+			try { new Property(target, type, legacyName, Object.assign({ condition: cond, exposed: false }, options)); } catch (e) { /* ignore */ }
+		}
+		return prop;
+	};
+P(ModelProject, 'string', 'imm_namespace', { label: '命名空间（可带子空间，如 sqsptst:weapon/shotgun）', default: 'custom' });
+	P(ModelProject, 'boolean', 'imm_center_pivot', { label: '旋转枢轴用 (0.5,0.5,0.5)（= 像素 8,8,8）', default: false });
+	P(ModelProject, 'boolean', 'imm_block_display', { label: '模型附带“显示调整”页的 display', default: true });
+P(ModelProject, 'number', 'imm_anim_fps', { label: '时间轴 FPS', default: 20, min: 1, max: 120 });
+P(ModelProject, 'number', 'imm_anim_index', { label: '时间轴 custom_model_data index', default: 0 });
+P(ModelProject, 'string', 'imm_anim_property', { label: '时间轴 range_dispatch property', default: 'custom_model_data' });
 P(ModelProject, 'number', 'imda_extra_composite_layers', { label: '调试：额外空 composite 层数', default: 0, min: 0, max: 10 });
 	P(ModelProject, 'boolean', 'imda_display_all_slots', { label: 'display 输出全部槽位（GUI/地面/固定）', default: false });
-	P(ModelProject, 'boolean', 'imda_export_node_names', { label: '输出 node_name（来源分组名）', default: true });
-	P(ModelProject, 'boolean', 'imda_anim_auto', { label: '导出时自动采样动画时间轴', default: true });
-	P(ModelProject, 'boolean', 'imda_hide_unavailable', { label: '隐藏当前条件下不可用的分组', default: true });
-	P(ModelProject, 'string', 'imda_pack_path', { label: '资源包工程路径（pack.mcmeta 所在目录）', default: '' });
-	P(ModelProject, 'string', 'imda_pack_version', {
+	P(ModelProject, 'boolean', 'imm_export_node_names', { label: '输出 node_name（来源分组名）', default: true });
+	P(ModelProject, 'boolean', 'imm_anim_auto', { label: '导出时自动采样动画时间轴', default: true });
+	P(ModelProject, 'boolean', 'imm_hide_unavailable', { label: '隐藏当前条件下不可用的分组', default: true });
+	P(ModelProject, 'string', 'imm_pack_path', { label: '资源包工程路径（pack.mcmeta 所在目录）', default: '' });
+	P(ModelProject, 'string', 'imm_pack_version', {
 		label: '目标 Minecraft 版本（pack.mcmeta 格式）',
 		default: DEFAULT_PACK_VERSION,
 		options: () => {
@@ -3975,37 +3966,37 @@ P(ModelProject, 'number', 'imda_extra_composite_layers', { label: '调试：额�
 	// 面着色：Blockbench 的 UV 编辑器“着色”开关绑定 Face.properties.tint（默认 -1 表示未着色）
 	P(Face, 'number', 'tint', { label: '着色 index', default: -1 });
 
-	P(Group, 'string', 'imda_type', { label: '映射类型（type）', description: '语法：{"type": "minecraft:<类型>"}\n作用：决定本节点是哪一种物品模型映射。\ncomposite=结构分组；inline=内联模型（本组方块烘焙成模型）；model=引用模型；还有 range_dispatch / condition / select / empty', default: 'composite', enum_values: MAPPING_TYPES });
-	P(Group, 'string', 'imda_model', { label: '引用模型（imda_model）', default: '' });
-	P(Group, 'string', 'imda_display_mode', { label: '强制统一显示调整', default: 'copy' });
-	try { new Property(Group, 'string', 'imda_model_shift', { default: '', exposed: false, condition: cond }); } catch (e) { /* ignore */ }
+	P(Group, 'string', 'imm_type', { label: '映射类型（type）', description: '语法：{"type": "minecraft:<类型>"}\n作用：决定本节点是哪一种物品模型映射。\ncomposite=结构分组；inline=内联模型（本组方块烘焙成模型）；model=引用模型；还有 range_dispatch / condition / select / empty', default: 'composite', enum_values: MAPPING_TYPES });
+	P(Group, 'string', 'imm_model', { label: '引用模型（imm_model）', default: '' });
+	P(Group, 'string', 'imm_display_mode', { label: '强制统一显示调整', default: 'copy' });
+	try { new Property(Group, 'string', 'imm_model_shift', { default: '', exposed: false, condition: cond }); } catch (e) { /* ignore */ }
 	if (typeof Locator !== 'undefined') {
-		try { new Property(Locator, 'string', 'imda_call_target', { label: '复调用目标（分组 UUID 或模型 id）', default: '', exposed: false }); } catch (e) { /* ignore */ }
-		try { new Property(Locator, 'number', 'imda_frame', { default: 0, exposed: false }); } catch (e) { /* ignore */ }
-		try { new Property(Locator, 'string', 'imda_pose', { default: '', exposed: false }); } catch (e) { /* ignore */ }
+		try { new Property(Locator, 'string', 'imm_call_target', { label: '复调用目标（分组 UUID 或模型 id）', default: '', exposed: false }); } catch (e) { /* ignore */ }
+		try { new Property(Locator, 'number', 'imm_frame', { default: 0, exposed: false }); } catch (e) { /* ignore */ }
+		try { new Property(Locator, 'string', 'imm_pose', { default: '', exposed: false }); } catch (e) { /* ignore */ }
 	}
-	P(Group, 'string', 'imda_property', { label: '取值来源 / 条件（property / when）', default: '' });
-	P(Group, 'number', 'imda_index', { label: 'index（仅 range_dispatch：custom_model_data 下标）', default: 0 });
-	P(Group, 'string', 'imda_range_target', { label: 'compass target', default: '' });
-	P(Group, 'string', 'imda_range_source', { label: 'time source', default: '' });
-	P(Group, 'boolean', 'imda_range_wobble', { label: 'wobble', default: true });
-	P(Group, 'boolean', 'imda_range_normalize', { label: 'normalize', default: true });
-	P(Group, 'number', 'imda_range_period', { label: 'period', default: 1 });
-	P(Group, 'boolean', 'imda_range_remaining', { label: 'remaining', default: false });
-	P(Group, 'string', 'imda_component', { label: 'component', default: '' });
-	P(Group, 'boolean', 'imda_align_center', { label: '引用模型导入时自动对齐到模型中点', default: false });
-	P(Group, 'boolean', 'imda_ignore_default', { label: 'ignore_default', default: false });
-	P(Group, 'string', 'imda_predicate', { label: 'predicate', default: '' });
-	P(Group, 'string', 'imda_value', { label: 'value', default: '' });
-	P(Group, 'string', 'imda_keybind', { label: 'keybind', default: '' });
-	P(Group, 'string', 'imda_condition', { label: '分支条件（on_true/on_false）', default: '' });
-	P(Group, 'string', 'imda_threshold_format', { label: '分支编号格式', description: 'i / i*2 / 10+i*5 / 0,1,3', default: '' });
-	P(Group, 'number', 'imda_threshold', { label: '分支编号 / 阈值（entries[].threshold）', default: 0 });
-	P(Group, 'number', 'imda_scale', { label: '数值缩放（scale）', default: 1 });
-	P(Group, 'string', 'imda_tint_type', { label: 'tints 来源类型', default: '', enum_values: ['', 'none', 'custom_model_data', 'constant', 'dye', 'potion', 'grass', 'team'] });
-	P(Group, 'number', 'imda_tint_index', { label: 'tints 来源 index（custom_model_data）', default: 0 });
-	P(Group, 'string', 'imda_tint_value', { label: 'tints 来源值（constant 的 ARGB / 其它 default）', default: '' });
-	P(Group, 'string', 'imda_tints', { label: 'tints（JSON，仅 model / composite 自带模型）', default: '' });
+	P(Group, 'string', 'imm_property', { label: '取值来源 / 条件（property / when）', default: '' });
+	P(Group, 'number', 'imm_index', { label: 'index（仅 range_dispatch：custom_model_data 下标）', default: 0 });
+	P(Group, 'string', 'imm_range_target', { label: 'compass target', default: '' });
+	P(Group, 'string', 'imm_range_source', { label: 'time source', default: '' });
+	P(Group, 'boolean', 'imm_range_wobble', { label: 'wobble', default: true });
+	P(Group, 'boolean', 'imm_range_normalize', { label: 'normalize', default: true });
+	P(Group, 'number', 'imm_range_period', { label: 'period', default: 1 });
+	P(Group, 'boolean', 'imm_range_remaining', { label: 'remaining', default: false });
+	P(Group, 'string', 'imm_component', { label: 'component', default: '' });
+	P(Group, 'boolean', 'imm_align_center', { label: '引用模型导入时自动对齐到模型中点', default: false });
+	P(Group, 'boolean', 'imm_ignore_default', { label: 'ignore_default', default: false });
+	P(Group, 'string', 'imm_predicate', { label: 'predicate', default: '' });
+	P(Group, 'string', 'imm_value', { label: 'value', default: '' });
+	P(Group, 'string', 'imm_keybind', { label: 'keybind', default: '' });
+	P(Group, 'string', 'imm_condition', { label: '分支条件（on_true/on_false）', default: '' });
+	P(Group, 'string', 'imm_threshold_format', { label: '分支编号格式', description: 'i / i*2 / 10+i*5 / 0,1,3', default: '' });
+	P(Group, 'number', 'imm_threshold', { label: '分支编号 / 阈值（entries[].threshold）', default: 0 });
+	P(Group, 'number', 'imm_scale', { label: '数值缩放（scale）', default: 1 });
+	P(Group, 'string', 'imm_tint_type', { label: 'tints 来源类型', default: '', enum_values: ['', 'none', 'custom_model_data', 'constant', 'dye', 'potion', 'grass', 'team'] });
+	P(Group, 'number', 'imm_tint_index', { label: 'tints 来源 index（custom_model_data）', default: 0 });
+	P(Group, 'string', 'imm_tint_value', { label: 'tints 来源值（constant 的 ARGB / 其它 default）', default: '' });
+	P(Group, 'string', 'imm_tints', { label: 'tints（JSON，仅 model / composite 自带模型）', default: '' });
 }
 
 function cleanOwnMenu(menu) {
@@ -4014,7 +4005,7 @@ function cleanOwnMenu(menu) {
 		menu.structure = menu.structure.filter(item => {
 			if (!item) return true;
 			const id = String(item.id || '');
-			if (id.startsWith('imda_') || id.startsWith('imda_')) return false;
+			if (id.startsWith('imda_') || id.startsWith('imm_')) return false;
 			const name = String(item.name || '');
 			if (name.startsWith('==VCS') || name.startsWith('[ 模型装配 ]')) return false;
 			return true;
@@ -4027,7 +4018,7 @@ let menuAttached = false;
 let locatorMenuAttached = false;
 function attachGroupMenu() {
 	const addSeparator = (menu) => {
-		try { if (typeof MenuSeparator !== 'undefined') menu.addAction(new MenuSeparator('imda_menu_sep')); } catch (e) { /* ignore */ }
+		try { if (typeof MenuSeparator !== 'undefined') menu.addAction(new MenuSeparator('imm_menu_sep')); } catch (e) { /* ignore */ }
 	};
 	try {
 		if (!menuAttached && actions.props && typeof Group !== 'undefined' && Group.prototype && Group.prototype.menu && typeof Group.prototype.menu.addAction === 'function') {
@@ -4062,24 +4053,23 @@ Plugin.register('item_model_definition_assembly', {
 	tags: ['Minecraft: Java Edition'],
 	contributes: { formats: [FORMAT_ID] },
 	onload() {
-		try { migrateLegacyAll(); } catch (e) { /* ignore */ }
+		try { adoptImdaAll(); } catch (e) { /* ignore */ }
 		try { installAnimationPropertiesPatch(); } catch (e) { /* ignore */ }
-		try { bindF5ToOriginalExport(); setTimeout(() => { try { bindF5ToOriginalExport(); } catch (e) { /* ignore */ } }, 1500); } catch (e) { /* ignore */ }
 		try { attachAnimationTimelineMenu(); } catch (e) { /* ignore */ }
 		
-		try { if (typeof Blockbench !== 'undefined' && Blockbench.on) Blockbench.on('load_project', () => { try { migrateLegacyAll(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
+		try { if (typeof Blockbench !== 'undefined' && Blockbench.on) Blockbench.on('load_project', () => { try { adoptImdaAll(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
 		console.log('[装配] onload 开始，版本 ' + VERSION);
 		try {
 		try {
 			if (typeof Setting !== 'undefined') {
-				immBoxSetting = new Setting('imda_box_select_groups', {
+				immBoxSetting = new Setting('imm_box_select_groups', {
 					name: '框选/多选方块时自动改选所属分组',
 					description: '一次选中两个及以上方块时，自动取消方块、改为选中它们各自的父分组；单选一个方块不处理。',
 					category: 'edit',
 					type: 'checkbox',
 					value: false,
 				});
-				immBatchSetting = new Setting('imda_batch_groups_only', {
+				immBatchSetting = new Setting('imm_batch_groups_only', {
 					name: '批量选择分组时只保留分组（取消方块/定位点选择）',
 					description: '同时选中两个及以上分组时，自动取消被一起选中的方块/定位点，避免批量操作误改单个元素。',
 					category: 'edit',
@@ -4143,27 +4133,27 @@ Plugin.register('item_model_definition_assembly', {
 		format_object.codec = codec_object;
 
 		const condition = () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID);
-		actions.zip = new Action('imda_export_zip', { name: '导出装配资源包 (zip)', description: 'items + models + textures', icon: 'archive', category: 'file', condition, click: exportZip });
-		actions.exportMapping = new Action('imda_export_mapping', { name: '导出（原按钮，快捷键）', description: '触发 Blockbench 原本的 File → Export；默认快捷键 F5', icon: 'description', category: 'file', condition, click: triggerOriginalExport });
-		actions.merge = new Action('imda_merge_pack', { name: '合并到资源包…', description: '直接写入资源包并覆盖旧文件', icon: 'folder_open', category: 'file', condition, click: mergeToPack });
-		actions.import = new Action('imda_import_model', { name: '导入引用模型（当前分组）', description: '按 imda_model 从资源包工程导入 Java 模型为方块', icon: 'file_download', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const g = pickTargetGroup(); if (!g) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } if (!String(g.imda_model || '').trim()) { Blockbench.showMessageBox({ title: '没有引用模型', message: '该分组没有填写 imda_model（引用模型）。', icon: 'info' }); return; } importModelReference(g); } });
-		actions.call = new Action('imda_call_group', { name: '复调用选中的分组', description: '在分组枢轴处创建复调用标签（Locator），导出时替换为目标分组', icon: 'content_copy', category: 'tools', condition, click: callSelectedGroup });
-	actions.bakeTimeline = new Action('imda_bake_timeline', { name: '解析动画时间轴（写入帧标签，旧流程）', description: '按项目 FPS 采样当前动画，生成 range_dispatch(timeline) 分组与逐帧 Locator；导出时也会自动采样，一般不需要手动执行', icon: 'timeline', category: 'tools', condition: () => typeof Animation !== 'undefined' && Animation && (Animation.selected || (Array.isArray(Animation.all) && Animation.all.length)), click: () => bakeTimelineToCallTags() });
-	actions.removeTimeline = new Action('imda_remove_timeline', { name: '移除动画时间线复调用标签', description: '删除项目里所有 range_dispatch(timeline) 分组及其 Locator 帧标签', icon: 'delete', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner && Outliner.root.some(n => isGroup(n) && String(n.imda_type || '') === 'range_dispatch_timeline')), click: () => removeTimelineTags() });
-	actions.instantiateCalls = new Action('imda_instantiate_calls', { name: '实例化所有复调用标签', description: '把复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner), click: () => instantiateCallTags() });
+		actions.zip = new Action('imm_export_zip', { name: '导出装配资源包 (zip)', description: 'items + models + textures', icon: 'archive', category: 'file', condition, click: exportZip });
+		actions.merge = new Action('imm_merge_pack', { name: '合并到资源包…', description: '直接写入资源包并覆盖旧文件', icon: 'folder_open', category: 'file', condition, click: mergeToPack });
+		actions.import = new Action('imm_import_model', { name: '导入引用模型（当前分组）', description: '按 imm_model 从资源包工程导入 Java 模型为方块', icon: 'file_download', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const g = pickTargetGroup(); if (!g) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } if (!String(g.imm_model || '').trim()) { Blockbench.showMessageBox({ title: '没有引用模型', message: '该分组没有填写 imm_model（引用模型）。', icon: 'info' }); return; } importModelReference(g); } });
+		actions.call = new Action('imm_call_group', { name: '复调用选中的分组', description: '在分组枢轴处创建复调用标签（Locator），导出时替换为目标分组', icon: 'content_copy', category: 'tools', condition, click: callSelectedGroup });
+	actions.bakeTimeline = new Action('imm_bake_timeline', { name: '解析动画时间轴（写入帧标签，旧流程）', description: '按项目 FPS 采样当前动画，生成 range_dispatch(timeline) 分组与逐帧 Locator；导出时也会自动采样，一般不需要手动执行', icon: 'timeline', category: 'tools', condition: () => typeof Animation !== 'undefined' && Animation && (Animation.selected || (Array.isArray(Animation.all) && Animation.all.length)), click: () => bakeTimelineToCallTags() });
+	actions.removeTimeline = new Action('imm_remove_timeline', { name: '移除动画时间线复调用标签', description: '删除项目里所有 range_dispatch(timeline) 分组及其 Locator 帧标签', icon: 'delete', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner && Outliner.root.some(n => isGroup(n) && String(n.imm_type || '') === 'range_dispatch_timeline')), click: () => removeTimelineTags() });
+	actions.instantiateCalls = new Action('imm_instantiate_calls', { name: '实例化所有复调用标签', description: '把复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner), click: () => instantiateCallTags() });
 	actions.animationTimeline = new Action('imda_animation_timeline', { name: '时间轴属性…', description: '设置该动画导出时间轴使用的 range_dispatch property 与 index', icon: 'timeline', category: 'animation', condition: () => typeof Animation !== 'undefined' && !!Animation.selected, click: () => showAnimationTimelineDialog() });
+	actions.migratePrefix = new Action('imm_migrate_prefix', { name: '迁移属性前缀（imm_ → imda_）…', description: '把项目里所有 imm_* 属性迁移到 imda_*：可复制（保留旧键）或重命名（删除旧键）', icon: 'swap_horiz', category: 'tools', click: () => migratePrefixDialog() });
 	actions.sequence = new Action('imda_sequence', { name: '生成复调用序列…', description: '按大纲顺序生成递增/递减复调用序列，节点类型可选 range_dispatch / composite', icon: 'format_list_numbered', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID) && selectedGroups().length >= 2, click: () => openSequenceDialog() });
 	actions.convertCall = new Action('imda_convert_call', { name: '将分组转化为复调用标签', description: '在同位置创建 Locator 调用该分组，并让原分组停止直接导出', icon: 'content_copy', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID) && selectedGroups().length > 0, click: () => convertSelectedGroupsToCallTags() });
 	actions.normalize = new Action('imda_normalize', { name: '规范化结构…', description: '按当前导出规范整理项目结构（当前：composite 直属 cube → inline 子分组）', icon: 'account_tree', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID), click: () => openNormalizeDialog() });
-		actions.createModel = new Action('imda_create_model', { name: '从分组创建模型…', description: '把选中分组的方块烘焙成 models/item 模型，并改为引用（自动居中）', icon: 'file_upload', category: 'tools', condition, click: () => { const group = pickTargetGroup(); if (!group) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } createModelFromGroup(group); } });
-		actions.check = new Action('imda_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
-		actions.pack = new Action('imda_pick_pack', { name: '选择资源包工程路径…', description: '打开系统文件夹选择框，设为资源包工程目录', icon: 'folder_open', category: 'file', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: pickPackPath });
-		actions.sim = new Action('imda_simulate', { name: '模拟输入…', description: '按 custom_model_data / selected 预览分支命中', icon: 'play_circle', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const panel = buildSimPanel(false); if (panel) { panel.show(); return; } openSimulator(); } });
-		actions.pivot = new Action('imda_fix_pivot', { name: '枢轴归位（对齐几何中心）…', description: '把分组 origin 移到几何中心，补偿方块坐标，外观不变', icon: 'center_focus_strong', category: 'tools', condition, click: openPivotFix });
-		actions.props = new Action('imda_group_props', { name: '编辑分组映射属性…', description: '映射类型 / 引用模型 / property 等', icon: 'tune', category: 'tools', condition, click: editGroupProps });
-		actions.boxToggle = new Action('imda_box_toggle', { name: '开关：框选方块时改选所属分组', description: '切换“一次选中多个方块时自动改为选中其父分组”', icon: 'select_all', category: 'tools', click: () => { if (!immBoxSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !boxGroupsEnabled(); setBoxSelectGroups(next); try { if (typeof immBoxSetting.save === 'function') immBoxSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('框选方块改选所属分组：' + (next ? '开' : '关') + (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID ? '（装配格式内强制开启）' : ''), 2600); } });
-		actions.batchToggle = new Action('imda_batch_toggle', { name: '开关：批量选组时取消元素选择', description: '切换“同时选中多个分组时自动取消方块/定位点选择”', icon: 'select_all', category: 'tools', click: () => { if (!immBatchSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !batchGroupsOnlyEnabled(); setBatchGroupsOnly(next); try { if (typeof immBatchSetting.save === 'function') immBatchSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('批量选择时取消单个元素：' + (next ? '开' : '关'), 2200); } });
-		actions.editCall = new Action('imda_edit_call', { name: '编辑复调用标签…', description: '修改选中的复调用 Locator 指向的分组或模型 id', icon: 'edit', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && Locator.selected && Locator.selected.length > 0), click: () => { const locator = (Locator.selected && Locator.selected[0]) || null; if (!locator) { Blockbench.showMessageBox({ title: '请先选中复调用标签', message: '在 outliner 里选中一个 Locator（复调用标签）。', icon: 'info' }); return; } editCallTag(locator); } });
+		actions.createModel = new Action('imm_create_model', { name: '从分组创建模型…', description: '把选中分组的方块烘焙成 models/item 模型，并改为引用（自动居中）', icon: 'file_upload', category: 'tools', condition, click: () => { const group = pickTargetGroup(); if (!group) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } createModelFromGroup(group); } });
+		actions.check = new Action('imm_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
+		actions.pack = new Action('imm_pick_pack', { name: '选择资源包工程路径…', description: '打开系统文件夹选择框，设为资源包工程目录', icon: 'folder_open', category: 'file', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: pickPackPath });
+		actions.sim = new Action('imm_simulate', { name: '模拟输入…', description: '按 custom_model_data / selected 预览分支命中', icon: 'play_circle', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const panel = buildSimPanel(false); if (panel) { panel.show(); return; } openSimulator(); } });
+		actions.pivot = new Action('imm_fix_pivot', { name: '枢轴归位（对齐几何中心）…', description: '把分组 origin 移到几何中心，补偿方块坐标，外观不变', icon: 'center_focus_strong', category: 'tools', condition, click: openPivotFix });
+		actions.props = new Action('imm_group_props', { name: '编辑分组映射属性…', description: '映射类型 / 引用模型 / property 等', icon: 'tune', category: 'tools', condition, click: editGroupProps });
+		actions.boxToggle = new Action('imm_box_toggle', { name: '开关：框选方块时改选所属分组', description: '切换“一次选中多个方块时自动改为选中其父分组”', icon: 'select_all', category: 'tools', click: () => { if (!immBoxSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !boxGroupsEnabled(); setBoxSelectGroups(next); try { if (typeof immBoxSetting.save === 'function') immBoxSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('框选方块改选所属分组：' + (next ? '开' : '关') + (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID ? '（装配格式内强制开启）' : ''), 2600); } });
+		actions.batchToggle = new Action('imm_batch_toggle', { name: '开关：批量选组时取消元素选择', description: '切换“同时选中多个分组时自动取消方块/定位点选择”', icon: 'select_all', category: 'tools', click: () => { if (!immBatchSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !batchGroupsOnlyEnabled(); setBatchGroupsOnly(next); try { if (typeof immBatchSetting.save === 'function') immBatchSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('批量选择时取消单个元素：' + (next ? '开' : '关'), 2200); } });
+		actions.editCall = new Action('imm_edit_call', { name: '编辑复调用标签…', description: '修改选中的复调用 Locator 指向的分组或模型 id', icon: 'edit', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && Locator.selected && Locator.selected.length > 0), click: () => { const locator = (Locator.selected && Locator.selected[0]) || null; if (!locator) { Blockbench.showMessageBox({ title: '请先选中复调用标签', message: '在 outliner 里选中一个 Locator（复调用标签）。', icon: 'info' }); return; } editCallTag(locator); } });
 
 		addMenu(actions.zip, 'file.export');
 		addMenu(actions.merge, 'file.export');
@@ -4189,6 +4179,7 @@ Plugin.register('item_model_definition_assembly', {
 		toolSep('imda_group_debug', '调试');
 		tool(actions.check);
 		tool(actions.normalize);
+		tool(actions.migratePrefix);
 		toolSep('imda_group_timeline', '时间轴');
 		tool(actions.animationTimeline);
 		tool(actions.bakeTimeline);
@@ -4215,7 +4206,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, migrateLegacyAll, migrateLegacyNode, callModelPrefill, orderedSelectedGroups, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, copyImmToImda, migratePropPrefixes, formatMapping, adoptImdaProps, callModelPrefill, orderedSelectedGroups, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

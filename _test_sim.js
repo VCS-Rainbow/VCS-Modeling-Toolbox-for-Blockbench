@@ -35,7 +35,7 @@ global.Cube = class { constructor(o) { Object.assign(this, o); } addTo(parent) {
 global.Group = class { constructor(o) { Object.assign(this, o); this.children = []; } addTo(parent) { if (this.parent && Array.isArray(this.parent.children)) { const old = this.parent.children.indexOf(this); if (old >= 0) this.parent.children.splice(old, 1); } if (parent) { this.parent = parent; if (Array.isArray(parent.children) && parent.children.indexOf(this) < 0) parent.children.push(this); } else if (Array.isArray(global.Outliner.root) && global.Outliner.root.indexOf(this) < 0) global.Outliner.root.push(this); return this; } init() { return this; } }; global.Group.all = [];
 global.Locator = class { constructor(o) { Object.assign(this, o); this.uuid = (o && o.uuid) || ('loc-' + Math.random()); } addTo() { return this; } init() { return this; } };
 global.Outliner = { root: [], selected: [] };
-global.Project = { name: 'test', imda_pack_version: '26.2' };
+global.Project = { name: 'test', imm_pack_version: '26.2' };
 global.Properties = [];
 global.Property = class { constructor(target, type, name, options) { global.Properties.push({ target, type, name, options }); } };
 global.Format = { id: 'item_model_definition_assembly' };
@@ -71,20 +71,20 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.37', api.VERSION, '0.68.37');
+eq('版本是 0.68.27', api.VERSION, '0.68.27');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
 console.log('\n[项目设置]');
-const packProp = (global.Properties || []).find(p => p && p.name === 'imda_pack_version');
-eq('注册了 imda_pack_version', !!packProp, true);
+const packProp = (global.Properties || []).find(p => p && p.name === 'imm_pack_version');
+eq('注册了 imm_pack_version', !!packProp, true);
 eq('带 options（Blockbench 据此渲染下拉）', typeof (packProp && packProp.options && packProp.options.options), 'function');
 const versionOptions = (packProp && packProp.options && packProp.options.options) ? packProp.options.options() : {};
 eq('下拉含 26.2', Object.prototype.hasOwnProperty.call(versionOptions, '26.2'), true);
 eq('下拉含 26.3', Object.prototype.hasOwnProperty.call(versionOptions, '26.3'), true);
 eq('26.2 选项带格式号 88', /88/.test(String(versionOptions['26.2'])), true);
 eq('1.21.5 选项标注 pack_format', /pack_format/.test(String(versionOptions['1.21.5'])), true);
-global.Project.imda_pack_version = '';
+global.Project.imm_pack_version = '';
 global.Project.imda_pack_version = '';
 api.ensurePackVersion();
 eq('老项目空值自动补 26.2（下拉不会落到第一项）', global.Project.imda_pack_version, '26.2');
@@ -193,8 +193,8 @@ eq('行内没有 <details> 包裹输入', insideDetails(slot0.els.val), false);
 
 /* ---------- 值改变会驱动求值（0.38 的回归） ---------- */
 console.log('\n[值驱动求值]');
-const gModel = (name, model) => new global.Group({ name, imda_type: 'model', imda_model: model });
-const rangeGroup = new global.Group({ name: 'range', imda_type: 'range_dispatch', imda_property: 'minecraft:custom_model_data', imda_index: 0 });
+const gModel = (name, model) => new global.Group({ name, imm_type: 'model', imm_model: model });
+const rangeGroup = new global.Group({ name: 'range', imm_type: 'range_dispatch', imm_property: 'minecraft:custom_model_data', imm_index: 0 });
 rangeGroup.children.push(gModel('low', 'ns:item/low'), gModel('high', 'ns:item/high'));
 global.Outliner.root.push(rangeGroup);
 eq('未勾选自动也能用手动值参与求值', (() => { slot0.els.val.value = '1'; slot0.els.val.fire('input'); return floatsRow.enabled === false; })(), true);
@@ -282,11 +282,11 @@ eq('关闭后停止周期重贴', simState.viewTimer, null);
 
 /* ---------- 分支前缀清理 ---------- */
 console.log('\n[分支前缀清理]');
-const strayParent = new global.Group({ name: 'container', imda_type: 'composite' });
-const strayChild = new global.Group({ name: '[0] stray', imda_type: 'model' });
+const strayParent = new global.Group({ name: 'container', imm_type: 'composite' });
+const strayChild = new global.Group({ name: '[0] stray', imm_type: 'model' });
 strayChild.parent = strayParent; strayParent.children.push(strayChild);
-const branchParent = new global.Group({ name: 'rd', imda_type: 'range_dispatch' });
-const branchChild = new global.Group({ name: '[2] keep', imda_type: 'model' });
+const branchParent = new global.Group({ name: 'rd', imm_type: 'range_dispatch' });
+const branchChild = new global.Group({ name: '[2] keep', imm_type: 'model' });
 branchChild.parent = branchParent; branchParent.children.push(branchChild);
 global.Outliner.root.push(strayParent, branchParent);
 api.stripStrayBranchPrefixes();
@@ -330,7 +330,7 @@ console.log('\n[不活跃分支视图]');
 const makeMaterial = () => ({ transparent: false, opacity: 1, depthWrite: true, clone() { return { transparent: false, opacity: 1, depthWrite: true, dispose() { this.disposed = true; } }; }, dispose() { } });
 const viewCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
 viewCube.mesh = { material: makeMaterial() };
-const viewGroup = new global.Group({ name: 'viewGroup', imda_type: 'composite' });
+const viewGroup = new global.Group({ name: 'viewGroup', imm_type: 'composite' });
 viewGroup.children.push(viewCube);
 viewGroup.mesh = { visible: true };
 api.simApplyGroupVisual([{ group: viewGroup, active: false }], 'ghost');
@@ -349,7 +349,7 @@ eq('关闭联动后全部恢复', viewCube.mesh.material.transparent === false &
 
 /* ---------- 映射节点 → 分组覆盖 ---------- */
 console.log('\n[映射节点→分组覆盖]');
-const fakeComposite = new global.Group({ name: 'fakeComposite', imda_type: 'composite' });
+const fakeComposite = new global.Group({ name: 'fakeComposite', imm_type: 'composite' });
 const fakeCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0], export: true });
 fakeComposite.children.push(fakeCube);
 fakeComposite.mesh = { visible: true };
@@ -365,7 +365,7 @@ global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRoot);
 
 /* ---------- 内联模型 / 引用模型 ---------- */
 console.log('\n[内联模型]');
-const inlineGroup = new global.Group({ name: 'inlineGroup', imda_type: 'inline' });
+const inlineGroup = new global.Group({ name: 'inlineGroup', imm_type: 'inline' });
 inlineGroup.children.push(new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0], export: true }));
 inlineGroup.mesh = { visible: true };
 const savedRoot2 = global.Outliner.root.splice(0, global.Outliner.root.length, inlineGroup);
@@ -377,7 +377,7 @@ eq('inline 分组节点能反查', inlineExporter.groupNodes.get(inlineMapping.m
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRoot2);
 
 const buildModelNode = (shiftText) => {
-	const group = new global.Group({ name: 'refGroup', imda_type: 'model', imda_model: 'ns:item/ref', imda_model_shift: shiftText, origin: [8, 8, 8], rotation: [0, 0, 0] });
+	const group = new global.Group({ name: 'refGroup', imm_type: 'model', imm_model: 'ns:item/ref', imm_model_shift: shiftText, origin: [8, 8, 8], rotation: [0, 0, 0] });
 	group.mesh = { visible: true };
 	const saved = global.Outliner.root.splice(0, global.Outliner.root.length, group);
 	const exporter = api.createExporter();
@@ -391,16 +391,16 @@ eq('引用模型会应用居中补偿', JSON.stringify(plainTransform) !== JSON.
 
 /* ---------- 复调用标签 ---------- */
 console.log('\n[复调用标签]');
-const targetGroup = new global.Group({ name: 'targetGroup', imda_type: 'composite', uuid: 'target-uuid', origin: [8, 8, 8], rotation: [0, 0, 0] });
+const targetGroup = new global.Group({ name: 'targetGroup', imm_type: 'composite', uuid: 'target-uuid', origin: [8, 8, 8], rotation: [0, 0, 0] });
 targetGroup.children.push(new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0], export: true }));
 targetGroup.mesh = { visible: true };
-const callerGroup = new global.Group({ name: 'callerGroup', imda_type: 'composite', uuid: 'caller-uuid' });
+const callerGroup = new global.Group({ name: 'callerGroup', imm_type: 'composite', uuid: 'caller-uuid' });
 const callLocator = new global.Locator({ name: '调用 targetGroup', position: [10, 8, 8], rotation: [0, 0, 0] });
-callLocator.imda_call_target = 'target-uuid';
+callLocator.imm_call_target = 'target-uuid';
 callerGroup.children.push(callLocator);
-const callLocator2 = new global.Locator({ name: '调用 targetGroup 2', position: [12, 8, 8], rotation: [0, 0, 0] }); callLocator2.imda_call_target = 'target-uuid'; callerGroup.children.push(callLocator2);
-const callLocator3 = new global.Locator({ name: '调用 targetGroup 3', position: [14, 8, 8], rotation: [0, 0, 0] }); callLocator3.imda_call_target = 'target-uuid'; callerGroup.children.push(callLocator3);
-const callLocator4 = new global.Locator({ name: '调用 targetGroup 4', position: [16, 8, 8], rotation: [0, 0, 0] }); callLocator4.imda_call_target = 'target-uuid'; callerGroup.children.push(callLocator4);
+const callLocator2 = new global.Locator({ name: '调用 targetGroup 2', position: [12, 8, 8], rotation: [0, 0, 0] }); callLocator2.imm_call_target = 'target-uuid'; callerGroup.children.push(callLocator2);
+const callLocator3 = new global.Locator({ name: '调用 targetGroup 3', position: [14, 8, 8], rotation: [0, 0, 0] }); callLocator3.imm_call_target = 'target-uuid'; callerGroup.children.push(callLocator3);
+const callLocator4 = new global.Locator({ name: '调用 targetGroup 4', position: [16, 8, 8], rotation: [0, 0, 0] }); callLocator4.imm_call_target = 'target-uuid'; callerGroup.children.push(callLocator4);
 callerGroup.mesh = { visible: true };
 global.Group.all.push(targetGroup);
 const savedRoot3 = global.Outliner.root.splice(0, global.Outliner.root.length, targetGroup, callerGroup);
@@ -410,7 +410,7 @@ const callJSON = JSON.stringify(callExporter.buildMapping());
 eq('四个复调用标签都被输出', (callJSON.match(/ns:item\/callfake/g) || []).length, 5);
 eq('复调用标签位置生效', /0\.125/.test(callJSON), true);
 eq('复调用使用标签名', /"node_name":"调用 targetGroup"/.test(callJSON), true);
-eq('导出结果不含占位字段', callJSON.indexOf('__imda_call_group'), -1);
+eq('导出结果不含占位字段', callJSON.indexOf('__imm_call_group'), -1);
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRoot3);
 global.Group.all.splice(global.Group.all.indexOf(targetGroup), 1);
 
@@ -420,11 +420,11 @@ const tintCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1
 tintCube.faces = { north: { tint: 0, uv: [0, 0, 2, 2] }, east: { tint: -1 }, south: { tint: -1 } };
 const tintOriginal = { map: { name: 'tex' }, side: 2 };
 tintCube.mesh = { material: tintOriginal };
-const tintGroup = new global.Group({ name: 'tintGroup', imda_type: 'composite', imda_tint_type: 'custom_model_data', imda_tint_index: '0' });
+const tintGroup = new global.Group({ name: 'tintGroup', imm_type: 'composite', imm_tint_type: 'custom_model_data', imm_tint_index: '0' });
 tintGroup.children.push(tintCube);
 tintCube.parent = tintGroup;
 tintGroup.mesh = { visible: true };
-const noTintGroup = new global.Group({ name: 'noTintGroup', imda_type: 'composite', imda_tint_type: '', imda_tint_index: '0' });
+const noTintGroup = new global.Group({ name: 'noTintGroup', imm_type: 'composite', imm_tint_type: '', imm_tint_index: '0' });
 const noTintCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0], export: true });
 noTintCube.faces = { north: { tint: 0 } };
 const noTintOriginal = { map: { name: 'nt' } };
@@ -451,19 +451,19 @@ const colorsUsage = api.collectInputUsage();
 eq('colors 关联分组包含 tintindex 0 所在分组', !!(colorsUsage['colors#0'] || []).find(entry => entry.parent === 'tintGroup'), true);
 eq('不生成 tints 的组不关联 colors', !(colorsUsage['colors#0'] || []).find(entry => entry.parent === 'noTintGroup'), true);
 const tintExporter = api.createExporter();
-eq('不生成 tints 时 buildTints 为 null', tintExporter.buildTints({ imda_tint_type: '', imda_tint_index: 0 }), null);
-eq('none 时 buildTints 为 null', tintExporter.buildTints({ imda_tint_type: 'none', imda_tint_index: 0 }), null);
-eq('custom_model_data 时 buildTints 有值', Array.isArray(tintExporter.buildTints({ imda_tint_type: 'custom_model_data', imda_tint_index: 2 })), true);
+eq('不生成 tints 时 buildTints 为 null', tintExporter.buildTints({ imm_tint_type: '', imm_tint_index: 0 }), null);
+eq('none 时 buildTints 为 null', tintExporter.buildTints({ imm_tint_type: 'none', imm_tint_index: 0 }), null);
+eq('custom_model_data 时 buildTints 有值', Array.isArray(tintExporter.buildTints({ imm_tint_type: 'custom_model_data', imm_tint_index: 2 })), true);
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRoot4);
 
 /* ---------- 批量分组属性 ---------- */
 console.log('\n[批量分组属性]');
 const batchA = new global.Group({ name: 'batchA' });
 const batchB = new global.Group({ name: 'batchB' });
-const batchResult = { imda_type: 'inline', imda_tint_type: '', imda_tint_index: 0 };
+const batchResult = { imm_type: 'inline', imm_tint_type: '', imm_tint_index: 0 };
 api.assignGroupMapProps(batchA, batchResult);
 api.assignGroupMapProps(batchB, batchResult);
-eq('同一结果应用到多个分组', batchA.imda_type === 'inline' && batchB.imda_type === 'inline' && batchA.imda_tint_type === 'none' && batchB.imda_tint_type === 'none', true);
+eq('同一结果应用到多个分组', batchA.imm_type === 'inline' && batchB.imm_type === 'inline' && batchA.imm_tint_type === 'none' && batchB.imm_tint_type === 'none', true);
 
 /* ---------- 导入 tintindex 判定 ---------- */
 console.log('\n[导入 tintindex 判定]');
@@ -472,7 +472,7 @@ eq('模型没有 tintindex', api.modelElementsHaveTintIndex([{ faces: { north: {
 
 /* ---------- 不活跃分支锁定 ---------- */
 console.log('\n[不活跃分支锁定]');
-const lockGroup = new global.Group({ name: 'lockGroup', imda_type: 'model', imda_model: 'ns:item/lock' });
+const lockGroup = new global.Group({ name: 'lockGroup', imm_type: 'model', imm_model: 'ns:item/lock' });
 lockGroup.mesh = { visible: true };
 const lockCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0], export: true });
 lockCube.parent = lockGroup; lockGroup.children.push(lockCube); lockCube.mesh = { material: { map: { name: 'lk' } } };
@@ -551,7 +551,7 @@ boxCube1.selected = true; boxCube2.selected = true;
 global.Outliner.selected.push(boxCube1, boxCube2);
 api.guardBoxSelection();
 eq('装配格式内强制开启（不靠设置）', global.Outliner.selected.indexOf(boxGroup) >= 0, true);
-const boxInlineGroup = new global.Group({ name: 'boxInlineGroup', imda_type: 'inline' });
+const boxInlineGroup = new global.Group({ name: 'boxInlineGroup', imm_type: 'inline' });
 const boxInlineCube1 = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
 const boxInlineCube2 = new global.Cube({ from: [3, 0, 0], to: [5, 2, 2], origin: [4, 1, 1], rotation: [0, 0, 0] });
 boxInlineCube1.parent = boxInlineGroup; boxInlineCube2.parent = boxInlineGroup;
@@ -561,7 +561,7 @@ global.Outliner.selected.length = 0; boxInlineCube1.selected = true; boxInlineCu
 global.Outliner.selected.push(boxInlineCube1, boxInlineCube2);
 api.guardBoxSelection();
 eq('只选内建模型元素时保持原样', global.Outliner.selected.indexOf(boxInlineCube1) >= 0 && global.Outliner.selected.indexOf(boxInlineGroup) < 0, true);
-const refGroup = new global.Group({ name: 'refGroup', imda_type: 'model', imda_model: 'ns:item/ref' });
+const refGroup = new global.Group({ name: 'refGroup', imm_type: 'model', imm_model: 'ns:item/ref' });
 global.Outliner.root.push(refGroup);
 const refCube1 = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
 const refCube2 = new global.Cube({ from: [3, 0, 0], to: [5, 2, 2], origin: [4, 1, 1], rotation: [0, 0, 0] });
@@ -655,7 +655,7 @@ delete global.Project.imda_display_all_slots;
 const parsedNs = api.parseNamespaceSetting('sqsptst:weapon/shotgun');
 eq('命名空间解析', parsedNs.namespace, 'sqsptst');
 eq('子空间解析', parsedNs.subpath, 'weapon/shotgun');
-global.Project.imda_namespace = 'sqsptst:weapon/shotgun';
+global.Project.imm_namespace = 'sqsptst:weapon/shotgun';
 const subExporter = api.createExporter();
 subExporter.addModel([dispCube], 'subpath');
 eq('模型引用带子空间', subExporter.models[0] && subExporter.models.length > 0, true);
@@ -665,13 +665,13 @@ const subFiles = subExporter.buildFiles().files;
 eq('items 路径带子空间', subFiles.some(f => f.path === 'assets/sqsptst/items/weapon/shotgun/' + Project.model_identifier + '.json' || f.path.indexOf('assets/sqsptst/items/weapon/shotgun/') === 0), true);
 eq('models 路径带子空间', subFiles.some(f => f.path.indexOf('assets/sqsptst/models/item/weapon/shotgun/') === 0), true);
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedSubRoot);
-delete global.Project.imda_namespace;
+delete global.Project.imm_namespace;
 const sampleAnim = { time: 0.5, getBoneAnimator(group) { return group === dispCube.parent ? null : { keyframes: [{}], channels: { rotation: [{}], position: [{}] }, interpolate(ch) { return ch === 'rotation' ? [0, 10, 0] : (ch === 'position' ? [0, 1, 0] : [1, 1, 1]); } }; } };
 console.log('（时间轴采样在动画导出单测中覆盖）');
 
 /* ---------- 自动时间轴 ---------- */
 console.log('\n[自动时间轴]');
-const autoGroup = new global.Group({ name: 'autoGroup', imda_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
+const autoGroup = new global.Group({ name: 'autoGroup', imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
 const autoCube = new global.Cube({ from: [0, 0, 0], to: [4, 4, 4], origin: [2, 2, 2], rotation: [0, 0, 0] });
 autoCube.faces = { north: { texture: 'tex-disp', uv: [0, 0, 16, 16] } };
 autoCube.parent = autoGroup; autoGroup.children.push(autoCube);
@@ -693,9 +693,9 @@ global.Group.all = savedGroupAllAuto;
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRootAuto);
 /* ---------- 时间轴保留静态祖先变换 ---------- */
 console.log('\n[时间轴静态祖先]');
-const tlParent = new global.Group({ name: 'tlParent', imda_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 45] });
-const tlBone = new global.Group({ name: 'tlBone', imda_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
-const tlStatic = new global.Group({ name: 'tlStatic', imda_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
+const tlParent = new global.Group({ name: 'tlParent', imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 45] });
+const tlBone = new global.Group({ name: 'tlBone', imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
+const tlStatic = new global.Group({ name: 'tlStatic', imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
 const tlBoneCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
 tlBoneCube.faces = { north: { texture: 'tex-disp', uv: [0, 0, 16, 16] } }; tlBoneCube.parent = tlBone; tlBone.children.push(tlBoneCube);
 const tlStaticCube = new global.Cube({ from: [2, 0, 0], to: [4, 2, 2], origin: [3, 1, 1], rotation: [0, 0, 0] });
@@ -715,9 +715,9 @@ eq('静态兄弟仍在时间轴外', !!tlParentNode && tlParentNode.models.some(
 delete global.Animation; global.Group.all = savedTlAll; global.Outliner.root.splice(0, global.Outliner.root.length, ...savedTlRoot);
 /* ---------- 递减序列顺序 ---------- */
 console.log('\n[递减序列]');
-const seq1 = new global.Group({ name: 'a1', imda_type: 'composite' });
-const seq2 = new global.Group({ name: 'a2', imda_type: 'composite' });
-const seq3 = new global.Group({ name: 'a3', imda_type: 'composite' });
+const seq1 = new global.Group({ name: 'a1', imm_type: 'composite' });
+const seq2 = new global.Group({ name: 'a2', imm_type: 'composite' });
+const seq3 = new global.Group({ name: 'a3', imm_type: 'composite' });
 const savedSeqRoot = global.Outliner.root.splice(0, global.Outliner.root.length, seq1, seq2, seq3);
 seq1.selected = true; seq3.selected = true; seq2.selected = true; global.Outliner.selected = [seq3, seq1, seq2];
 eq('按大纲顺序排列 a1..aN', api.orderedSelectedGroups().map(g => g.name), ['a1', 'a2', 'a3']);
@@ -729,22 +729,22 @@ global.Outliner.selected = [];
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedSeqRoot);
 /* ---------- 规范化结构 ---------- */
 console.log('\n[规范化结构]');
-const normGroup = new global.Group({ name: 'normGroup', imda_type: 'composite' });
+const normGroup = new global.Group({ name: 'normGroup', imm_type: 'composite' });
 const normCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
 normCube.parent = normGroup; normGroup.children.push(normCube);
 const savedNormRoot = global.Outliner.root.splice(0, global.Outliner.root.length, normGroup);
 const savedNormAll = global.Group.all; global.Group.all = [normGroup];
 const normCreated = api.normalizeCompositeCubes();
-const normInline = normGroup.children.find(n => n.imda_type === 'inline');
+const normInline = normGroup.children.find(n => n.imm_type === 'inline');
 eq('生成 inline 子分组', normCreated >= 1 && !!normInline, true);
 eq('cube 移入 inline', normCube.parent === normInline, true);
 eq('composite 不再有直属 cube', normGroup.children.some(n => n === normCube), false);
 global.Group.all = savedNormAll; global.Outliner.root.splice(0, global.Outliner.root.length, ...savedNormRoot);
 /* ---------- range_dispatch 下的复调用 ---------- */
 console.log('\n[range 复调用]');
-const rangeCallGroup = new global.Group({ name: 'rangeCall', imda_type: 'range_dispatch', imda_property: 'minecraft:custom_model_data', imda_index: 0 });
+const rangeCallGroup = new global.Group({ name: 'rangeCall', imm_type: 'range_dispatch', imm_property: 'minecraft:custom_model_data', imm_index: 0 });
 const rangeCallLocator = new global.Locator({ name: '调用 target', position: [0, 0, 0], rotation: [0, 0, 0] });
-rangeCallLocator.imda_call_target = 'target-uuid';
+rangeCallLocator.imm_call_target = 'target-uuid';
 rangeCallGroup.children.push(rangeCallLocator);
 if (global.Group.all.indexOf(targetGroup) < 0) global.Group.all.push(targetGroup);
 const savedRangeRoot = global.Outliner.root.splice(0, global.Outliner.root.length, rangeCallGroup);
@@ -752,25 +752,35 @@ const rangeCallExporter = api.createExporter();
 rangeCallExporter.addModel = () => ({ reference: 'ns:item/rangecallfake', shift: [0, 0, 0] });
 const rangeCallJSON = JSON.stringify(rangeCallExporter.buildMapping());
 eq('range_dispatch 下的复调用被输出', rangeCallJSON.indexOf('rangecallfake') >= 0, true);
-eq('range 复调用不含占位字段', rangeCallJSON.indexOf('__imda_call_group'), -1);
+eq('range 复调用不含占位字段', rangeCallJSON.indexOf('__imm_call_group'), -1);
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRangeRoot);
-/* ---------- 旧前缀迁移 ---------- */
-console.log('\n[旧前缀迁移]');
-const OLD = 'i' + 'mm_';
-const legacyNode = {};
-legacyNode[OLD + 'call_target'] = 'target-uuid';
-legacyNode[OLD + 'type'] = 'composite';
-legacyNode[OLD + 'index'] = 3;
-api.migrateLegacyNode(legacyNode);
-eq('旧前缀迁移 call_target', legacyNode.imda_call_target, 'target-uuid');
-eq('旧前缀迁移 type', legacyNode.imda_type, 'composite');
-eq('旧前缀迁移 index', legacyNode.imda_index, 3);
-eq('旧键被删除', Object.keys(legacyNode).some(k => k.startsWith(OLD)), false);
+/* ---------- 属性同步不覆盖 ---------- */
+console.log('\n[属性同步]');
+const adoptNode = { imm_call_target: 'target-uuid', imda_call_target: '' };
+api.adoptImdaProps(adoptNode);
+eq('adopt 不覆盖已有 imm 值', adoptNode.imm_call_target, 'target-uuid');
+eq('adopt 回填缺失 imda', adoptNode.imda_call_target, 'target-uuid');
 /* ---------- 复调用模型 id 预填 ---------- */
 console.log('\n[复调用预填]');
 eq('失效 UUID 不预填模型 id', api.callModelPrefill('6d52650e-a35b-ca94-5ce5-de00d6a3cd51', ''), '');
 eq('匹配分组时不预填模型 id', api.callModelPrefill('some-uuid', 'some-uuid'), '');
 eq('模型 id 正常预填', api.callModelPrefill('ns:item/foo', ''), 'ns:item/foo');
+/* ---------- 属性前缀迁移 ---------- */
+console.log('\n[属性前缀迁移]');
+const prefixGroup = new global.Group({ name: 'prefixGroup', imm_type: 'composite', imm_index: 3 });
+const prefixCopied = api.copyImmToImda(prefixGroup, false);
+eq('迁移复制 imm_type', prefixGroup.imda_type, 'composite');
+eq('迁移复制 imm_index', prefixGroup.imda_index, 3);
+eq('保留旧键', prefixGroup.imm_type, 'composite');
+const prefixGroup2 = new global.Group({ name: 'prefixGroup2', imm_type: 'model', imm_model: 'ns:item/a' });
+api.copyImmToImda(prefixGroup2, true);
+eq('重命名写入 imda_type', prefixGroup2.imda_type, 'model');
+eq('重命名删除旧键', Object.prototype.hasOwnProperty.call(prefixGroup2, 'imm_type'), false);
+global.Project.imm_pack_path = 'C:/pack';
+api.migratePropPrefixes(true);
+eq('迁移写入 Project imda_pack_path', global.Project.imda_pack_path, 'C:/pack');
+eq('迁移删除 Project imm_pack_path', Object.prototype.hasOwnProperty.call(global.Project, 'imm_pack_path'), false);
+delete global.Project.imm_pack_path;
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));

@@ -9,8 +9,8 @@
 - 插件：**VCS' Modeling Toolbox（VMT）**
 - 模块：**Item Model Definition Assembly（IMDA）**，中文“物品模型定义装配”
 - 格式 id：`item_model_definition_assembly`
-- **`imda_*` 是主键**，项目设置页读新键；`imda_*` 是隐藏兼容别名
-- `Tools → 迁移属性前缀（imda_ → imda_）` 可复制或重命名旧数据
+- **`imda_*` 是主键**，项目设置页读新键；`imm_*` 是隐藏兼容别名
+- `Tools → 迁移属性前缀（imm_ → imda_）` 可复制或重命名旧数据
 
 ## 安装 / 使用
 
@@ -48,7 +48,7 @@
 - **1.21.9 起**（25w31a，资源包格式 65.0+）用 `min_format` / `max_format`，`pack_format` 变为可选；
 - **1.21.8 及更早**用 `pack_format`。
 
-`项目设置 →「目标 Minecraft 版本（pack.mcmeta 格式）」`是下拉框（Blockbench 会把带 `options` 的项目属性渲染成 select），保存在项目属性 `imda_pack_version`。内置表（数值来自 minecraft.wiki，2026-10-24 校对）：
+`项目设置 →「目标 Minecraft 版本（pack.mcmeta 格式）」`是下拉框（Blockbench 会把带 `options` 的项目属性渲染成 select），保存在项目属性 `imm_pack_version`。内置表（数值来自 minecraft.wiki，2026-10-24 校对）：
 
 | 版本 | 资源包格式 | 写法 |
 | --- | --- | --- |
@@ -71,27 +71,27 @@
 
 | 属性 | 说明 |
 | --- | --- |
-| `映射类型`（`imda_type`） | `composite`（默认）/ `model` / `range_dispatch` / `condition` / `empty` |
-| `引用模型`（`imda_model`） | 填 Java 版模型 id（如 `sqsp:item/inker/jet_rifle/sac.full`）时，本层输出为该模型的引用；**留空则用本层自己的方块生成模型文件** |
-| `property`（`imda_property`） | `range_dispatch` / `condition` 的属性（如 `minecraft:custom_model_data`、`minecraft:selected`） |
-| `index`（`imda_index`） | `custom_model_data` 的下标 |
-| `threshold`（`imda_threshold`） | 当**父层**是 `range_dispatch` 时，本层作为 entries 的阈值 |
-| `scale`（`imda_scale`） | `range_dispatch` 的 scale |
-| `tints`（`imda_tints`） | 仅 `model` 类型有效，JSON，如 `[{"type":"custom_model_data","index":0,"default":0}]` |
+| `映射类型`（`imm_type`） | `composite`（默认）/ `model` / `range_dispatch` / `condition` / `empty` |
+| `引用模型`（`imm_model`） | 填 Java 版模型 id（如 `sqsp:item/inker/jet_rifle/sac.full`）时，本层输出为该模型的引用；**留空则用本层自己的方块生成模型文件** |
+| `property`（`imm_property`） | `range_dispatch` / `condition` 的属性（如 `minecraft:custom_model_data`、`minecraft:selected`） |
+| `index`（`imm_index`） | `custom_model_data` 的下标 |
+| `threshold`（`imm_threshold`） | 当**父层**是 `range_dispatch` 时，本层作为 entries 的阈值 |
+| `scale`（`imm_scale`） | `range_dispatch` 的 scale |
+| `tints`（`imm_tints`） | 仅 `model` 类型有效，JSON，如 `[{"type":"custom_model_data","index":0,"default":0}]` |
 
 ## 项目属性
 
 | 属性 | 默认 | 说明 |
 | --- | --- | --- |
-| `命名空间`（`imda_namespace`） | `custom` | 决定 `assets/<ns>/...`；支持子空间，如 `sqsptst:weapon/shotgun` → `assets/sqsptst/items/weapon/shotgun/...` |
-| `变换原点用物品中心 (8,8,8)`（`imda_center_pivot`） | 开 | Minecraft 的物品模型变换以物品中心为原点，建议保持开启 |
-| `模型附带 display`（`imda_block_display`） | 开 | 读取项目“显示调整”页的槽位参数写入模型；没有数据时回退内置预设 |
-| `时间轴 FPS`（`imda_anim_fps`） | 20 | 自动采样动画的帧率 |
-| `时间轴 index`（`imda_anim_index`） | 0 | `range_dispatch` 的 custom_model_data 下标 |
-| `自动采样动画时间轴`（`imda_anim_auto`） | 开 | 导出时自动把当前动画采样成 `range_dispatch(timeline)`，无需手动打帧标签 |
+| `命名空间`（`imm_namespace`） | `custom` | 决定 `assets/<ns>/...`；支持子空间，如 `sqsptst:weapon/shotgun` → `assets/sqsptst/items/weapon/shotgun/...` |
+| `变换原点用物品中心 (8,8,8)`（`imm_center_pivot`） | 开 | Minecraft 的物品模型变换以物品中心为原点，建议保持开启 |
+| `模型附带 display`（`imm_block_display`） | 开 | 读取项目“显示调整”页的槽位参数写入模型；没有数据时回退内置预设 |
+| `时间轴 FPS`（`imm_anim_fps`） | 20 | 自动采样动画的帧率 |
+| `时间轴 index`（`imm_anim_index`） | 0 | `range_dispatch` 的 custom_model_data 下标 |
+| `自动采样动画时间轴`（`imm_anim_auto`） | 开 | 导出时自动把当前动画采样成 `range_dispatch(timeline)`，无需手动打帧标签 |
 | `输出 node_name`（`imda_export_node_names`） | 开 | 每个映射文件/装配节点写入 `node_name`，记录来源分组名 |
-| `资源包工程路径`（`imda_pack_path`） | 空 | 合并目标目录（`pack.mcmeta` 所在目录），由「选择资源包工程路径…」写入 |
-| `目标 Minecraft 版本`（`imda_pack_version`） | `26.2` | 决定 `pack.mcmeta` 的格式字段，见上文；在项目设置里直接下拉选择 |
+| `资源包工程路径`（`imm_pack_path`） | 空 | 合并目标目录（`pack.mcmeta` 所在目录），由「选择资源包工程路径…」写入 |
+| `目标 Minecraft 版本`（`imm_pack_version`） | `26.2` | 决定 `pack.mcmeta` 的格式字段，见上文；在项目设置里直接下拉选择 |
 
 ## 模拟输入面板（`视图 → 面板 → 模拟输入`）
 
@@ -185,11 +185,11 @@ t = o − R·o                      // 若枢轴用物品中心：o = (O − 8) 
 Blockbench 5.x 的实现方式有两条，本插件都接上了：
 
 1. **格式级 `parent_model_id`**：`ModelFormat` 的选项 `parent_model_id: true`，会在**项目设置**里生成一个 parent model id 字段（`Project.parent_model_id`）；
-2. **分组级 `引用模型`（`imda_model`）**：直接写 Java 版模型 id，导出成 `{"type":"minecraft:model","model":"<id>"}` —— 这就是“把 Java 版方块/物品模型当作子项”。
+2. **分组级 `引用模型`（`imm_model`）**：直接写 Java 版模型 id，导出成 `{"type":"minecraft:model","model":"<id>"}` —— 这就是“把 Java 版方块/物品模型当作子项”。
 
 > 导入时按模型文件的 `groups` 创建分组，并标记为 `inline`（内联模型）；组的 origin/rotation 会一并写入。
 
-编辑器里想看到被引用模型的几何体：用 `File → Import` 导入该 Java Block/Item 模型并选择“导入到当前项目”，再把它放进对应分组（导入的方块可删可留，导出时用 `imda_model` 指向原模型即可）。
+编辑器里想看到被引用模型的几何体：用 `File → Import` 导入该 Java Block/Item 模型并选择“导入到当前项目”，再把它放进对应分组（导入的方块可删可留，导出时用 `imm_model` 指向原模型即可）。
 
 ## 已知限制
 
@@ -205,12 +205,12 @@ Blockbench 5.x 的实现方式有两条，本插件都接上了：
 
 | 属性 | composite | model | range_dispatch | condition | empty |
 | --- | --- | --- | --- | --- | --- |
-| `imda_model` 引用模型 | ✓ | ✓ | ✓（作为 fallback） | ✓ | — |
-| `imda_tints` 染色来源 | ✓（本层自带模型时） | ✓ | — | — | — |
-| `imda_property` | — | — | ✓ | ✓ | — |
-| `imda_index` | — | — | ✓ | — | — |
-| `imda_scale` | — | — | ✓ | — | — |
-| `imda_threshold` | — | — | ✓（用于父层为 range_dispatch 时） | — | — |
+| `imm_model` 引用模型 | ✓ | ✓ | ✓（作为 fallback） | ✓ | — |
+| `imm_tints` 染色来源 | ✓（本层自带模型时） | ✓ | — | — | — |
+| `imm_property` | — | — | ✓ | ✓ | — |
+| `imm_index` | — | — | ✓ | — | — |
+| `imm_scale` | — | — | ✓ | — | — |
+| `imm_threshold` | — | — | ✓（用于父层为 range_dispatch 时） | — | — |
 
 说明：
 
@@ -236,7 +236,7 @@ Blockbench 5.x 的实现方式有两条，本插件都接上了：
 
 ## 内联模型（inline）
 
-分组类型新增 `inline`：**本组方块在装配体里现做**，导出结构等同 `composite`（本组方块烘焙成一个模型文件）；`model` 则专门表示**引用已有模型**（`imda_model`）。
+分组类型新增 `inline`：**本组方块在装配体里现做**，导出结构等同 `composite`（本组方块烘焙成一个模型文件）；`model` 则专门表示**引用已有模型**（`imm_model`）。
 
 用途：区分“这里是一份就地建模的几何”和“这里只是引用了外部模型”，方便后续筛选、替换和复调用。
 
@@ -246,12 +246,12 @@ Blockbench 5.x 的实现方式有两条，本插件都接上了：
 
 1. 把选中分组的方块烘焙成一个模型文件，写到 `assets/<namespace>/models/item/<名字>.json`（需要先设置资源包工程路径）；
 2. 几何会自动居中（元素坐标平移到以 (8,8,8) 为中心）；
-3. 分组改为 `model` 类型并引用新模型，同时把居中补偿量记到隐藏属性 `imda_model_shift`，所以**外观不变**；
+3. 分组改为 `model` 类型并引用新模型，同时把居中补偿量记到隐藏属性 `imm_model_shift`，所以**外观不变**；
 4. 分组里的方块保留下来作为编辑参考，导出时由引用模型代替。
 
 ## 动画时间轴（逐帧）
 
-导出时会自动采样当前动画：按 `imda_anim_fps` 生成 `range_dispatch`，阈值 `0,1,2…`，每帧只改 `transformation`，几何模型复用。项目里存在 `range_dispatch_timeline` 分组时优先用它的 Locator 帧标签（`imda_frame` / `imda_pose`）。
+导出时会自动采样当前动画：按 `imm_anim_fps` 生成 `range_dispatch`，阈值 `0,1,2…`，每帧只改 `transformation`，几何模型复用。项目里存在 `range_dispatch_timeline` 分组时优先用它的 Locator 帧标签（`imm_frame` / `imm_pose`）。
 
 - `Tools → 解析动画时间轴（写入帧标签，旧流程）`：手动生成 `[timeline]` 分组和帧 Locator；
 - `Tools → 移除动画时间线复调用标签`：删除这些分组；
@@ -261,9 +261,9 @@ Blockbench 5.x 的实现方式有两条，本插件都接上了：
 
 ## 复调用标签
 
-`Tools → 复调用选中的分组`（或分组右键）：在选中分组的**枢轴位置**创建一个 **Locator** 标签（位置/旋转同该分组），属性 `imda_call_target` 指向该分组的 UUID。
+`Tools → 复调用选中的分组`（或分组右键）：在选中分组的**枢轴位置**创建一个 **Locator** 标签（位置/旋转同该分组），属性 `imm_call_target` 指向该分组的 UUID。
 
-右键该 Locator 可选「编辑复调用标签…」，修改目标分组或直接填模型 id（写回 `imda_call_target`）；`Tools → 编辑复调用标签…` 同样可用。
+右键该 Locator 可选「编辑复调用标签…」，修改目标分组或直接填模型 id（写回 `imm_call_target`）；`Tools → 编辑复调用标签…` 同样可用。
 
 导出时标签会被**替换为目标分组的映射节点**（深拷贝并保留其 `transformation`）：
 
@@ -271,7 +271,7 @@ Blockbench 5.x 的实现方式有两条，本插件都接上了：
 - 目标几何的模型文件只生成一次，复调用共享同一模型 id；
 - 找不到目标或出现自引用时会警告并跳过；标签建议只放在 `composite` / `inline` 分组里。
 
-也可以把 `imda_call_target` 直接写成模型 id（如 `sqsp:item/xxx`），导出成对该模型的引用。
+也可以把 `imm_call_target` 直接写成模型 id（如 `sqsp:item/xxx`），导出成对该模型的引用。
 ## 安装（自动加载）
 
 把 `item_model_definition_assembly.js` 和 `item_model_definition_assembly.about.md` 一起放到：
