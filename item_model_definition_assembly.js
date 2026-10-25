@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.22';
+const VERSION = '0.68.23';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2475,8 +2475,13 @@ function convertSelectedGroupsToCallTags() {
 
 /** 编辑一个复调用 Locator 的目标（分组 UUID 或模型 id） */
 function editCallTag(locator) {
-	if (!locator) return;
-	const current = String(locator.imm_call_target || '').trim();
+	const selected = (typeof Locator !== 'undefined' && Locator && Array.isArray(Locator.selected)) ? Locator.selected.slice() : [];
+	let locators = selected.length ? selected : (locator ? [locator] : []);
+	locators = locators.filter((item, index) => item && locators.indexOf(item) === index);
+	if (!locators.length) return;
+	const first = locators[0];
+	const currentTargets = locators.map(l => String(l.imm_call_target || '').trim());
+	const commonTarget = currentTargets.every(t => t === currentTargets[0]) ? currentTargets[0] : '';
 	const groups = [];
 	const walk = (nodes) => {
 		for (const node of (nodes || [])) {
@@ -2490,27 +2495,27 @@ function editCallTag(locator) {
 	let matchedGroup = '';
 	for (const group of groups) {
 		options[group.uuid] = labelOf(group);
-		if (group.uuid === current) matchedGroup = group.uuid;
+		if (group.uuid === commonTarget) matchedGroup = group.uuid;
 	}
 	new Dialog({
 		id: 'imm_edit_call',
-		title: '编辑复调用标签 — ' + (locator.name || 'Locator'),
+		title: '编辑复调用标签' + (locators.length > 1 ? ('（' + locators.length + ' 个）') : (' — ' + (first.name || 'Locator'))),
 		width: 560,
 		form: {
-			target: { label: '目标分组', type: 'select', value: matchedGroup, options, description: '导出时这个 Locator 会被替换成目标分组的映射节点（保留其 transformation）。' },
-			model: { label: '或模型 id（优先）', type: 'text', value: (matchedGroup || !current) ? '' : current, description: '例如 namespace:item/foo；填写后忽略上面的分组选择。' },
+			target: { label: '目标分组', type: 'select', value: matchedGroup, options, description: '批量编辑时会把所有选中标签指向同一目标；导出时替换为目标分组的映射节点。' },
+			model: { label: '或模型 id（优先）', type: 'text', value: (matchedGroup || !commonTarget) ? '' : commonTarget, description: '例如 namespace:item/foo；填写后忽略上面的分组选择。' },
 		},
 		onConfirm(result) {
 			try {
 				const model = String(result.model || '').trim();
 				const target = model || String(result.target || '').trim();
-				try { Undo.initEdit({ elements: [locator] }); } catch (e) { /* ignore */ }
-				locator.imm_call_target = target;
+				try { Undo.initEdit({ elements: locators }); } catch (e) { /* ignore */ }
+				for (const item of locators) item.imm_call_target = target;
 				try { Undo.finishEdit('编辑复调用标签'); } catch (e) { /* ignore */ }
 				simInvalidate();
 				try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 				try { Project.saved = false; } catch (e) { /* ignore */ }
-				Blockbench.showQuickMessage(target ? ('复调用标签已指向 ' + target) : '已清空复调用目标', 2500);
+				Blockbench.showQuickMessage(target ? ('已设置 ' + locators.length + ' 个复调用标签 → ' + target) : ('已清空 ' + locators.length + ' 个复调用目标'), 3000);
 			} catch (error) {
 				console.error(error);
 				Blockbench.showMessageBox({ title: '修改失败', message: String((error && error.message) || error), icon: 'error' });
