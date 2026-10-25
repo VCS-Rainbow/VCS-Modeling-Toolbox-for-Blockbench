@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.67.1';
+const VERSION = '0.67.2';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -272,41 +272,62 @@ function migratePropPrefixes(removeLegacy) {
 
 /** 在 Blockbench 原生动画属性对话框里追加时间轴 range_dispatch 设置 */
 function installAnimationPropertiesPatch() {
-	if (typeof Dialog === 'undefined' || !Dialog || !Dialog.prototype || Dialog.prototype.__imdaPatched) return;
-	Dialog.prototype.__imdaPatched = true;
-	const originalShow = Dialog.prototype.show;
-	Dialog.prototype.show = function () {
-		try {
-			if (String(this.id || '') === 'animation_properties' && typeof Animation !== 'undefined' && Animation.selected) {
-				const animation = Animation.selected;
-				const form = this.form;
-				if (form && !form.imda_timeline_property) {
-					form._imda = '_';
-					form.imda_timeline_property = {
-						label: '时间轴 range_dispatch property',
-						type: 'select',
-						value: animation.imda_timeline_property || 'custom_model_data',
-						options: { custom_model_data: 'custom_model_data', cooldown: 'cooldown', count: 'count', damage: 'damage', time: 'time', use_cycle: 'use_cycle', use_duration: 'use_duration', compass: 'compass' },
-					};
-					form.imda_timeline_index = { label: '时间轴 custom_model_data index', type: 'number', value: num(animation.imda_timeline_index) };
-					const originalConfirm = this.onConfirm;
-					const self = this;
-					this.onConfirm = function (result) {
-						try {
-							if (result && result.imda_timeline_property !== undefined) animation.imda_timeline_property = result.imda_timeline_property;
-							if (result && result.imda_timeline_index !== undefined) animation.imda_timeline_index = num(result.imda_timeline_index);
-							try { Project.saved = false; } catch (e) { /* ignore */ }
-						} catch (e) { /* ignore */ }
-						if (typeof originalConfirm === 'function') return originalConfirm.call(self, result);
-					};
-				}
-			}
-		} catch (e) { /* ignore */ }
-		return originalShow.apply(this, arguments);
+	if (typeof Animation === 'undefined' || !Animation || !Animation.prototype) return;
+	if (Animation.prototype.__imdaDialogPatched) return;
+	Animation.prototype.__imdaDialogPatched = true;
+	const original = Animation.prototype.propertiesDialog;
+	Animation.prototype.propertiesDialog = function () {
+		if (typeof Format === 'undefined' || Format.id !== FORMAT_ID) return original.apply(this, arguments);
+		const animation = this;
+		new Dialog({
+			id: 'imda_animation_properties',
+			title: animation.name,
+			width: 660,
+			resizeable: 'x',
+			form: {
+				name: { label: 'generic.name', value: animation.name },
+				loop: {
+					label: 'menu.animation.loop', type: 'inline_select', value: animation.loop,
+					options: { once: 'menu.animation.loop.once', hold: 'menu.animation.loop.hold', loop: 'menu.animation.loop.loop' },
+				},
+				override: { label: 'menu.animation.override', type: 'checkbox', value: !!animation.override },
+				snapping: { label: 'menu.animation.snapping', type: 'number', value: animation.snapping, step: 1, min: 10, max: 500 },
+				anim_time_update: { label: 'menu.animation.anim_time_update', type: 'text', value: animation.anim_time_update || '' },
+				blend_weight: { label: 'menu.animation.blend_weight', type: 'text', value: animation.blend_weight || '' },
+				start_delay: { label: 'menu.animation.start_delay', type: 'text', value: animation.start_delay || '' },
+				loop_delay: { label: 'menu.animation.loop_delay', type: 'text', value: animation.loop_delay || '' },
+				_: '_',
+				imda_timeline_property: {
+					label: '时间轴 range_dispatch property',
+					type: 'select',
+					value: animation.imda_timeline_property || 'custom_model_data',
+					options: { custom_model_data: 'custom_model_data', cooldown: 'cooldown', count: 'count', damage: 'damage', time: 'time', use_cycle: 'use_cycle', use_duration: 'use_duration', compass: 'compass' },
+				},
+				imda_timeline_index: { label: '时间轴 custom_model_data index', type: 'number', value: num(animation.imda_timeline_index) },
+			},
+			onConfirm(result) {
+				try {
+					try { Undo.initEdit({ animations: [animation] }); } catch (e) { /* ignore */ }
+					animation.name = String(result.name || animation.name).trim() || animation.name;
+					animation.loop = result.loop || animation.loop;
+					animation.override = !!result.override;
+					animation.snapping = Math.max(10, Math.min(500, num(result.snapping) || animation.snapping));
+					animation.anim_time_update = String(result.anim_time_update || '');
+					animation.blend_weight = String(result.blend_weight || '');
+					animation.start_delay = String(result.start_delay || '');
+					animation.loop_delay = String(result.loop_delay || '');
+					animation.imda_timeline_property = result.imda_timeline_property || 'custom_model_data';
+					animation.imda_timeline_index = num(result.imda_timeline_index);
+					try { Undo.finishEdit('Edit animation'); } catch (e) { /* ignore */ }
+					try { Project.saved = false; } catch (e) { /* ignore */ }
+					try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+				} catch (error) { console.warn('[装配] 保存动画属性失败', error); }
+			},
+		}).show();
 	};
 }
 
-/* ============================== 导出器 ============================== */
+/* ============================== 导出器/* ============================== 导出器 ============================== */
 
 class Exporter {
 	constructor(settings) {

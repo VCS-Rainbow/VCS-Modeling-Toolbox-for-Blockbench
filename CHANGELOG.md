@@ -2,6 +2,11 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.67.2
+- 接管 `Animation.prototype.propertiesDialog`（仅 IMDA 格式）：保留名称/循环/覆盖/吸附/Molang 字段，并追加 `时间轴 range_dispatch property` 与 `时间轴 custom_model_data index`。
+- 之前用 `Dialog.show` 追加无效，因为原生表单在构造时已生成。
+- 单测 171 项。
+
 ## 0.67.1
 - 动画属性对话框注入 `时间轴 range_dispatch property`（custom_model_data / cooldown / count / damage / time / use_cycle / use_duration / compass）与 `时间轴 custom_model_data index` 字段。
 - 采样时把 `animator.keyframes` 回填到通道，并同步 `Timeline.time`；修复所有帧姿态相同。
