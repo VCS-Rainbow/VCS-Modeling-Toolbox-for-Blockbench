@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.71';
+const VERSION = '0.68.72';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2830,30 +2830,30 @@ function callOverrideFields(source, locator) {
 	const src = source || {};
 	const ov = callOverridesOf(locator);
 	const val = (key) => String(ov[key] == null ? '' : ov[key]);
-	const desc = (text) => text + '\n源节点值：' + JSON.stringify(src) + '';
 	const srcType = String(src.imda_type || 'composite').replace(/^minecraft:/, '');
+	const parentType = String((locator && locator.parent && locator.parent.imda_type) || '').replace(/^minecraft:/, '');
 	const isRange = srcType === 'range_dispatch';
 	const isCondition = srcType === 'condition';
-	const isSelect = srcType === 'select';
-	const fields = {
+	const tri = { '': '（不覆盖）', true: 'true', false: 'false' };
+	return {
 		sourceType: { label: '源映射类型（只读）', type: 'text', value: srcType, readonly: true, description: '复调用的类型始终跟随目标分组，不能单独修改。' },
-		threshold: { label: '阈值覆盖（父级 range_dispatch）', type: 'text', value: val('threshold'), description: '留空=不覆盖，沿用分支序号；数字则作为 entries[].threshold。' },
-		property: { label: 'property 覆盖', type: 'select', value: val('property'), options: { '': '（不覆盖）', selected: 'selected', broken: 'broken', damaged: 'damaged', carried: 'carried', custom_model_data: 'custom_model_data', has_component: 'has_component', component: 'component', keybind_down: 'keybind_down', compass: 'compass', count: 'count', damage: 'damage', time: 'time', use_cycle: 'use_cycle', use_duration: 'use_duration', 'bundle/fullness': 'bundle/fullness', cooldown: 'cooldown', 'crossbow/pull': 'crossbow/pull' }, description: '留空=不覆盖；源节点属性：' + String(src.imda_property || '（空）') },
-		index: { label: 'index 覆盖', type: 'text', value: val('index'), description: '留空=不覆盖；源节点 index：' + String(src.imda_index == null ? '' : src.imda_index) },
-		scale: { label: 'scale 覆盖', type: 'text', value: val('scale'), description: '留空=不覆盖；源节点 scale：' + String(src.imda_scale == null ? '' : src.imda_scale) },
-		component: { label: 'component 覆盖', type: 'text', value: val('component'), description: 'has_component 用；留空不覆盖。' },
-		predicate: { label: 'predicate 覆盖', type: 'text', value: val('predicate'), description: 'component 用；留空不覆盖。' },
-		value: { label: 'value 覆盖（JSON）', type: 'text', value: val('value'), description: 'component 用；留空不覆盖。' },
-		keybind: { label: 'keybind 覆盖', type: 'text', value: val('keybind'), description: 'keybind_down 用；留空不覆盖。' },
-		target: { label: 'compass target 覆盖', type: 'select', value: val('target'), options: { '': '（不覆盖）', lodestone: 'lodestone', none: 'none', spawn: 'spawn', recovery: 'recovery' }, description: '留空不覆盖。' },
-		source: { label: 'time source 覆盖', type: 'select', value: val('source'), options: { '': '（不覆盖）', daytime: 'daytime', random: 'random', moon_phase: 'moon_phase' }, description: '留空不覆盖。' },
-		wobble: { label: 'wobble 覆盖', type: 'select', value: val('wobble'), options: { '': '（不覆盖）', true: 'true', false: 'false' }, description: '留空不覆盖。' },
-		normalize: { label: 'normalize 覆盖', type: 'select', value: val('normalize'), options: { '': '（不覆盖）', true: 'true', false: 'false' }, description: '留空不覆盖。' },
-		period: { label: 'period 覆盖', type: 'text', value: val('period'), description: '留空不覆盖。' },
-		remaining: { label: 'remaining 覆盖', type: 'select', value: val('remaining'), options: { '': '（不覆盖）', true: 'true', false: 'false' }, description: '留空不覆盖。' },
-		condition: { label: 'condition 覆盖', type: 'select', value: val('condition'), options: { '': '（不覆盖）', on_true: 'on_true', on_false: 'on_false' }, description: '父级 condition 分支；留空不覆盖。' },
+		ov_threshold: { label: '阈值覆盖（父级 range_dispatch）', type: 'text', value: val('threshold'), condition: () => parentType === 'range_dispatch', description: '留空=不覆盖；数字作为 entries[].threshold。' },
+		ov_property: { label: 'property 覆盖', type: 'select', value: val('property'), options: { '': '（不覆盖）', selected: 'selected', broken: 'broken', damaged: 'damaged', carried: 'carried', custom_model_data: 'custom_model_data', has_component: 'has_component', component: 'component', keybind_down: 'keybind_down', compass: 'compass', count: 'count', damage: 'damage', time: 'time', use_cycle: 'use_cycle', use_duration: 'use_duration', 'bundle/fullness': 'bundle/fullness', cooldown: 'cooldown', 'crossbow/pull': 'crossbow/pull' }, condition: () => isRange || isCondition, description: '留空=不覆盖；源节点：' + String(src.imda_property || '（空）') },
+		ov_component: { label: 'component 覆盖', type: 'text', value: val('component'), condition: (r) => r.ov_property === 'has_component', description: 'has_component 用；留空不覆盖。' },
+		ov_ignore_default: { label: 'ignore_default 覆盖', type: 'select', value: val('ignore_default'), options: tri, condition: (r) => r.ov_property === 'has_component', description: '留空不覆盖。' },
+		ov_predicate: { label: 'predicate 覆盖', type: 'text', value: val('predicate'), condition: (r) => r.ov_property === 'component', description: '留空不覆盖。' },
+		ov_value: { label: 'value 覆盖（JSON）', type: 'text', value: val('value'), condition: (r) => r.ov_property === 'component', description: '留空不覆盖。' },
+		ov_keybind: { label: 'keybind 覆盖', type: 'text', value: val('keybind'), condition: (r) => r.ov_property === 'keybind_down', description: '留空不覆盖。' },
+		ov_index: { label: 'index 覆盖', type: 'text', value: val('index'), condition: () => isRange, description: '留空不覆盖；源节点：' + String(src.imda_index == null ? '' : src.imda_index) },
+		ov_scale: { label: 'scale 覆盖', type: 'text', value: val('scale'), condition: () => isRange, description: '留空不覆盖。' },
+		ov_target: { label: 'compass target 覆盖', type: 'select', value: val('target'), options: { '': '（不覆盖）', lodestone: 'lodestone', none: 'none', spawn: 'spawn', recovery: 'recovery' }, condition: (r) => r.ov_property === 'compass', description: '留空不覆盖。' },
+		ov_source: { label: 'time source 覆盖', type: 'select', value: val('source'), options: { '': '（不覆盖）', daytime: 'daytime', random: 'random', moon_phase: 'moon_phase' }, condition: (r) => r.ov_property === 'time', description: '留空不覆盖。' },
+		ov_wobble: { label: 'wobble 覆盖', type: 'select', value: val('wobble'), options: tri, condition: (r) => r.ov_property === 'compass' || r.ov_property === 'time', description: '留空不覆盖。' },
+		ov_normalize: { label: 'normalize 覆盖', type: 'select', value: val('normalize'), options: tri, condition: (r) => r.ov_property === 'count' || r.ov_property === 'damage', description: '留空不覆盖。' },
+		ov_period: { label: 'period 覆盖', type: 'text', value: val('period'), condition: (r) => r.ov_property === 'use_cycle', description: '留空不覆盖。' },
+		ov_remaining: { label: 'remaining 覆盖', type: 'select', value: val('remaining'), options: tri, condition: (r) => r.ov_property === 'use_duration', description: '留空不覆盖。' },
+		ov_condition: { label: 'condition 覆盖', type: 'select', value: val('condition'), options: { '': '（不覆盖）', on_true: 'on_true', on_false: 'on_false' }, condition: () => parentType === 'condition', description: '留空不覆盖。' },
 	};
-	return fields;
 }
 
 function editCallTag(locator) {
@@ -2900,9 +2900,10 @@ function editCallTag(locator) {
 				const target = model || String(result.target || '').trim();
 				try { Undo.initEdit({ elements: locators }); } catch (e) { /* ignore */ }
 				const overrides = {};
-				for (const key of ['threshold', 'property', 'index', 'scale', 'component', 'predicate', 'value', 'keybind', 'target', 'source', 'wobble', 'normalize', 'period', 'remaining', 'condition']) {
+				const map = { ov_threshold: 'threshold', ov_property: 'property', ov_index: 'index', ov_scale: 'scale', ov_component: 'component', ov_ignore_default: 'ignore_default', ov_predicate: 'predicate', ov_value: 'value', ov_keybind: 'keybind', ov_target: 'target', ov_source: 'source', ov_wobble: 'wobble', ov_normalize: 'normalize', ov_period: 'period', ov_remaining: 'remaining', ov_condition: 'condition' };
+				for (const key of Object.keys(map)) {
 					const text = String(result[key] == null ? '' : result[key]).trim();
-					if (text !== '') overrides[key] = text;
+					if (text !== '') overrides[map[key]] = text;
 				}
 				for (const item of locators) {
 					item.imda_call_target = target;
