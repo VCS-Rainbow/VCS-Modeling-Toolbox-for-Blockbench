@@ -246,6 +246,7 @@ function adoptImdaProps(node) {
 			if (key.startsWith('imda_')) {
 				const legacy = 'imm_' + key.slice(5);
 				if (node[legacy] === undefined) node[legacy] = node[key];
+				else if ((node[key] === '' || node[key] === null) && node[legacy] !== '') node[key] = node[legacy];
 			} else if (key.startsWith('imm_')) {
 				const next = 'imda_' + key.slice(4);
 				if (node[next] === undefined) node[next] = node[key];
