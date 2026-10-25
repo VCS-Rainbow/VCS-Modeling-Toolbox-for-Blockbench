@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.84';
+const VERSION = '0.68.85';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -4591,18 +4591,16 @@ function attachGroupMenu() {
 		}
 	} catch (error) { /* ignore */ }
 	try {
-		if (!locatorMenuAttached && actions.editCall && typeof Locator !== 'undefined' && Locator.prototype && Locator.prototype.menu && typeof Locator.prototype.menu.addAction === 'function') {
+		if (typeof Locator !== 'undefined' && Locator.prototype && Locator.prototype.menu && typeof Locator.prototype.menu.addAction === 'function' && actions.editCall) {
 			const menu = Locator.prototype.menu;
+			try {
+				if (Array.isArray(menu.structure)) menu.structure = menu.structure.filter(item => item !== actions.editCall && item !== actions.instantiateThis && !(item && item.id === 'imda_menu_sep'));
+			} catch (e) { /* ignore */ }
 			addSeparator(menu);
-			menu.addAction(actions.editCall);
 			if (actions.instantiateThis) menu.addAction(actions.instantiateThis);
+			menu.addAction(actions.editCall);
 			locatorMenuAttached = true;
-			console.log('[装配] 已加入复调用标签右键菜单');
-		}
-		if (actions.instantiateThis && typeof Locator !== 'undefined' && Locator.prototype && Locator.prototype.menu && typeof Locator.prototype.menu.addAction === 'function') {
-			const menu = Locator.prototype.menu;
-			const has = Array.isArray(menu.structure) && menu.structure.some(item => item === actions.instantiateThis || (item && item.id === actions.instantiateThis.id));
-			if (!has) menu.addAction(actions.instantiateThis);
+			console.log('[装配] 已重排复调用标签右键菜单');
 		}
 	} catch (error) { /* ignore */ }
 }
