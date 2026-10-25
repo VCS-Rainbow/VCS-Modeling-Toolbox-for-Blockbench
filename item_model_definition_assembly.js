@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.74';
+const VERSION = '0.68.75';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2557,10 +2557,37 @@ function callSelectedGroup() {
 
 /** 属性前缀迁移：imda_* → imda_*（默认复制，可选删除旧键） */
 /** 把所有 composite 分组的直属 cube 收进 inline 子分组，等价于导出时的内联模型 */
+function removeInvalidInternalGroups() {
+	const invalid = [];
+	const walk = (nodes, parent) => {
+		for (const node of (nodes || [])) {
+			if (!isGroup(node)) continue;
+			const type = String(node.imda_type || '').replace(/^minecraft:/, '');
+			if (type === 'internal') {
+				const parentType = String(parent && parent.imda_type || '').replace(/^minecraft:/, '');
+				if (!parent || (parentType !== 'internal' && parentType !== 'model')) { invalid.push(node); continue; }
+			}
+			walk(node.children, node);
+		}
+	};
+	walk((typeof Outliner !== 'undefined' && Outliner) ? Outliner.root : [], null);
+	if (!invalid.length) return 0;
+	const cubes = [];
+	const collect = (node) => { for (const child of (node.children || [])) { if (isCube(child)) cubes.push(child); else if (isGroup(child)) collect(child); } };
+	for (const group of invalid) collect(group);
+	try { Undo.initEdit({ outliner: true, groups: invalid, elements: cubes }); } catch (e) { /* ignore */ }
+	for (const group of invalid) {
+		try { if (typeof group.remove === 'function') group.remove(); else if (group.parent && Array.isArray(group.parent.children)) group.parent.children.splice(group.parent.children.indexOf(group), 1); } catch (e) { /* ignore */ }
+	}
+	try { Undo.finishEdit('删除无效 internal 分组', { outliner: true, groups: invalid, elements: cubes }); } catch (e) { /* ignore */ }
+	return invalid.length;
+}
+
 function normalizeCompositeCubes() {
+	const removedInternal = removeInvalidInternalGroups();
 	const groups = (typeof Group !== 'undefined' && Group.all) ? Group.all.slice() : [];
 	const targets = groups.filter(group => group && (group.imda_type === undefined || group.imda_type === '' || group.imda_type === 'composite'));
-	if (!targets.length) { Blockbench.showQuickMessage('没有 composite 分组。', 2500); return 0; }
+	if (!targets.length) { Blockbench.showQuickMessage(removedInternal ? ('已删除 ' + removedInternal + ' 个无效 internal 分组') : '没有 composite 分组。', 2500); return 0; }
 	let moved = 0;
 	const created = [];
 	const changed = [];
@@ -2581,14 +2608,14 @@ function normalizeCompositeCubes() {
 	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 	try { Project.saved = false; } catch (e) { /* ignore */ }
 	try { simInvalidate(); } catch (e) { /* ignore */ }
-	Blockbench.showQuickMessage('已规范化 ' + changed.length + ' 个 composite：移动 ' + moved + ' 个 cube 到 ' + created.length + ' 个 inline 分组', 4000);
+	Blockbench.showQuickMessage('规范化完成' + (removedInternal ? ('，删除 ' + removedInternal + ' 个无效 internal 分组') : '') + '：' + changed.length + ' 个 composite，移动 ' + moved + ' 个 cube 到 ' + created.length + ' 个 inline 分组', 4000);
 	return created.length;
 }
 
 function openNormalizeDialog() {
 	Blockbench.showMessageBox({
 		title: '规范化结构',
-		message: '把每个 composite 分组的直属 cube 收进一个 inline 子分组（等价于导出时的内联模型）。\n不会改变位置/旋转，可撤销。',
+		message: '1. 删除父级不是 internal/model 的 internal 分组；\n2. 把每个 composite 分组的直属 cube 收进一个 inline 子分组（等价于导出时的内联模型）。\n不会改变位置/旋转，可撤销。',
 		buttons: ['取消', '规范化'], confirm: 1, cancel: 0,
 	}, (button) => { if (button === 1) { try { normalizeCompositeCubes(); } catch (error) { Blockbench.showMessageBox({ title: '规范化失败', message: String((error && error.message) || error), icon: 'error' }); } } });
 }
@@ -4690,7 +4717,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

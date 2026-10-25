@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.74', api.VERSION, '0.68.74');
+eq('版本是 0.68.75', api.VERSION, '0.68.75');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -845,6 +845,18 @@ ovLocator.imda_call_overrides = JSON.stringify({ property: 'cooldown', index: '2
 const ovParsed = api.callOverridesOf(ovLocator);
 eq('复调用覆盖 property', ovParsed.property, 'cooldown');
 eq('复调用覆盖 threshold', ovParsed.threshold, '4');
+/* ---------- internal 清理 ---------- */
+console.log('\n[internal 清理]');
+const invParent = new global.Group({ name: 'invParent', imda_type: 'composite' });
+const invInternal = new global.Group({ name: 'invInternal', imda_type: 'internal' });
+invInternal.parent = invParent; invParent.children.push(invInternal);
+const valModel = new global.Group({ name: 'valModel', imda_type: 'model' });
+const valInternal = new global.Group({ name: 'valInternal', imda_type: 'internal' });
+valInternal.parent = valModel; valModel.children.push(valInternal);
+global.Outliner.root.length = 0; global.Outliner.root.push(invParent, valModel);
+api.removeInvalidInternalGroups();
+eq('无效 internal 被删除', invParent.children.indexOf(invInternal), -1);
+eq('model 下的 internal 保留', valModel.children.indexOf(valInternal) >= 0, true);
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);
