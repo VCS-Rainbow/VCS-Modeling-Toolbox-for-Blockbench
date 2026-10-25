@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.58', api.VERSION, '0.68.58');
+eq('版本是 0.68.59', api.VERSION, '0.68.59');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -803,6 +803,12 @@ api.fixGroupPivot(recordPivotGroup);
 eq('归中后枢轴在几何中心', recordPivotGroup.origin[0], 11);
 api.restoreGroupPivotFromRecord(recordPivotGroup);
 eq('从记录恢复到原枢轴', recordPivotGroup.origin[0], 0);
+/* ---------- cooldown 时间轴 ---------- */
+console.log('\n[cooldown 时间轴]');
+const cool = api.cooldownThresholds(4);
+eq('cooldown 帧数', cool.length, 4);
+eq('cooldown 最后一帧为 0', cool[0], 0);
+eq('cooldown 第一帧为 1', cool[3], 1);
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);

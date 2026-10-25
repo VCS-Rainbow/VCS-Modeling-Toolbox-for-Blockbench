@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.58';
+const VERSION = '0.68.59';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -276,11 +276,23 @@ function showAnimationTimelineDialog(animation) {
 				options: { custom_model_data: 'custom_model_data', cooldown: 'cooldown', count: 'count', damage: 'damage', time: 'time', use_cycle: 'use_cycle', use_duration: 'use_duration', compass: 'compass' },
 			},
 			imda_timeline_index: { label: 'custom_model_data index', type: 'number', value: num(animation.imda_timeline_index) },
+			imda_timeline_target: { label: 'compass target', type: 'select', value: String(animation.imda_timeline_target || ''), options: { '': '（未设置）', lodestone: 'lodestone', none: 'none', spawn: 'spawn', recovery: 'recovery' }, condition: (r) => r.imda_timeline_property === 'compass' },
+			imda_timeline_source: { label: 'time source', type: 'select', value: String(animation.imda_timeline_source || ''), options: { '': '（未设置）', daytime: 'daytime', random: 'random', moon_phase: 'moon_phase' }, condition: (r) => r.imda_timeline_property === 'time' },
+			imda_timeline_wobble: { label: 'wobble（摆动浮动）', type: 'checkbox', value: animation.imda_timeline_wobble !== false, condition: (r) => r.imda_timeline_property === 'compass' || r.imda_timeline_property === 'time' },
+			imda_timeline_normalize: { label: 'normalize（归一化）', type: 'checkbox', value: animation.imda_timeline_normalize !== false, condition: (r) => r.imda_timeline_property === 'count' || r.imda_timeline_property === 'damage' },
+			imda_timeline_period: { label: 'period（周期）', type: 'number', value: num(animation.imda_timeline_period) || 1, condition: (r) => r.imda_timeline_property === 'use_cycle' },
+			imda_timeline_remaining: { label: 'remaining（用剩余时间）', type: 'checkbox', value: animation.imda_timeline_remaining === true, condition: (r) => r.imda_timeline_property === 'use_duration' },
 		},
 		onConfirm(result) {
 			try { Undo.initEdit({ animations: [animation] }); } catch (e) { /* ignore */ }
 			animation.imda_timeline_property = result.imda_timeline_property || 'custom_model_data';
 			animation.imda_timeline_index = num(result.imda_timeline_index);
+	animation.imda_timeline_target = String(result.imda_timeline_target || '');
+	animation.imda_timeline_source = String(result.imda_timeline_source || '');
+	animation.imda_timeline_wobble = result.imda_timeline_wobble !== false;
+	animation.imda_timeline_normalize = result.imda_timeline_normalize !== false;
+	animation.imda_timeline_period = num(result.imda_timeline_period) || 1;
+	animation.imda_timeline_remaining = result.imda_timeline_remaining === true;
 			try { Undo.finishEdit('Edit timeline property'); } catch (e) { /* ignore */ }
 			try { Project.saved = false; } catch (e) { /* ignore */ }
 			Blockbench.showQuickMessage('已保存时间轴属性', 2000);
@@ -332,6 +344,12 @@ function installAnimationPropertiesPatch() {
 					options: { custom_model_data: 'custom_model_data', cooldown: 'cooldown', count: 'count', damage: 'damage', time: 'time', use_cycle: 'use_cycle', use_duration: 'use_duration', compass: 'compass' },
 				},
 				imda_timeline_index: { label: '时间轴 custom_model_data index', type: 'number', value: num(animation.imda_timeline_index) },
+			imda_timeline_target: { label: 'compass target', type: 'select', value: String(animation.imda_timeline_target || ''), options: { '': '（未设置）', lodestone: 'lodestone', none: 'none', spawn: 'spawn', recovery: 'recovery' }, condition: (r) => r.imda_timeline_property === 'compass' },
+			imda_timeline_source: { label: 'time source', type: 'select', value: String(animation.imda_timeline_source || ''), options: { '': '（未设置）', daytime: 'daytime', random: 'random', moon_phase: 'moon_phase' }, condition: (r) => r.imda_timeline_property === 'time' },
+			imda_timeline_wobble: { label: 'wobble（摆动浮动）', type: 'checkbox', value: animation.imda_timeline_wobble !== false, condition: (r) => r.imda_timeline_property === 'compass' || r.imda_timeline_property === 'time' },
+			imda_timeline_normalize: { label: 'normalize（归一化）', type: 'checkbox', value: animation.imda_timeline_normalize !== false, condition: (r) => r.imda_timeline_property === 'count' || r.imda_timeline_property === 'damage' },
+			imda_timeline_period: { label: 'period（周期）', type: 'number', value: num(animation.imda_timeline_period) || 1, condition: (r) => r.imda_timeline_property === 'use_cycle' },
+			imda_timeline_remaining: { label: 'remaining（用剩余时间）', type: 'checkbox', value: animation.imda_timeline_remaining === true, condition: (r) => r.imda_timeline_property === 'use_duration' },
 			},
 			onConfirm(result) {
 				try {
@@ -346,6 +364,12 @@ function installAnimationPropertiesPatch() {
 					animation.loop_delay = String(result.loop_delay || '');
 					animation.imda_timeline_property = result.imda_timeline_property || 'custom_model_data';
 					animation.imda_timeline_index = num(result.imda_timeline_index);
+	animation.imda_timeline_target = String(result.imda_timeline_target || '');
+	animation.imda_timeline_source = String(result.imda_timeline_source || '');
+	animation.imda_timeline_wobble = result.imda_timeline_wobble !== false;
+	animation.imda_timeline_normalize = result.imda_timeline_normalize !== false;
+	animation.imda_timeline_period = num(result.imda_timeline_period) || 1;
+	animation.imda_timeline_remaining = result.imda_timeline_remaining === true;
 					try { Undo.finishEdit('Edit animation'); } catch (e) { /* ignore */ }
 					try { Project.saved = false; } catch (e) { /* ignore */ }
 					try { Canvas.updateAll(); } catch (e) { /* ignore */ }
@@ -1071,6 +1095,7 @@ class Exporter {
 		this.timelineFps = Math.max(1, num(projectValue('imda_anim_fps', 20)) || 20);
 		this.timelineProperty = group.imda_property || 'custom_model_data';
 		this.timelineIndex = (group.imda_index != null) ? num(group.imda_index) : num(projectValue('imda_anim_index', 0));
+		this.timelineAttrs = { target: group.imda_range_target, source: group.imda_range_source, wobble: group.imda_range_wobble, normalize: group.imda_range_normalize, period: group.imda_range_period, remaining: group.imda_range_remaining };
 		if (!frames.size) return this.buildAutoTimeline(group, hint, parent_shift);
 		return this.buildFrameEntries(group, Array.from(frames.keys()).sort((a, b) => a - b), frames, hint, parent_shift);
 	}
@@ -1094,7 +1119,8 @@ class Exporter {
 		}
 		this.timelineFps = fps;
 		this.timelineProperty = animation.imda_timeline_property || animation.imda_timeline_property || group.imda_property || projectValue('imda_anim_property', 'custom_model_data') || 'custom_model_data';
-		this.timelineIndex = (animation.imda_timeline_index != null) ? num(animation.imda_timeline_index) : ((animation.imda_timeline_index != null) ? num(animation.imda_timeline_index) : ((group.imda_index != null) ? num(group.imda_index) : num(projectValue('imda_anim_index', 0))));
+		this.timelineIndex = (animation.imda_timeline_index != null) ? num(animation.imda_timeline_index) : ((group.imda_index != null) ? num(group.imda_index) : num(projectValue('imda_anim_index', 0)));
+		this.timelineAttrs = { target: animation.imda_timeline_target, source: animation.imda_timeline_source, wobble: animation.imda_timeline_wobble, normalize: animation.imda_timeline_normalize, period: animation.imda_timeline_period, remaining: animation.imda_timeline_remaining };
 		return this.buildFrameEntries(group, Array.from(frames.keys()), frames, hint, parent_shift);
 	}
 
@@ -1124,6 +1150,18 @@ class Exporter {
 		return 'frame ' + h + '.' + m + '.' + s + '.' + ff;
 	}
 
+	buildTimelineRange(prop, index, attrs, name) {
+		const node = { type: 'minecraft:range_dispatch', property: 'minecraft:' + prop };
+		if (name) node.node_name = name;
+		if (prop === 'custom_model_data') node.index = clean(index);
+		if (prop === 'compass') { if (attrs.target) node.target = String(attrs.target); if (attrs.wobble === false) node.wobble = false; }
+		if (prop === 'time') { if (attrs.source) node.source = String(attrs.source); if (attrs.wobble === false) node.wobble = false; }
+		if (prop === 'count' || prop === 'damage') { if (attrs.normalize === false) node.normalize = false; }
+		if (prop === 'use_cycle') { const period = num(attrs.period); if (period > 0) node.period = clean(period); }
+		if (prop === 'use_duration' && attrs.remaining === true) node.remaining = true;
+		return node;
+	}
+
 	buildTimelineTree(group, sorted, frames, hint, parent_shift, isRoot) {
 		const groupHint = (hint ? hint + '_' : '') + sanitizePath(labelOf(group), 'group');
 		const anyPose = sorted.some(frame => this.poseInFrame(group, frames.get(frame)));
@@ -1132,12 +1170,15 @@ class Exporter {
 		const prop = String(this.timelineProperty || projectValue('imda_anim_property', 'custom_model_data') || 'custom_model_data').replace(/^minecraft:/, '').trim() || 'custom_model_data';
 		const index = (this.timelineIndex != null) ? this.timelineIndex : num(projectValue('imda_anim_index', 0));
 		const makeRange = (entries, name) => {
-			const node = { type: 'minecraft:range_dispatch', property: 'minecraft:' + prop };
-			if (name) node.node_name = name;
-			if (prop === 'custom_model_data') node.index = clean(index);
-			node.entries = entries;
+			let finalEntries = entries;
+			if (prop === 'cooldown' && entries.length) {
+				const thresholds = cooldownThresholds(entries.length);
+				finalEntries = entries.map((entry, i) => ({ threshold: thresholds[i], model: entry.model })).reverse();
+			}
+			const node = this.buildTimelineRange(prop, index, this.timelineAttrs || {}, name);
+			node.entries = finalEntries;
 			return node;
-		};
+		};;
 		if (ownPose) {
 			const entries = [];
 			for (const frame of sorted) {
@@ -1922,6 +1963,14 @@ function pivotContentPoints(group) {
 
 /** 把分组（及其后代）的内容整体平移 d（本分组本地坐标） */
 /** 平均点：分组枢轴归中与源模型几何中心必须共用这一套 */
+/** cooldown 时间轴阈值：第一帧 1，最后一帧 0；返回按 range_dispatch 升序排列的阈值 */
+function cooldownThresholds(count) {
+	const n = Math.max(0, Math.floor(num(count)));
+	if (!n) return [];
+	if (n === 1) return [1];
+	return Array.from({ length: n }, (_, i) => clean(1 - i / (n - 1))).reverse();
+}
+
 function averagePoints(points) {
 	if (!points || !points.length) return null;
 	return [0, 1, 2].map(a => points.reduce((sum, p) => sum + p[a], 0) / points.length);
@@ -4213,6 +4262,12 @@ function registerProperties() {
 		try { if (typeof Animation !== 'undefined') {
 			new Property(Animation, 'string', 'imda_timeline_property', { default: 'custom_model_data', label: '时间轴 range_dispatch property', description: 'custom_model_data / cooldown / count / damage / time / use_cycle / use_duration / compass 等' });
 			new Property(Animation, 'number', 'imda_timeline_index', { default: 0, label: '时间轴 custom_model_data index' });
+	new Property(Animation, 'string', 'imda_timeline_target', { default: '', label: '时间轴 compass target' });
+	new Property(Animation, 'string', 'imda_timeline_source', { default: '', label: '时间轴 time source' });
+	new Property(Animation, 'boolean', 'imda_timeline_wobble', { default: true, label: '时间轴 wobble' });
+	new Property(Animation, 'boolean', 'imda_timeline_normalize', { default: true, label: '时间轴 normalize' });
+	new Property(Animation, 'number', 'imda_timeline_period', { default: 1, label: '时间轴 use_cycle period' });
+	new Property(Animation, 'boolean', 'imda_timeline_remaining', { default: false, label: '时间轴 use_duration remaining' });
 		} } catch (e) { /* ignore */ }
 	const cond = { formats: [FORMAT_ID] };
 	const P = (target, type, name, options) => new Property(target, type, name, Object.assign({ condition: cond, exposed: true }, options));
@@ -4491,7 +4546,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callModelPrefill, orderedSelectedGroups, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callModelPrefill, orderedSelectedGroups, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
