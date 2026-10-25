@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.28';
+const VERSION = '0.68.29';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1367,6 +1367,25 @@ function createExporter() {
 		block_display: projectValue('imda_block_display', true) !== false,
 		display_all_slots: projectValue('imda_display_all_slots', false) === true,
 	});
+}
+
+/** 快捷导出：只导出 items/*.json 映射文件 */
+function exportMappingJSON() {
+	try {
+		const exporter = createExporter();
+		const mapping = exporter.buildMapping();
+		Blockbench.export({
+			type: 'Item Model Mapping',
+			extensions: ['json'],
+			name: exporter.stem,
+			content: formatMapping(mapping),
+			savetype: 'text',
+		});
+		Blockbench.showQuickMessage('已导出物品模型映射 JSON', 2500);
+	} catch (error) {
+		console.error(error);
+		Blockbench.showMessageBox({ title: '导出失败', message: String((error && error.message) || error), icon: 'error' });
+	}
 }
 
 function compileAssembly() {
@@ -4081,7 +4100,8 @@ Plugin.register('item_model_definition_assembly', {
 		format_object.codec = codec_object;
 
 		const condition = () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID);
-		actions.zip = new Action('imda_export_zip', { name: '导出装配资源包 (zip)', description: 'items + models + textures', icon: 'archive', category: 'file', condition, click: exportZip });
+		actions.zip = new Action('imda_export_zip', { name: '导出装配资源包 (zip)', description: 'items + models + textures', icon: 'archive', category: 'file', condition, click: exportZip });
+		actions.exportMapping = new Action('imda_export_mapping', { name: '导出物品模型映射 (JSON)', description: '只导出物品模型映射 JSON；默认快捷键 F5', icon: 'description', category: 'file', condition, default_keybind: (typeof Keybind !== 'undefined') ? new Keybind({ key: 116 }) : undefined, click: exportMappingJSON });
 		actions.merge = new Action('imda_merge_pack', { name: '合并到资源包…', description: '直接写入资源包并覆盖旧文件', icon: 'folder_open', category: 'file', condition, click: mergeToPack });
 		actions.import = new Action('imda_import_model', { name: '导入引用模型（当前分组）', description: '按 imda_model 从资源包工程导入 Java 模型为方块', icon: 'file_download', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const g = pickTargetGroup(); if (!g) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } if (!String(g.imda_model || '').trim()) { Blockbench.showMessageBox({ title: '没有引用模型', message: '该分组没有填写 imda_model（引用模型）。', icon: 'info' }); return; } importModelReference(g); } });
 		actions.call = new Action('imda_call_group', { name: '复调用选中的分组', description: '在分组枢轴处创建复调用标签（Locator），导出时替换为目标分组', icon: 'content_copy', category: 'tools', condition, click: callSelectedGroup });
@@ -4103,6 +4123,7 @@ Plugin.register('item_model_definition_assembly', {
 		actions.editCall = new Action('imda_edit_call', { name: '编辑复调用标签…', description: '修改选中的复调用 Locator 指向的分组或模型 id', icon: 'edit', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && Locator.selected && Locator.selected.length > 0), click: () => { const locator = (Locator.selected && Locator.selected[0]) || null; if (!locator) { Blockbench.showMessageBox({ title: '请先选中复调用标签', message: '在 outliner 里选中一个 Locator（复调用标签）。', icon: 'info' }); return; } editCallTag(locator); } });
 
 		addMenu(actions.zip, 'file.export');
+		addMenu(actions.exportMapping, 'file.export');
 		addMenu(actions.merge, 'file.export');
 		placeInFileMenu(actions.pack, ['save_model', 'export', 'import']);
 		
