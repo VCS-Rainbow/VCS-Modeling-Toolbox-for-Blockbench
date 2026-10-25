@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.0';
+const VERSION = '0.68.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1132,7 +1132,19 @@ class Exporter {
 		}
 		this.timelinePoses = null; this.timelineSkip = null;
 		if (!nodes.length) return null;
-		return { type: 'minecraft:composite', models: nodes };
+		const root = { type: 'minecraft:composite', models: [] };
+		try {
+			const carrier = this.models.find(model => model && model.data && model.data.display && (model.data.elements || []).length);
+			if (carrier) {
+				root.models.push({
+					type: 'minecraft:model',
+					model: this.namespace + ':item/' + (this.subpath ? this.subpath + '/' : '') + carrier.name,
+					transformation: { translation: [0, 0, 0], left_rotation: [0, 0, 0, 1], scale: [0, 0, 0], right_rotation: [0, 0, 0, 1] },
+				});
+			}
+		} catch (e) { /* ignore */ }
+		root.models = root.models.concat(nodes);
+		return root;
 	}
 
 	buildMapping() {
