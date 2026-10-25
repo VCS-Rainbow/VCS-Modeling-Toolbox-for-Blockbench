@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.38';
+const VERSION = '0.68.39';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2561,6 +2561,45 @@ function editCallTag(locator) {
 	}).show();
 }
 
+function invalidCallTags() {
+	const groups = new Map();
+	try { for (const g of ((typeof Group !== 'undefined' && Group.all) ? Group.all : [])) groups.set(g.uuid, g); } catch (e) { /* ignore */ }
+	const list = [];
+	try {
+		for (const locator of ((typeof Locator !== 'undefined' && Locator.all) ? Locator.all : [])) {
+			const target = String(locator.imda_call_target || '').trim();
+			if (!target || target.indexOf(':') >= 0) continue;
+			if (!groups.has(target)) list.push(locator);
+		}
+	} catch (e) { /* ignore */ }
+	return list;
+}
+
+function repairCallTargetsDialog() {
+	const broken = invalidCallTags();
+	if (!broken.length) { Blockbench.showQuickMessage('没有失效的复调用标签。', 2500); return; }
+	const options = {};
+	for (const group of ((typeof Group !== 'undefined' && Group.all) ? Group.all : [])) options[group.uuid] = labelOf(group);
+	new Dialog({
+		id: 'imda_repair_calls',
+		title: '修复失效的复调用目标（' + broken.length + ' 个）',
+		width: 560,
+		form: {
+			target: { label: '统一指向', type: 'select', value: '', options, description: '把所有目标 UUID 已不存在的复调用标签改为该分组。' },
+			list: { label: '失效标签', type: 'textarea', value: broken.map(l => l.name || l.uuid).join('\n'), readonly: true },
+		},
+		onConfirm(result) {
+			const target = String(result.target || '').trim();
+			if (!target) return;
+			try { Undo.initEdit({ elements: broken }); } catch (e) { /* ignore */ }
+			for (const locator of broken) locator.imda_call_target = target;
+			try { Undo.finishEdit('修复复调用目标'); } catch (e) { /* ignore */ }
+			try { Project.saved = false; } catch (e) { /* ignore */ }
+			Blockbench.showQuickMessage('已修复 ' + broken.length + ' 个复调用目标', 3000);
+		},
+	}).show();
+}
+
 function createModelFromGroup(group) {
 	if (!group) return;
 	const root = String(projectValue('imda_pack_path', '') || '').trim();
@@ -4161,7 +4200,8 @@ Plugin.register('item_model_definition_assembly', {
 		actions.props = new Action('imda_group_props', { name: '编辑分组映射属性…', description: '映射类型 / 引用模型 / property 等', icon: 'tune', category: 'tools', condition, click: editGroupProps });
 		actions.boxToggle = new Action('imda_box_toggle', { name: '开关：框选方块时改选所属分组', description: '切换“一次选中多个方块时自动改为选中其父分组”', icon: 'select_all', category: 'tools', click: () => { if (!immBoxSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !boxGroupsEnabled(); setBoxSelectGroups(next); try { if (typeof immBoxSetting.save === 'function') immBoxSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('框选方块改选所属分组：' + (next ? '开' : '关') + (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID ? '（装配格式内强制开启）' : ''), 2600); } });
 		actions.batchToggle = new Action('imda_batch_toggle', { name: '开关：批量选组时取消元素选择', description: '切换“同时选中多个分组时自动取消方块/定位点选择”', icon: 'select_all', category: 'tools', click: () => { if (!immBatchSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !batchGroupsOnlyEnabled(); setBatchGroupsOnly(next); try { if (typeof immBatchSetting.save === 'function') immBatchSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('批量选择时取消单个元素：' + (next ? '开' : '关'), 2200); } });
-		actions.editCall = new Action('imda_edit_call', { name: '编辑复调用标签…', description: '修改选中的复调用 Locator 指向的分组或模型 id', icon: 'edit', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && Locator.selected && Locator.selected.length > 0), click: () => { const locator = (Locator.selected && Locator.selected[0]) || null; if (!locator) { Blockbench.showMessageBox({ title: '请先选中复调用标签', message: '在 outliner 里选中一个 Locator（复调用标签）。', icon: 'info' }); return; } editCallTag(locator); } });
+		actions.editCall = new Action('imda_edit_call', { name: '编辑复调用标签…', description: '修改选中的复调用 Locator 指向的分组或模型 id', icon: 'edit', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && Locator.selected && Locator.selected.length > 0), click: () => { const locator = (Locator.selected && Locator.selected[0]) || null; if (!locator) { Blockbench.showMessageBox({ title: '请先选中复调用标签', message: '在 outliner 里选中一个 Locator（复调用标签）。', icon: 'info' }); return; } editCallTag(locator); } });
+		actions.repairCalls = new Action('imda_repair_calls', { name: '修复失效的复调用目标…', description: '扫描所有目标 UUID 已不存在的复调用标签，统一改成指定分组', icon: 'build', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID) && invalidCallTags().length > 0, click: repairCallTargetsDialog });
 
 		addMenu(actions.zip, 'file.export');
 		addMenu(actions.merge, 'file.export');
@@ -4183,6 +4223,7 @@ Plugin.register('item_model_definition_assembly', {
 		tool(actions.call);
 		tool(actions.convertCall);
 		tool(actions.editCall);
+		tool(actions.repairCalls);
 		tool(actions.instantiateCalls);
 		toolSep('imda_group_debug', '调试');
 		tool(actions.check);
