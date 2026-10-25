@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.67.5', api.VERSION, '0.67.5');
+eq('版本是 0.67.6', api.VERSION, '0.67.6');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -624,6 +624,7 @@ const dispExporter = api.createExporter();
 dispExporter.addModel([dispCube], 'displayTest');
 eq('手持 display scale = 0.85（对齐引用模型）', dispExporter.models[0].data.display.thirdperson_righthand.scale, [0.85, 0.85, 0.85]);
 eq('不再输出 gui display', dispExporter.models[0].data.display.gui, undefined);
+eq('未设置槽位回退手持旋转', dispExporter.models[0].data.display.firstperson_righthand, undefined);
 
 /* ---------- transformation 单位 ---------- */
 console.log('\n[transformation 单位]');

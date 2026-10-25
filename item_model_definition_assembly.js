@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.67.5';
+const VERSION = '0.67.6';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -564,7 +564,7 @@ class Exporter {
 		if (particle) textures.particle = particle;
 
 		const model = { textures, elements };
-		const display = this.blockDisplay ? (this.projectDisplay || JSON.parse(JSON.stringify(BLOCK_DISPLAY))) : null;
+		const display = this.blockDisplay ? this.desiredDisplay() : null;
 		if (display && Object.keys(display).length) model.display = JSON.parse(JSON.stringify(display));
 
 		const name = this.unique(sanitizePath(this.stem + '_' + (hint || 'part'), 'model'), this.modelNames);
@@ -876,7 +876,10 @@ class Exporter {
 	/** 定位点 → 复调用节点：指向分组时先占位，构建完成后克隆目标节点 */
 	desiredDisplay() {
 		if (!this.blockDisplay) return {};
-		return this.projectDisplay || JSON.parse(JSON.stringify(BLOCK_DISPLAY));
+		const base = JSON.parse(JSON.stringify(BLOCK_DISPLAY));
+		const custom = this.projectDisplay || {};
+		for (const slot of Object.keys(custom)) base[slot] = custom[slot];
+		return base;
 	}
 
 	readReferenceModel(reference) {
