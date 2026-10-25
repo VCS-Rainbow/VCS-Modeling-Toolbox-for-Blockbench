@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.17';
+const VERSION = '0.68.18';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -4086,6 +4086,7 @@ Plugin.register('item_model_definition_assembly', {
 		const toolHeading = (label) => { try { if (toolsMenu) toolsMenu.addAction({ id: 'imda_vmt_heading', name: label, icon: 'label', click: null }); } catch (e) { /* ignore */ } };
 		cleanOwnMenu(toolsMenu);
 		const tool = (action) => addMenu(action, 'tools');
+		toolSep('imda_vmt_top');
 		toolHeading('==VCS Modeling Toolbox==');
 		toolSep('imda_group_assembly', '[ 模型装配 ]');
 		tool(actions.props);
