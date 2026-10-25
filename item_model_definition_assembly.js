@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.14';
+const VERSION = '0.68.15';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -4068,13 +4068,8 @@ Plugin.register('item_model_definition_assembly', {
 		
 		const toolsMenu = (typeof MenuBar !== 'undefined' && MenuBar.menus) ? MenuBar.menus.tools : null;
 		const toolSep = (id, label) => { try { if (toolsMenu && typeof MenuSeparator !== 'undefined') toolsMenu.addAction(new MenuSeparator(id, label)); } catch (e) { /* ignore */ } };
-		const toolHeading = (label) => { try { if (toolsMenu) toolsMenu.addAction({ name: label, icon: false, click() { /* heading */ } }); } catch (e) { /* ignore */ } };
 		const tool = (action) => addMenu(action, 'tools');
-		toolSep('imda_group_start');
-		toolHeading('==VCS Modeling Toolbox==');
-		toolSep('imda_title_sep');
-		toolHeading('[ 模型装配 ]');
-		toolSep('imda_assembly_sep');
+		toolSep('imda_vmt_title', '==VCS Modeling Toolbox==  [ 模型装配 ]');
 		tool(actions.props);
 		tool(actions.import);
 		tool(actions.createModel);
@@ -4094,14 +4089,7 @@ Plugin.register('item_model_definition_assembly', {
 		tool(actions.boxToggle);
 		tool(actions.batchToggle);
 		tool(actions.pivot);
-		toolSep('imda_group_timeline', '时间轴');
-		tool(actions.animationTimeline);
-		tool(actions.bakeTimeline);
-		tool(actions.removeTimeline);
-		toolSep('imda_group_aux', '[ 辅助功能 ]');
-		tool(actions.boxToggle);
-		tool(actions.batchToggle);
-		tool(actions.pivot);
+
 		try { attachAnimationTimelineMenu(); } catch (e) { /* ignore */ }
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
 		// 面板会自动出现在「视图 → 面板」里，不再占用 Tools 菜单
