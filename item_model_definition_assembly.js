@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.77';
+const VERSION = '0.68.78';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2791,17 +2791,22 @@ function removeTimelineTags() {
 }
 
 /** 把所有复调用 Locator 实例化成真实的分组/模型节点 */
-function instantiateCallTags() {
+function instantiateCallTags(targets) {
 	const locators = [];
-	const walk = (nodes) => { for (const node of (nodes || [])) { if (isLocator(node) && String(node.imda_call_target || '').trim()) locators.push(node); else if (isGroup(node)) walk(node.children); } };
+	if (Array.isArray(targets)) {
+		for (const node of targets) if (isLocator(node) && String(node.imda_call_target || '').trim() && locators.indexOf(node) < 0) locators.push(node);
+	} else {
+		const walk = (nodes) => { for (const node of (nodes || [])) { if (isLocator(node) && String(node.imda_call_target || '').trim()) locators.push(node); else if (isGroup(node)) walk(node.children); } };
+		walk((typeof Outliner !== 'undefined' && Outliner) ? Outliner.root : []);
+	}
 	walk((typeof Outliner !== 'undefined' && Outliner) ? Outliner.root : []);
 	if (!locators.length) { Blockbench.showQuickMessage('没有复调用标签。', 2500); return; }
 	Blockbench.showMessageBox({
 		title: '实例化复调用标签',
 		message: '将把 ' + locators.length + ' 个复调用标签替换为真实分组/模型节点（可撤销）。',
-		buttons: ['取消', '实例化'], confirm: 1, cancel: 0,
+		buttons: ['实例化', '取消'], confirm: 0, cancel: 1,
 	}, (button) => {
-		if (button !== 1) return;
+		if (button !== 0) return;
 		try { Undo.initEdit({ outliner: true, elements: [] }); } catch (e) { /* ignore */ }
 		let done = 0;
 		for (const locator of locators) {
@@ -4671,7 +4676,7 @@ Plugin.register('item_model_definition_assembly', {
 	actions.bakeTimeline = new Action('imda_bake_timeline', { name: '解析动画时间轴（写入帧标签，旧流程）', description: '按项目 FPS 采样当前动画，生成 range_dispatch(timeline) 分组与逐帧 Locator；导出时也会自动采样，一般不需要手动执行', icon: 'timeline', category: 'tools', condition: () => typeof Animation !== 'undefined' && Animation && (Animation.selected || (Array.isArray(Animation.all) && Animation.all.length)), click: () => bakeTimelineToCallTags() });
 	actions.removeTimeline = new Action('imda_remove_timeline', { name: '移除动画时间线复调用标签', description: '删除项目里所有 range_dispatch(timeline) 分组及其 Locator 帧标签', icon: 'delete', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner && Outliner.root.some(n => isGroup(n) && String(n.imda_type || '') === 'range_dispatch_timeline')), click: () => removeTimelineTags() });
 	actions.instantiateCalls = new Action('imda_instantiate_calls', { name: '实例化所有复调用标签', description: '把复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner), click: () => instantiateCallTags() });
-		actions.instantiateSelected = new Action('imda_instantiate_selected_calls', { name: '实例化所选复调用标签', description: '把当前选中的复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && Locator.selected && Locator.selected.some(l => String(l.imda_call_target || '').trim())), click: () => instantiateCallTags(Array.from(Locator.selected || [])) });
+		actions.instantiateSelected = new Action('imda_instantiate_selected_calls', { name: '实例化选中的复调用标签', description: '把当前选中的复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && Locator.selected && Locator.selected.some(l => String(l.imda_call_target || '').trim())), click: () => instantiateCallTags(selectedCallTags()) });
 		actions.instantiateThis = new Action('imda_instantiate_this_call', { name: '实例化此标签', description: '把当前复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && Locator.selected && Locator.selected.length > 0), click: () => instantiateCallTags(Array.from(Locator.selected || [])) });
 	actions.animationTimeline = new Action('imda_animation_timeline', { name: '时间轴属性…', description: '设置该动画导出时间轴使用的 range_dispatch property 与 index', icon: 'timeline', category: 'animation', condition: () => typeof Animation !== 'undefined' && !!Animation.selected, click: () => showAnimationTimelineDialog() });
 	actions.sequence = new Action('imda_sequence', { name: '生成复调用序列…', description: '按大纲顺序生成递增/递减复调用序列，节点类型可选 range_dispatch / composite', icon: 'format_list_numbered', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => openSequenceDialog() });
