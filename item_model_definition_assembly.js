@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.31';
+const VERSION = '0.68.33';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1367,6 +1367,14 @@ function createExporter() {
 		block_display: projectValue('imda_block_display', true) !== false,
 		display_all_slots: projectValue('imda_display_all_slots', false) === true,
 	});
+}
+
+/** F5：触发 Blockbench 原本的 Export action（与按钮一致） */
+function triggerOriginalExport() {
+	try {
+		if (codec_object && typeof codec_object.export === 'function') { codec_object.export(); return; }
+	} catch (error) { console.warn('[装配] 触发原导出失败', error); }
+	try { exportMappingJSON(); } catch (error) { console.error(error); }
 }
 
 /** 快捷导出：只导出 items/*.json 映射文件 */
@@ -4101,7 +4109,7 @@ Plugin.register('item_model_definition_assembly', {
 
 		const condition = () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID);
 		actions.zip = new Action('imda_export_zip', { name: '导出装配资源包 (zip)', description: 'items + models + textures', icon: 'archive', category: 'file', condition, click: exportZip });
-		actions.exportMapping = new Action('imda_export_mapping', { name: '导出物品模型映射（快捷键）', description: '与格式原本的 items/*.json 导出相同；默认快捷键 F5', icon: 'description', category: 'file', condition, keybind: (typeof Keybind !== 'undefined') ? new Keybind({ key: 116 }) : undefined, click: exportMappingJSON });
+		actions.exportMapping = new Action('imda_export_mapping', { name: '导出（原按钮，快捷键）', description: '触发 Blockbench 原本的 File → Export；默认快捷键 F5', icon: 'description', category: 'file', condition, keybind: (typeof Keybind !== 'undefined') ? new Keybind({ key: 116 }) : undefined, click: triggerOriginalExport });
 		actions.merge = new Action('imda_merge_pack', { name: '合并到资源包…', description: '直接写入资源包并覆盖旧文件', icon: 'folder_open', category: 'file', condition, click: mergeToPack });
 		actions.import = new Action('imda_import_model', { name: '导入引用模型（当前分组）', description: '按 imda_model 从资源包工程导入 Java 模型为方块', icon: 'file_download', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const g = pickTargetGroup(); if (!g) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } if (!String(g.imda_model || '').trim()) { Blockbench.showMessageBox({ title: '没有引用模型', message: '该分组没有填写 imda_model（引用模型）。', icon: 'info' }); return; } importModelReference(g); } });
 		actions.call = new Action('imda_call_group', { name: '复调用选中的分组', description: '在分组枢轴处创建复调用标签（Locator），导出时替换为目标分组', icon: 'content_copy', category: 'tools', condition, click: callSelectedGroup });
