@@ -89,6 +89,7 @@
 | `时间轴 FPS`（`imm_anim_fps`） | 20 | 自动采样动画的帧率 |
 | `时间轴 index`（`imm_anim_index`） | 0 | `range_dispatch` 的 custom_model_data 下标 |
 | `自动采样动画时间轴`（`imm_anim_auto`） | 开 | 导出时自动把当前动画采样成 `range_dispatch(timeline)`，无需手动打帧标签 |
+| `输出 node_name`（`imda_export_node_names`） | 开 | 每个映射节点写入 `node_name`，记录来源分组名 |
 | `资源包工程路径`（`imm_pack_path`） | 空 | 合并目标目录（`pack.mcmeta` 所在目录），由「选择资源包工程路径…」写入 |
 | `目标 Minecraft 版本`（`imm_pack_version`） | `26.2` | 决定 `pack.mcmeta` 的格式字段，见上文；在项目设置里直接下拉选择 |
 

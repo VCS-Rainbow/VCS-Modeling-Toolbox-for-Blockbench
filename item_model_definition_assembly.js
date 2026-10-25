@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.66.4';
+const VERSION = '0.66.5';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -650,6 +650,7 @@ class Exporter {
 		// inline（内联模型）在导出结构里等同于 composite：自身方块烘焙成模型，子分组各自输出
 		const outputType = type === 'inline' ? 'composite' : type;
 		const node = { type: 'minecraft:' + outputType };
+		this.applyNodeName(node, group);
 		try { this.groupNodes.set(node, group); } catch (e) { /* ignore */ }
 		try { this.groupNodeCache.set(group, node); } catch (e) { /* ignore */ }
 		const own_shift = built ? built.shift : [0, 0, 0];
@@ -866,6 +867,15 @@ class Exporter {
 		}
 	}
 
+	/** 映射节点记录来源分组名（可在项目设置关闭） */
+	applyNodeName(node, group) {
+		if (!node || !group) return node;
+		if (projectValue('imm_export_node_names', true) === false) return node;
+		if (group.uuid === '__imm_auto_timeline') return node;
+		node.node_name = String((group && group.name) || labelOf(group));
+		return node;
+	}
+
 	/** 分组子树里是否有任何节点带当前帧姿态 */
 	hasPoseInSubtree(group) {
 		if (!this.timelinePoses || !group) return false;
@@ -944,6 +954,7 @@ class Exporter {
 		const prop = String(group.imm_property || 'custom_model_data').replace(/^minecraft:/, '').trim() || 'custom_model_data';
 		const index = (group.imm_index != null) ? num(group.imm_index) : num(projectValue('imm_anim_index', 0));
 		const node = { type: 'minecraft:range_dispatch', property: 'minecraft:' + prop };
+		if (group.uuid !== '__imm_auto_timeline') node.node_name = String(group.name || labelOf(group));
 		if (prop === 'custom_model_data') node.index = clean(index);
 		node.entries = entries;
 		return node;
@@ -3472,7 +3483,8 @@ P(ModelProject, 'string', 'imm_namespace', { label: '命名空间（可带子空
 P(ModelProject, 'number', 'imm_anim_fps', { label: '时间轴 FPS', default: 20, min: 1, max: 120 });
 P(ModelProject, 'number', 'imm_anim_index', { label: '时间轴 custom_model_data index', default: 0 });
 P(ModelProject, 'string', 'imm_anim_property', { label: '时间轴 range_dispatch property', default: 'custom_model_data' });
-P(ModelProject, 'boolean', 'imm_anim_auto', { label: '导出时自动采样动画时间轴', default: true });
+P(ModelProject, 'boolean', 'imm_export_node_names', { label: '输出 node_name（来源分组名）', default: true });
+	P(ModelProject, 'boolean', 'imm_anim_auto', { label: '导出时自动采样动画时间轴', default: true });
 	P(ModelProject, 'boolean', 'imm_hide_unavailable', { label: '隐藏当前条件下不可用的分组', default: true });
 	P(ModelProject, 'string', 'imm_pack_path', { label: '资源包工程路径（pack.mcmeta 所在目录）', default: '' });
 	P(ModelProject, 'string', 'imm_pack_version', {
