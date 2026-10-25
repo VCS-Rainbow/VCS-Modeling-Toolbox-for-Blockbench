@@ -2,6 +2,13 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.67.0
+- 修逐帧姿态全部相同：采样时同步 `Timeline.time`，并把存档里 `animator.keyframes` 回填到 rotation/position 通道后再插值。
+- 时间轴命名：总控 range 为 `* timeline`；帧节点为 `frame 时.分.秒.帧`（帧从 1 起）。
+- 时间轴模型文件不再统一用 `timeline` hint，改为按分组路径命名；同一分组所有帧复用同一模型。
+- 动画属性新增 `imda_timeline_property` / `imda_timeline_index`，可在动画右键属性里改该时间线的 range_dispatch 来源与 index。
+- 单测 171 项。
+
 ## 0.66.9
 - 时间轴改为**递归到真正有姿态的节点**，在它原来的层级位置替换成 `range_dispatch`；静态祖先（bone5/bone7/sacpack）保持原 composite 层级，不再把整个 bone7 子树搬进每一帧。
 - 纯容器分组即使自身没有模型，也保留 transformation + node_name 的 shell，避免丢父级变换。

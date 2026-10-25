@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.66.9';
+const VERSION = '0.67.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -912,6 +912,7 @@ class Exporter {
 			for (const uuid of Object.keys(pose || {})) if (pose[uuid] && typeof pose[uuid] === 'object') map.set(uuid, pose[uuid]);
 			frames.set(frame, map);
 		}
+		this.timelineFps = Math.max(1, num(projectValue('imm_anim_fps', 20)) || 20);
 		this.timelineProperty = group.imm_property || 'custom_model_data';
 		this.timelineIndex = (group.imm_index != null) ? num(group.imm_index) : num(projectValue('imm_anim_index', 0));
 		if (!frames.size) return this.buildAutoTimeline(group, hint, parent_shift);
@@ -935,8 +936,9 @@ class Exporter {
 			for (const uuid of Object.keys(sampled.poses[frame])) map.set(uuid, sampled.poses[frame][uuid]);
 			frames.set(frame, map);
 		}
-		this.timelineProperty = group.imm_property || 'custom_model_data';
-		this.timelineIndex = (group.imm_index != null) ? num(group.imm_index) : num(projectValue('imm_anim_index', 0));
+		this.timelineFps = fps;
+		this.timelineProperty = animation.imda_timeline_property || animation.imm_timeline_property || group.imm_property || projectValue('imm_anim_property', 'custom_model_data') || 'custom_model_data';
+		this.timelineIndex = (animation.imda_timeline_index != null) ? num(animation.imda_timeline_index) : ((animation.imm_timeline_index != null) ? num(animation.imm_timeline_index) : ((group.imm_index != null) ? num(group.imm_index) : num(projectValue('imm_anim_index', 0))));
 		return this.buildFrameEntries(group, Array.from(frames.keys()), frames, hint, parent_shift);
 	}
 
@@ -948,12 +950,21 @@ class Exporter {
 	}
 
 	/** 在姿态节点原位置替换为 range_dispatch；静态祖先保持原层级 */
-	buildTimelineTree(group, sorted, frames, hint, parent_shift) {
+	frameLabel(frame, fps) {
+		const total = Math.max(0, Math.floor(num(frame)));
+		const sec = Math.floor(total / fps);
+		const ff = (total % fps) + 1;
+		const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+		return 'frame ' + h + '.' + m + '.' + s + '.' + ff;
+	}
+
+	buildTimelineTree(group, sorted, frames, hint, parent_shift, isRoot) {
+		const groupHint = (hint ? hint + '_' : '') + sanitizePath(labelOf(group), 'group');
 		const anyPose = sorted.some(frame => this.poseInFrame(group, frames.get(frame)));
-		if (!anyPose) { this.timelinePoses = null; this.timelineSkip = null; return this.buildNode(group, hint, parent_shift); }
+		if (!anyPose) { this.timelinePoses = null; this.timelineSkip = null; return this.buildNode(group, groupHint, parent_shift); }
 		const ownPose = sorted.some(frame => { const map = frames.get(frame); return map && map.has(group.uuid || group.name); });
-		const prop = String(projectValue('imm_anim_property', 'custom_model_data') || 'custom_model_data').replace(/^minecraft:/, '').trim() || 'custom_model_data';
-		const index = num(projectValue('imm_anim_index', 0));
+		const prop = String(this.timelineProperty || projectValue('imm_anim_property', 'custom_model_data') || 'custom_model_data').replace(/^minecraft:/, '').trim() || 'custom_model_data';
+		const index = (this.timelineIndex != null) ? this.timelineIndex : num(projectValue('imm_anim_index', 0));
 		const makeRange = (entries, name) => {
 			const node = { type: 'minecraft:range_dispatch', property: 'minecraft:' + prop };
 			if (name) node.node_name = name;
@@ -965,15 +976,18 @@ class Exporter {
 			const entries = [];
 			for (const frame of sorted) {
 				this.timelinePoses = frames.get(frame);
-				const node = this.buildNode(group, hint, parent_shift);
+				const node = this.buildNode(group, groupHint, parent_shift);
 				this.timelinePoses = null;
-				if (node && !this.nodeIsEmpty(node)) entries.push({ threshold: frame, model: node });
+				if (node && !this.nodeIsEmpty(node)) {
+					const framed = { type: 'minecraft:composite', node_name: this.frameLabel(frame, this.timelineFps || 20), models: [node] };
+					entries.push({ threshold: frame, model: framed });
+				}
 			}
-			return entries.length ? makeRange(entries, group.uuid === '__imm_auto_timeline' ? '[动画时间轴]' : labelOf(group) + ' 动画') : null;
+			return entries.length ? makeRange(entries, isRoot ? '* timeline' : labelOf(group) + ' 动画') : null;
 		}
 		const childGroups = (group.children || []).filter(c => c && c.export !== false && isGroup(c));
 		this.timelineSkip = new Set(childGroups); this.timelinePoses = null;
-		const shell = this.buildNode(group, hint, parent_shift);
+		const shell = this.buildNode(group, groupHint, parent_shift);
 		this.timelineSkip = null;
 		let shellNode = shell;
 		if (!shellNode && childGroups.length) {
@@ -986,7 +1000,7 @@ class Exporter {
 		const parentShift = this.groupShifts.get(group) || [0, 0, 0];
 		const childNodes = [];
 		for (const child of childGroups) {
-			const node = this.buildTimelineTree(child, sorted, frames, hint, parentShift);
+			const node = this.buildTimelineTree(child, sorted, frames, groupHint, parentShift, false);
 			if (node && !this.nodeIsEmpty(node)) childNodes.push(node);
 		}
 		if (!shellNode || this.nodeIsEmpty(shellNode)) return childNodes.length ? (childNodes.length === 1 ? childNodes[0] : { type: 'minecraft:composite', models: childNodes }) : null;
@@ -1000,7 +1014,7 @@ class Exporter {
 		if (!animated) return null;
 		const nodes = [];
 		for (const root of roots) {
-			const node = this.buildTimelineTree(root, sorted, frames, hint, parent_shift);
+			const node = this.buildTimelineTree(root, sorted, frames, '', parent_shift, true);
 			if (node && !this.nodeIsEmpty(node)) nodes.push(node);
 		}
 		this.timelinePoses = null; this.timelineSkip = null;
@@ -1104,15 +1118,27 @@ function sampleTimelinePoses(animation, fps, frameCount) {
 		let animator = null;
 		try { animator = animation.getBoneAnimator(group); } catch (e) { animator = null; }
 		if (!animator) continue;
+		try {
+			if (Array.isArray(animator.keyframes)) {
+				for (const kf of animator.keyframes) {
+					const ch = kf && kf.channel;
+					if (!ch) continue;
+					if (!Array.isArray(animator[ch])) animator[ch] = [];
+					if (animator[ch].indexOf(kf) < 0) animator[ch].push(kf);
+				}
+			}
+		} catch (e) { /* ignore */ }
 		const hasRealKeys = (arr) => Array.isArray(arr) && arr.some(k => !!k);
 		const hasKeys = hasRealKeys(animator.keyframes) || !!(animator.channels && Object.keys(animator.channels).some(k => hasRealKeys(animator.channels[k])));
 		if (!hasKeys) continue;
 		animated.push({ group, animator, baseRotation: (group.rotation || [0, 0, 0]).slice(), baseOrigin: (group.origin || [0, 0, 0]).slice() });
 	}
 	const oldTime = animation.time;
+	const oldTimelineTime = (typeof Timeline !== 'undefined' && Timeline) ? Timeline.time : null;
 	const poses = [];
 	for (let frame = 0; frame < frameCount; frame++) {
 		try { animation.time = frame / fps; } catch (e) { /* ignore */ }
+		try { if (typeof Timeline !== 'undefined' && Timeline) Timeline.time = frame / fps; } catch (e) { /* ignore */ }
 		const map = {};
 		for (const item of animated) {
 			let rotation = item.baseRotation.slice();
@@ -1130,6 +1156,7 @@ function sampleTimelinePoses(animation, fps, frameCount) {
 		poses.push(map);
 	}
 	try { animation.time = oldTime; } catch (e) { /* ignore */ }
+	try { if (typeof Timeline !== 'undefined' && Timeline && oldTimelineTime != null) Timeline.time = oldTimelineTime; } catch (e) { /* ignore */ }
 	return { animated, poses };
 }
 
@@ -3514,7 +3541,11 @@ function openSimulator() {
 
 /* ============================== 注册 ============================== */
 
-function registerProperties() {
+function registerProperties() {
+		try { if (typeof Animation !== 'undefined') {
+			new Property(Animation, 'string', 'imda_timeline_property', { default: 'custom_model_data', label: '时间轴 range_dispatch property', description: 'custom_model_data / cooldown / count / damage / time / use_cycle / use_duration / compass 等' });
+			new Property(Animation, 'number', 'imda_timeline_index', { default: 0, label: '时间轴 custom_model_data index' });
+		} } catch (e) { /* ignore */ }
 	const cond = { formats: [FORMAT_ID] };
 	const P = (target, type, name, options) => {
 		let primaryName = name;

@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.66.9', api.VERSION, '0.66.9');
+eq('版本是 0.67.0', api.VERSION, '0.67.0');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -673,9 +673,10 @@ const autoAnimator = { keyframes: [{}], channels: { rotation: [{}], position: [{
 global.Animation = { selected: { length: 0.1, time: 0, getBoneAnimator(group) { return group === autoGroup ? autoAnimator : null; } }, all: [] };
 const autoMapping = api.createExporter().buildMapping();
 eq('自动输出 range_dispatch', autoMapping.model.type, 'minecraft:range_dispatch');
-eq('时间轴节点带 node_name', autoMapping.model.node_name, 'autoGroup 动画');
+eq('时间轴节点带 node_name', autoMapping.model.node_name, '* timeline');
 eq('自动输出两帧', autoMapping.model.entries.length, 2);
 eq('帧阈值 0/1', autoMapping.model.entries.map(e => e.threshold), [0, 1]);
+eq('帧节点名', autoMapping.model.entries[0].model.node_name, 'frame 0.0.0.1');
 eq('逐帧 transformation 不同', JSON.stringify(autoMapping.model.entries[0].model) !== JSON.stringify(autoMapping.model.entries[1].model), true);
 delete global.Animation;
 global.Group.all = savedGroupAllAuto;
