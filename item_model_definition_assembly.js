@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.62';
+const VERSION = '0.68.63';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2573,6 +2573,20 @@ function orderedSelectedGroups() {
 }
 
 /** 序列节点覆盖的分组数量：递减 N…1，递增 1…N */
+function orderedSequenceItems() {
+	const selected = new Set();
+	try { for (const node of (Outliner.selected || [])) { if (node && (isGroup(node) || (isLocator(node) && String(node.imda_call_target || '').trim()))) selected.add(node); } } catch (e) { /* ignore */ }
+	const ordered = [];
+	const walk = (nodes) => {
+		for (const node of (nodes || [])) {
+			if (selected.has(node)) ordered.push(node);
+			if (isGroup(node)) walk(node.children);
+		}
+	};
+	walk((typeof Outliner !== 'undefined' && Outliner) ? Outliner.root : []);
+	return ordered;
+}
+
 function sequenceCounts(total, step, direction) {
 	const counts = [];
 	step = Math.max(1, Math.floor(num(step) || 1));
@@ -2589,22 +2603,23 @@ function sequenceCounts(total, step, direction) {
 /** 生成复调用序列：满节点放本体，其余节点用 a1…ak 的复调用 */
 function generateCallSequence(options) {
 	options = options || {};
-	const groups = orderedSelectedGroups();
-	if (groups.length < 2) { Blockbench.showMessageBox({ title: '分组不足', message: '请先选中至少 2 个分组（按大纲顺序作为 a1…aN）。', icon: 'info' }); return; }
+	const items = orderedSequenceItems();
+	if (items.length < 2) { Blockbench.showMessageBox({ title: '项目不足', message: '按顺序选中至少 2 个分组或复调用 Locator（a1…aN）。普通定位点不参与。', icon: 'info' }); return; }
 	if (typeof Locator === 'undefined') { Blockbench.showMessageBox({ title: '不支持定位点', message: '当前 Blockbench 没有 Locator。', icon: 'warning' }); return; }
-	const total = groups.length;
+	const total = items.length;
 	const countStep = Math.max(1, Math.floor(num(options.countStep) || 1));
 	const direction = String(options.direction || 'decrease') === 'increase' ? 'increase' : 'decrease';
 	const type = String(options.nodeType || 'range_dispatch') === 'composite' ? 'composite' : 'range_dispatch';
 	const counts = sequenceCounts(total, countStep, direction);
-	const parent = groups[0].parent || null;
-	const allSameParent = groups.every(g => (g.parent || null) === parent);
+	const parent = items[0].parent || null;
+	const allSameParent = items.every(g => (g.parent || null) === parent);
 	const sequenceName = String(options.name || '').trim() || '[sequence]';
 	const property = 'minecraft:' + String(options.property || 'custom_model_data').replace(/^minecraft:/, '');
 	const index = num(options.index);
 	const thresholdStart = num(options.thresholdStart);
 	const thresholdStep = num(options.thresholdStep);
-	try { Undo.initEdit({ outliner: true, groups, elements: [] }); } catch (e) { /* ignore */ }
+	const groupsMoved = items.filter(isGroup);
+	try { Undo.initEdit({ outliner: true, groups: groupsMoved, elements: items.filter(isLocator) }); } catch (e) { /* ignore */ }
 	const container = new Group({ name: sequenceName, imda_type: type, origin: [8, 8, 8], rotation: [0, 0, 0] });
 	if (type === 'range_dispatch') { container.imda_property = property; container.imda_index = index; }
 	addAndInit(container, parent);
@@ -2619,30 +2634,35 @@ function generateCallSequence(options) {
 		if (type === 'range_dispatch') node.imda_threshold = thresholdStart + i * thresholdStep;
 		addAndInit(node, container);
 		if (isBody) {
-			for (const group of groups) { try { group.addTo(node); } catch (e) { /* ignore */ } }
+			for (const item of items) { try { item.addTo(node); } catch (e) { /* ignore */ } }
 			continue;
 		}
-		for (const group of groups.slice(0, count)) {
+		for (const item of items.slice(0, count)) {
 			try {
-				const locator = new Locator({ name: '调用 ' + labelOf(group), position: (group.origin || [0, 0, 0]).slice(), rotation: (group.rotation || [0, 0, 0]).slice(), ignore_inherited_scale: true });
+				const sourceGroup = isGroup(item) ? item : null;
+				const position = sourceGroup ? (sourceGroup.origin || [0, 0, 0]).slice() : (Array.isArray(item.position) ? item.position.slice() : [0, 0, 0]);
+				const rotation = sourceGroup ? (sourceGroup.rotation || [0, 0, 0]).slice() : (Array.isArray(item.rotation) ? item.rotation.slice() : [0, 0, 0]);
+				const locator = new Locator({ name: '调用 ' + labelOf(item), position, rotation, ignore_inherited_scale: true });
 				addAndInit(locator, node);
 				generatedLocators.push(locator);
-				locator.imda_call_target = group.uuid;
+				locator.imda_call_target = sourceGroup ? sourceGroup.uuid : String(item.imda_call_target || '').trim();
 				created++;
 			} catch (error) { console.warn('[装配] 创建序列复调用失败', error); }
 		}
 	}
-	try { Undo.finishEdit('生成复调用序列', { outliner: true, groups: groups.concat(generatedGroups), elements: generatedLocators }); } catch (e) { /* ignore */ }
+	try { Undo.finishEdit('生成复调用序列', { outliner: true, groups: groupsMoved.concat(generatedGroups), elements: generatedLocators }); } catch (e) { /* ignore */ }
 	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 	try { Project.saved = false; } catch (e) { /* ignore */ }
 	try { simInvalidate(); } catch (e) { /* ignore */ }
-	if (!allSameParent) console.warn('[装配] 选中的分组父级不同，序列容器放在第一个分组的父级下。');
+	if (!allSameParent) console.warn('[装配] 序列项父级不同，容器放在第一项的父级下。');
 	Blockbench.showQuickMessage('已生成 ' + sequenceName + '（' + direction + '）：' + counts.length + ' 个节点，' + created + ' 个复调用', 4000);
 }
 
+
 function openSequenceDialog() {
 	
-	if (selectedGroups().length < 2) { Blockbench.showMessageBox({ title: '请选择分组', message: '先在 outliner 里按顺序选中至少 2 个分组，再生成复调用序列。', icon: 'info' }); return; }new Dialog({
+	if (orderedSequenceItems().length < 2) { Blockbench.showMessageBox({ title: '项目不足', message: '先在 outliner 里按顺序选中至少 2 个分组或复调用 Locator，再生成复调用序列。', icon: 'info' }); return; }
+	new Dialog({
 		id: 'imda_sequence',
 		title: '生成复调用序列',
 		width: 560,
@@ -4558,7 +4578,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callModelPrefill, orderedSelectedGroups, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

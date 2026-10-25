@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.62', api.VERSION, '0.68.62');
+eq('版本是 0.68.63', api.VERSION, '0.68.63');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -819,6 +819,16 @@ eq('根参数 hand_animation_on_swap', rootJson.indexOf('hand_animation_on_swap'
 eq('根参数 oversized_in_gui', rootJson.indexOf('oversized_in_gui') >= 0, true);
 eq('根参数 swap_animation_scale', rootJson.indexOf('swap_animation_scale') >= 0, true);
 delete global.Project.imda_hand_animation_on_swap; delete global.Project.imda_oversized_in_gui; delete global.Project.imda_swap_animation_scale;
+/* ---------- 序列项（分组+Locator） ---------- */
+console.log('\n[序列项]');
+const seqGroup = new global.Group({ name: 'seqGroup', imda_type: 'composite' });
+const seqCall = new global.Locator({ name: 'seqCall', position: [0,0,0], rotation: [0,0,0] });
+seqCall.imda_call_target = 'target-uuid';
+global.Outliner.root.length = 0; global.Outliner.root.push(seqGroup, seqCall);
+global.Outliner.selected.length = 0; global.Outliner.selected.push(seqCall, seqGroup);
+const seqItems = api.orderedSequenceItems();
+eq('序列项包含分组和复调用 Locator', seqItems.length, 2);
+eq('序列项按大纲顺序', seqItems[0] === seqGroup && seqItems[1] === seqCall, true);
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);
