@@ -624,7 +624,7 @@ const dispExporter = api.createExporter();
 dispExporter.addModel([dispCube], 'displayTest');
 eq('手持 display scale = 0.85（对齐引用模型）', dispExporter.models[0].data.display.thirdperson_righthand.scale, [0.85, 0.85, 0.85]);
 eq('不再输出 gui display', dispExporter.models[0].data.display.gui, undefined);
-eq('未设置槽位回退手持旋转', dispExporter.models[0].data.display.firstperson_righthand, undefined);
+eq('未设置槽位回退手持预设', dispExporter.models[0].data.display.firstperson_righthand.scale, [0.68, 0.68, 0.68]);
 
 /* ---------- transformation 单位 ---------- */
 console.log('\n[transformation 单位]');
