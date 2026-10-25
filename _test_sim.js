@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.21', api.VERSION, '0.68.21');
+eq('版本是 0.68.22', api.VERSION, '0.68.22');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -409,6 +409,7 @@ callExporter.addModel = () => ({ reference: 'ns:item/callfake', shift: [0, 0, 0]
 const callJSON = JSON.stringify(callExporter.buildMapping());
 eq('四个复调用标签都被输出', (callJSON.match(/ns:item\/callfake/g) || []).length, 5);
 eq('复调用标签位置生效', /0\.125/.test(callJSON), true);
+eq('复调用使用标签名', callJSON.indexOf('"node_name": "调用 targetGroup"') >= 0, true);
 eq('导出结果不含占位字段', callJSON.indexOf('__imm_call_group'), -1);
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRoot3);
 global.Group.all.splice(global.Group.all.indexOf(targetGroup), 1);

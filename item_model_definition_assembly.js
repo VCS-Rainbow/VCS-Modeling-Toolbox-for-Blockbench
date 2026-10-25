@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.21';
+const VERSION = '0.68.22';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -962,7 +962,7 @@ class Exporter {
 		let group = null;
 		try { if (typeof Group !== 'undefined' && Array.isArray(Group.all)) group = Group.all.find(g => g && g.uuid === target) || null; } catch (e) { /* ignore */ }
 		if (!group) { this.warn('复调用标签 “' + labelOf(locator) + '” 找不到目标分组：' + target); return null; }
-		return { type: 'minecraft:empty', __imm_call_group: group, __imm_call_pose: { position: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() } };
+		return { type: 'minecraft:empty', __imm_call_group: group, __imm_call_name: String(locator.name || labelOf(locator)), __imm_call_pose: { position: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() } };
 	}
 
 	/** 把占位替换为目标分组的映射节点（深拷贝，保留 transformation） */
@@ -977,7 +977,9 @@ class Exporter {
 		if (!target) { this.warn('复调用目标没有可导出的映射节点，已跳过。'); return null; }
 		const clone = JSON.parse(JSON.stringify(target));
 		this.stripCallPlaceholders(clone);
-		return this.wrapCallPose(clone, group, placeholder.__imm_call_pose);
+		const result = this.wrapCallPose(clone, group, placeholder.__imm_call_pose) || clone;
+		if (placeholder.__imm_call_name) result.node_name = placeholder.__imm_call_name;
+		return result;
 	}
 
 	/** 把 Locator 的绝对位置/旋转转换为相对目标分组的补偿 transformation */
