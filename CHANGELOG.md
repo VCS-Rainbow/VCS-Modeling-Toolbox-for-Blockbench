@@ -2,6 +2,10 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.48
+- 修整组选中后 gizmo 枢轴：设置 `Group.first_selected = model 分组`，Blockbench 用 `first_selected.origin` 作为枢轴，和直接点模型分组一致。
+- 单测 192 项。
+
 ## 0.68.47
 - 修整组选中后枢轴不对：把目标 model 分组移到 `Group.multi_selected` 首位，Blockbench 用首项算枢轴。
 - 单测 192 项。

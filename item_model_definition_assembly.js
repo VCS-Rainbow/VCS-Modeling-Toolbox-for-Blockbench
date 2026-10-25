@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.47';
+const VERSION = '0.68.48';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -3300,6 +3300,7 @@ function guardBoxSelection() {
 			if (!group.selected) { group.selected = true; changed = true; }
 			try { if (typeof group.multiSelect === 'function') group.multiSelect(); } catch (e) { /* ignore */ }
 			pushSelected(group);
+			try { Group.first_selected = group; } catch (e) { /* ignore */ }
 			try {
 				const arr = Group.multi_selected;
 				if (Array.isArray(arr)) {
