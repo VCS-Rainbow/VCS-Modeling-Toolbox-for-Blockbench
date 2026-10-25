@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.33';
+const VERSION = '0.68.34';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1370,10 +1370,33 @@ function createExporter() {
 }
 
 /** F5：触发 Blockbench 原本的 Export action（与按钮一致） */
+function findExportMenuItem(items) {
+	for (const raw of (items || [])) {
+		let item = raw;
+		if (typeof raw === 'string') {
+			item = (typeof BarItems !== 'undefined' && BarItems) ? BarItems[raw] : null;
+		}
+		if (!item) continue;
+		const name = String(item.name || '');
+		if (name.indexOf('物品模型映射') >= 0 || name.indexOf('Item Model Mapping') >= 0) return item;
+		if (Array.isArray(item.children)) {
+			const found = findExportMenuItem(item.children);
+			if (found) return found;
+		}
+	}
+	return null;
+}
+
 function triggerOriginalExport() {
 	try {
-		if (codec_object && typeof codec_object.export === 'function') { codec_object.export(); return; }
-	} catch (error) { console.warn('[装配] 触发原导出失败', error); }
+		const fileMenu = (typeof MenuBar !== 'undefined' && MenuBar.menus) ? MenuBar.menus.file : null;
+		const item = fileMenu ? findExportMenuItem(fileMenu.structure) : null;
+		if (item) {
+			if (typeof item.trigger === 'function') { item.trigger(); return; }
+			if (typeof item.click === 'function') { item.click(); return; }
+		}
+	} catch (error) { console.warn('[装配] 查找导出菜单失败', error); }
+	try { if (codec_object && typeof codec_object.export === 'function') { codec_object.export(); return; } } catch (error) { console.warn('[装配] codec.export 失败', error); }
 	try { exportMappingJSON(); } catch (error) { console.error(error); }
 }
 
