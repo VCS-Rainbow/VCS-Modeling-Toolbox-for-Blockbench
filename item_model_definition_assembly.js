@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.67.2';
+const VERSION = '0.67.3';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -271,6 +271,45 @@ function migratePropPrefixes(removeLegacy) {
 }
 
 /** 在 Blockbench 原生动画属性对话框里追加时间轴 range_dispatch 设置 */
+/** 当前动画的时间轴 range_dispatch 设置 */
+function showAnimationTimelineDialog(animation) {
+	animation = animation || ((typeof Animation !== 'undefined' && Animation) ? Animation.selected : null);
+	if (!animation) { Blockbench.showQuickMessage('请先选择一个动画。', 2500); return; }
+	new Dialog({
+		id: 'imda_animation_timeline',
+		title: '时间轴属性 — ' + (animation.name || 'animation'),
+		width: 480,
+		form: {
+			imda_timeline_property: {
+				label: 'range_dispatch property',
+				type: 'select',
+				value: animation.imda_timeline_property || 'custom_model_data',
+				options: { custom_model_data: 'custom_model_data', cooldown: 'cooldown', count: 'count', damage: 'damage', time: 'time', use_cycle: 'use_cycle', use_duration: 'use_duration', compass: 'compass' },
+			},
+			imda_timeline_index: { label: 'custom_model_data index', type: 'number', value: num(animation.imda_timeline_index) },
+		},
+		onConfirm(result) {
+			try { Undo.initEdit({ animations: [animation] }); } catch (e) { /* ignore */ }
+			animation.imda_timeline_property = result.imda_timeline_property || 'custom_model_data';
+			animation.imda_timeline_index = num(result.imda_timeline_index);
+			try { Undo.finishEdit('Edit timeline property'); } catch (e) { /* ignore */ }
+			try { Project.saved = false; } catch (e) { /* ignore */ }
+			Blockbench.showQuickMessage('已保存时间轴属性', 2000);
+		},
+	}).show();
+}
+
+function attachAnimationTimelineMenu() {
+	if (typeof Animation === 'undefined' || !Animation || !Animation.prototype) return false;
+	const menu = Animation.prototype.menu;
+	if (!menu || typeof menu.addAction !== 'function') return false;
+	if (menu.__imdaTimelineAdded) return true;
+	menu.__imdaTimelineAdded = true;
+	try { menu.addAction(new MenuSeparator('imda_timeline_sep')); } catch (e) { /* ignore */ }
+	try { menu.addAction(actions.animationTimeline); } catch (e) { /* ignore */ }
+	return true;
+}
+
 function installAnimationPropertiesPatch() {
 	if (typeof Animation === 'undefined' || !Animation || !Animation.prototype) return;
 	if (Animation.prototype.__imdaDialogPatched) return;
@@ -3714,6 +3753,8 @@ Plugin.register('item_model_definition_assembly', {
 	onload() {
 		try { adoptImdaAll(); } catch (e) { /* ignore */ }
 		try { installAnimationPropertiesPatch(); } catch (e) { /* ignore */ }
+		try { attachAnimationTimelineMenu(); } catch (e) { /* ignore */ }
+		setTimeout(() => { try { installAnimationPropertiesPatch(); attachAnimationTimelineMenu(); } catch (e) { /* ignore */ } }, 800);
 		try { if (typeof Blockbench !== 'undefined' && Blockbench.on) Blockbench.on('load_project', () => { try { adoptImdaAll(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
 		console.log('[装配] onload 开始，版本 ' + VERSION);
 		try {
@@ -3796,7 +3837,8 @@ Plugin.register('item_model_definition_assembly', {
 		actions.call = new Action('imm_call_group', { name: '复调用选中的分组', description: '在分组枢轴处创建复调用标签（Locator），导出时替换为目标分组', icon: 'content_copy', category: 'tools', condition, click: callSelectedGroup });
 	actions.bakeTimeline = new Action('imm_bake_timeline', { name: '解析动画时间轴（写入帧标签，旧流程）', description: '按项目 FPS 采样当前动画，生成 range_dispatch(timeline) 分组与逐帧 Locator；导出时也会自动采样，一般不需要手动执行', icon: 'timeline', category: 'tools', condition: () => typeof Animation !== 'undefined' && Animation && (Animation.selected || (Array.isArray(Animation.all) && Animation.all.length)), click: () => bakeTimelineToCallTags() });
 	actions.removeTimeline = new Action('imm_remove_timeline', { name: '移除动画时间线复调用标签', description: '删除项目里所有 range_dispatch(timeline) 分组及其 Locator 帧标签', icon: 'delete', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner && Outliner.root.some(n => isGroup(n) && String(n.imm_type || '') === 'range_dispatch_timeline')), click: () => removeTimelineTags() });
-	actions.instantiateCalls = new Action('imm_instantiate_calls', { name: '实例化所有复调用标签', description: '把复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner), click: () => instantiateCallTags() });
+	actions.instantiateCalls = new Action('imm_instantiate_calls', { name: '实例化所有复调用标签', description: '把复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner), click: () => instantiateCallTags() });
+	actions.animationTimeline = new Action('imda_animation_timeline', { name: '时间轴属性…', description: '设置该动画导出时间轴使用的 range_dispatch property 与 index', icon: 'timeline', category: 'animation', condition: () => typeof Animation !== 'undefined' && !!Animation.selected, click: () => showAnimationTimelineDialog() });
 	actions.migratePrefix = new Action('imm_migrate_prefix', { name: '迁移属性前缀（imm_ → imda_）…', description: '把项目里所有 imm_* 属性迁移到 imda_*：可复制（保留旧键）或重命名（删除旧键）', icon: 'swap_horiz', category: 'tools', click: () => migratePrefixDialog() });
 		actions.createModel = new Action('imm_create_model', { name: '从分组创建模型…', description: '把选中分组的方块烘焙成 models/item 模型，并改为引用（自动居中）', icon: 'file_upload', category: 'tools', condition, click: () => { const group = pickTargetGroup(); if (!group) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } createModelFromGroup(group); } });
 		actions.check = new Action('imm_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
