@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.6';
+const VERSION = '0.68.7';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2196,6 +2196,43 @@ function migratePrefixDialog() {
 	}).show();
 }
 
+/** 把所有 composite 分组的直属 cube 收进 inline 子分组，等价于导出时的内联模型 */
+function normalizeCompositeCubes() {
+	const groups = (typeof Group !== 'undefined' && Group.all) ? Group.all.slice() : [];
+	const targets = groups.filter(group => group && (group.imm_type === undefined || group.imm_type === '' || group.imm_type === 'composite'));
+	if (!targets.length) { Blockbench.showQuickMessage('没有 composite 分组。', 2500); return 0; }
+	let moved = 0;
+	const created = [];
+	const changed = [];
+	try { Undo.initEdit({ outliner: true, groups: targets.slice() }); } catch (e) { /* ignore */ }
+	for (const group of targets) {
+		const cubes = (group.children || []).filter(c => isCube(c));
+		if (!cubes.length) continue;
+		const inline = new Group({ name: labelOf(group) + ' [inline]', imm_type: 'inline', origin: [8, 8, 8], rotation: [0, 0, 0] });
+		addAndInit(inline, group);
+		try { if (typeof inline.createUniqueName === 'function') inline.createUniqueName(); } catch (e) { /* ignore */ }
+		for (const cube of cubes) {
+			try { cube.addTo(inline); moved++; } catch (error) { console.warn('[装配] 移动 cube 到 inline 失败', error); }
+		}
+		created.push(inline);
+		changed.push(group);
+	}
+	try { Undo.finishEdit('规范化 composite 内联模型', { outliner: true, groups: targets.concat(created), elements: [] }); } catch (e) { /* ignore */ }
+	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+	try { Project.saved = false; } catch (e) { /* ignore */ }
+	try { simInvalidate(); } catch (e) { /* ignore */ }
+	Blockbench.showQuickMessage('已规范化 ' + changed.length + ' 个 composite：移动 ' + moved + ' 个 cube 到 ' + created.length + ' 个 inline 分组', 4000);
+	return created.length;
+}
+
+function openNormalizeDialog() {
+	Blockbench.showMessageBox({
+		title: '规范化结构',
+		message: '把每个 composite 分组的直属 cube 收进一个 inline 子分组（等价于导出时的内联模型）。\n不会改变位置/旋转，可撤销。',
+		buttons: ['取消', '规范化'], confirm: 1, cancel: 0,
+	}, (button) => { if (button === 1) { try { normalizeCompositeCubes(); } catch (error) { Blockbench.showMessageBox({ title: '规范化失败', message: String((error && error.message) || error), icon: 'error' }); } } });
+}
+
 /** 按大纲顺序排列选中分组 */
 function orderedSelectedGroups() {
 	const selected = new Set(selectedGroups());
@@ -3984,6 +4021,7 @@ Plugin.register('item_model_definition_assembly', {
 	actions.animationTimeline = new Action('imda_animation_timeline', { name: '时间轴属性…', description: '设置该动画导出时间轴使用的 range_dispatch property 与 index', icon: 'timeline', category: 'animation', condition: () => typeof Animation !== 'undefined' && !!Animation.selected, click: () => showAnimationTimelineDialog() });
 	actions.migratePrefix = new Action('imm_migrate_prefix', { name: '迁移属性前缀（imm_ → imda_）…', description: '把项目里所有 imm_* 属性迁移到 imda_*：可复制（保留旧键）或重命名（删除旧键）', icon: 'swap_horiz', category: 'tools', click: () => migratePrefixDialog() });
 	actions.sequence = new Action('imda_sequence', { name: '生成复调用序列…', description: '按大纲顺序生成递增/递减复调用序列，节点类型可选 range_dispatch / composite', icon: 'format_list_numbered', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID), click: () => openSequenceDialog() });
+	actions.normalize = new Action('imda_normalize', { name: '规范化结构（composite 内联模型）…', description: '把 composite 的直属 cubes 收进 inline 子分组，等价于导出结构', icon: 'account_tree', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID), click: () => openNormalizeDialog() });
 		actions.createModel = new Action('imm_create_model', { name: '从分组创建模型…', description: '把选中分组的方块烘焙成 models/item 模型，并改为引用（自动居中）', icon: 'file_upload', category: 'tools', condition, click: () => { const group = pickTargetGroup(); if (!group) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } createModelFromGroup(group); } });
 		actions.check = new Action('imm_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
 		actions.pack = new Action('imm_pick_pack', { name: '选择资源包工程路径…', description: '打开系统文件夹选择框，设为资源包工程目录', icon: 'folder_open', category: 'file', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: pickPackPath });
@@ -4015,6 +4053,7 @@ Plugin.register('item_model_definition_assembly', {
 		addMenu(actions.migratePrefix, 'tools');
 		addMenu(actions.animationTimeline, 'tools');
 		addMenu(actions.sequence, 'tools');
+		addMenu(actions.normalize, 'tools');
 		try { attachAnimationTimelineMenu(); } catch (e) { /* ignore */ }
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
 		// 面板会自动出现在「视图 → 面板」里，不再占用 Tools 菜单
@@ -4032,7 +4071,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, copyImmToImda, migratePropPrefixes, formatMapping, orderedSelectedGroups, sequenceCounts, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, copyImmToImda, migratePropPrefixes, formatMapping, orderedSelectedGroups, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

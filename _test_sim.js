@@ -31,8 +31,8 @@ global.THREE = {
 	MeshBasicMaterial: class { constructor(o) { Object.assign(this, o || {}); this.color = { v: (o && o.color) || 0xffffff, setHex(h) { this.v = h; } }; } dispose() { } },
 };
 global.Texture = class { constructor(o) { Object.assign(this, o); } }; Texture.all = [];
-global.Cube = class { constructor(o) { Object.assign(this, o); } }; global.Cube.all = [];
-global.Group = class { constructor(o) { Object.assign(this, o); this.children = []; } }; global.Group.all = [];
+global.Cube = class { constructor(o) { Object.assign(this, o); } addTo(parent) { if (this.parent && Array.isArray(this.parent.children)) { const old = this.parent.children.indexOf(this); if (old >= 0) this.parent.children.splice(old, 1); } if (parent) { this.parent = parent; if (Array.isArray(parent.children) && parent.children.indexOf(this) < 0) parent.children.push(this); } return this; } init() { return this; } }; global.Cube.all = [];
+global.Group = class { constructor(o) { Object.assign(this, o); this.children = []; } addTo(parent) { if (this.parent && Array.isArray(this.parent.children)) { const old = this.parent.children.indexOf(this); if (old >= 0) this.parent.children.splice(old, 1); } if (parent) { this.parent = parent; if (Array.isArray(parent.children) && parent.children.indexOf(this) < 0) parent.children.push(this); } else if (Array.isArray(global.Outliner.root) && global.Outliner.root.indexOf(this) < 0) global.Outliner.root.push(this); return this; } init() { return this; } }; global.Group.all = [];
 global.Locator = class { constructor(o) { Object.assign(this, o); this.uuid = (o && o.uuid) || ('loc-' + Math.random()); } addTo() { return this; } init() { return this; } };
 global.Outliner = { root: [], selected: [] };
 global.Project = { name: 'test', imm_pack_version: '26.2' };
@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.6', api.VERSION, '0.68.6');
+eq('版本是 0.68.7', api.VERSION, '0.68.7');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -722,6 +722,19 @@ eq('步长 2 递增', api.sequenceCounts(5, 2, 'increase'), [1, 3, 5]);
 eq('步长 2 递减', api.sequenceCounts(5, 2, 'decrease'), [5, 3, 1]);
 global.Outliner.selected = [];
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedSeqRoot);
+/* ---------- 规范化结构 ---------- */
+console.log('\n[规范化结构]');
+const normGroup = new global.Group({ name: 'normGroup', imm_type: 'composite' });
+const normCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
+normCube.parent = normGroup; normGroup.children.push(normCube);
+const savedNormRoot = global.Outliner.root.splice(0, global.Outliner.root.length, normGroup);
+const savedNormAll = global.Group.all; global.Group.all = [normGroup];
+const normCreated = api.normalizeCompositeCubes();
+const normInline = normGroup.children.find(n => n.imm_type === 'inline');
+eq('生成 inline 子分组', normCreated >= 1 && !!normInline, true);
+eq('cube 移入 inline', normCube.parent === normInline, true);
+eq('composite 不再有直属 cube', normGroup.children.some(n => n === normCube), false);
+global.Group.all = savedNormAll; global.Outliner.root.splice(0, global.Outliner.root.length, ...savedNormRoot);
 /* ---------- 属性前缀迁移 ---------- */
 console.log('\n[属性前缀迁移]');
 const prefixGroup = new global.Group({ name: 'prefixGroup', imm_type: 'composite', imm_index: 3 });
