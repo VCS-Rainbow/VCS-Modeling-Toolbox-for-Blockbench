@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.68';
+const VERSION = '0.68.69';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2759,7 +2759,7 @@ function instantiateCallTags() {
 				done++;
 			} catch (error) { console.warn('[装配] 实例化复调用失败', error); }
 		}
-		try { Undo.finishEdit('实例化所有复调用标签', { outliner: true, groups: createdGroups, elements: locators }); } catch (e) { /* ignore */ }
+		try { Undo.finishEdit('实例化所有复调用标签', { outliner: true, groups: createdGroups, elements: createdCubes.concat(locators) }); } catch (e) { /* ignore */ }
 		try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 		try { Project.saved = false; } catch (e) { /* ignore */ }
 		Blockbench.showQuickMessage('已实例化 ' + done + ' 个复调用标签', 3000);
