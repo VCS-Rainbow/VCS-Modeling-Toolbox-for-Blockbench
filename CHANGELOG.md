@@ -2,6 +2,10 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.36
+- 找导出菜单项增加 Keybinds.actions 名称回退，并在 1.5s 后重试；找到后把 F5 写入它的 keybind 并保存。
+- 单测 188 项。
+
 ## 0.68.35
 - F5 不再绑在插件自建 Action 上，改为查找「导出物品模型映射」菜单项并写入它的 keybind（`keybind.set(...).save()`）。
 - 删除插件 Action 的 F5 keybind，避免抢占。

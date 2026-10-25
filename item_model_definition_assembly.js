@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.35';
+const VERSION = '0.68.36';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1392,7 +1392,10 @@ function bindF5ToOriginalExport() {
 	try {
 		const fileMenu = (typeof MenuBar !== 'undefined' && MenuBar.menus) ? MenuBar.menus.file : null;
 		if (!fileMenu) return false;
-		const item = findExportMenuItem(fileMenu.structure);
+		let item = findExportMenuItem(fileMenu.structure);
+		if (!item) {
+			try { item = Keybinds.actions.find(a => String(a.name || '').indexOf('物品模型映射') >= 0 || String(a.name || '').indexOf('Item Model Mapping') >= 0) || null; } catch (e) { item = null; }
+		}
 		if (!item) { console.warn('[装配] 未找到「导出物品模型映射」菜单项，F5 未绑定'); return false; }
 		if (!item.keybind || typeof item.keybind.set !== 'function') { console.warn('[装配] 导出菜单项没有 keybind，F5 未绑定', item.id || item.name); return false; }
 		item.keybind.set(new Keybind({ key: 116 })).save();
@@ -4070,7 +4073,7 @@ Plugin.register('item_model_definition_assembly', {
 	onload() {
 		try { migrateLegacyAll(); } catch (e) { /* ignore */ }
 		try { installAnimationPropertiesPatch(); } catch (e) { /* ignore */ }
-		try { bindF5ToOriginalExport(); } catch (e) { /* ignore */ }
+		try { bindF5ToOriginalExport(); setTimeout(() => { try { bindF5ToOriginalExport(); } catch (e) { /* ignore */ } }, 1500); } catch (e) { /* ignore */ }
 		try { attachAnimationTimelineMenu(); } catch (e) { /* ignore */ }
 		
 		try { if (typeof Blockbench !== 'undefined' && Blockbench.on) Blockbench.on('load_project', () => { try { migrateLegacyAll(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
