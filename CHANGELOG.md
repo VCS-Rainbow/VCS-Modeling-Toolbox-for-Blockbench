@@ -2,6 +2,10 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.70
+- 复调用标签支持覆盖参数：threshold / property / index / scale；编辑对话框显示源映射类型（只读）。
+- 导出时克隆目标节点后应用 property/index/scale；复调用挂在 range_dispatch 下时按 threshold 生成 entries。
+- 单测 203 项。
 ## 0.68.69
 - 修实例化撤销残留方块：复制子树里的 cube 全部收集进 Undo `elements`，原 Locator 也登记。
 - 单测 203 项。

@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.69';
+const VERSION = '0.68.70';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -799,7 +799,8 @@ class Exporter {
 		if (transformation) node.transformation = transformation;
 
 		const extras = ownCubes.map(cube => this.buildCubeNode(cube, hint, parent_shift)).filter(Boolean);
-		const calls = children.filter(isLocator).map(locator => this.buildCallNode(locator)).filter(Boolean);
+		const callLocators = children.filter(isLocator);
+		const calls = callLocators.map(locator => this.buildCallNode(locator)).filter(Boolean);
 		if (calls.length && type !== 'composite' && type !== 'inline' && type !== 'range_dispatch' && type !== 'select') {
 			this.warn('复调用标签只支持放在 composite / inline 分组里，已忽略 ' + calls.length + ' 个。');
 			calls.length = 0;
@@ -867,6 +868,17 @@ class Exporter {
 				node.entries.push({ threshold: clean(formatted !== null ? formatted : (manual !== 0 ? manual : branch_index)), model: childNode });
 				branch_index++;
 			}
+			for (const locator of callLocators) {
+				try {
+					const callNode = this.buildCallNode(locator);
+					if (!callNode) continue;
+					const rawThreshold = String(locator.imda_call_threshold == null ? '' : locator.imda_call_threshold).trim();
+					const threshold = /^-?\d+(\.\d+)?$/.test(rawThreshold) ? Number(rawThreshold) : branch_index;
+					node.entries.push({ threshold: clean(threshold), model: callNode });
+					branch_index++;
+				} catch (e) { /* ignore */ }
+			}
+			calls.length = 0;
 			let fallback = built ? { type: 'minecraft:model', model: built.reference } : (extras[0] || null);
 			if (calls.length) fallback = this.composeWithCalls(fallback, calls);
 			if (fallback) { this.groupNodes.set(fallback, group); node.fallback = fallback; }
@@ -980,7 +992,7 @@ class Exporter {
 		let group = null;
 		try { if (typeof Group !== 'undefined' && Array.isArray(Group.all)) group = Group.all.find(g => g && g.uuid === target) || null; } catch (e) { /* ignore */ }
 		if (!group) { this.warn('复调用标签 “' + labelOf(locator) + '” 找不到目标分组：' + target); return null; }
-		return { type: 'minecraft:empty', __imda_call_group: group, __imda_call_name: String(locator.name || labelOf(locator)), __imda_call_pose: { position: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() } };
+		return { type: 'minecraft:empty', __imda_call_group: group, __imda_call_name: String(locator.name || labelOf(locator)), __imda_call_pose: { position: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() }, __imda_call_overrides: { property: String(locator.imda_call_property || '').trim(), index: String(locator.imda_call_index == null ? '' : locator.imda_call_index).trim(), scale: String(locator.imda_call_scale == null ? '' : locator.imda_call_scale).trim(), threshold: String(locator.imda_call_threshold == null ? '' : locator.imda_call_threshold).trim() } };
 	}
 
 	/** 把占位替换为目标分组的映射节点（深拷贝，保留 transformation） */
@@ -996,6 +1008,12 @@ class Exporter {
 		const clone = JSON.parse(JSON.stringify(target));
 		this.stripCallPlaceholders(clone);
 		const result = this.wrapCallPose(clone, group, placeholder.__imda_call_pose) || clone;
+		try {
+			const ov = placeholder.__imda_call_overrides || {};
+			if (ov.property) result.property = 'minecraft:' + String(ov.property).replace(/^minecraft:/, '');
+			if (ov.index !== '') result.index = clean(num(ov.index));
+			if (ov.scale !== '') result.scale = clean(num(ov.scale));
+		} catch (e) { /* ignore */ }
 		if (placeholder.__imda_call_name) result.node_name = placeholder.__imda_call_name;
 		return result;
 	}
@@ -2398,7 +2416,7 @@ function editGroupProps() {
 				label: '映射类型（type）', description: '语法：{"type": "minecraft:<类型>"}\n作用：决定本节点是哪一种物品模型映射。\n可选：composite / model / range_dispatch / condition / empty', type: 'select', value: String(group.imda_type || 'composite'),
 				options: { composite: 'composite', inline: 'inline（内联模型）', model: 'model（引用模型）', internal: 'internal（内部结构）', range_dispatch: 'range_dispatch', range_dispatch_timeline: 'range_dispatch(timeline)（逐帧时间轴）', condition: 'condition', select: 'select', empty: 'empty' },
 			},
-			imda_model: { label: '引用模型（model）', description: '语法：{"type": "minecraft:model", "model": "<命名空间>:item/<路径>"}\n作用：本节点直接引用一个 Java 版模型；\n留空则由本层方块生成模型文件。', type: 'text', value: String(group.imda_model || ''), condition: (r) => r.imda_type === 'model' },
+			imda_model: { label: '引用模型（model）', description: '语法：{"type": "minecraft:model", "model": "<命名空间>:item/<路径>"}\n作用：本节点直接引用一个 Java 版模型；\n留空则由本层方块生成模型文件。', type: 'text', value: String(group.imda_model || ''), condition: (r) => r.imda_type === 'model' },
 			imda_display_mode: { label: '强制统一显示调整', type: 'select', value: String(group.imda_display_mode || 'copy'), options: { copy: '生成模型副本', none: '不处理', overwrite: '覆盖源模型参数' }, description: '引用模型的 display 与当前“显示调整”页不一致时：\n生成副本 = 在项目里生成一份改好 display 的模型副本（默认）\n不处理 = 保持原模型\n覆盖源模型参数 = 直接改写资源包里的原模型文件', condition: (r) => r.imda_type === 'model' },
 			imda_property: { label: 'property（谓词 / 属性）', type: 'select', value: String(group.imda_property || ''), options: { '': '（未设置）', selected: 'selected', broken: 'broken', damaged: 'damaged', carried: 'carried', extended_view: 'extended_view', using_item: 'using_item', view_entity: 'view_entity', 'fishing_rod/cast': 'fishing_rod/cast', 'bundle/has_selected_item': 'bundle/has_selected_item', custom_model_data: 'custom_model_data', has_component: 'has_component', component: 'component', keybind_down: 'keybind_down', compass: 'compass（range）', count: 'count（range）', damage: 'damage（range）', time: 'time（range）', use_cycle: 'use_cycle（range）', use_duration: 'use_duration（range）', 'bundle/fullness': 'bundle/fullness（range）', cooldown: 'cooldown（range）', 'crossbow/pull': 'crossbow/pull（range）', context_dimension: 'context_dimension（select）', block_state: 'block_state（select）', local_time: 'local_time（select）' }, description: 'condition：谓词（selected / broken / custom_model_data / has_component / component / keybind_down …）；\nrange_dispatch：数值属性（custom_model_data / compass / count / damage / time / use_cycle / use_duration）', condition: (r) => r.imda_type === 'range_dispatch' || r.imda_type === 'condition' },
 			imda_component: { label: 'component（has_component 用）', type: 'text', value: String(group.imda_component || ''), description: '语法："component": "minecraft:lodestone_tracker"', condition: (r) => r.imda_property === 'has_component' },
@@ -2835,13 +2853,24 @@ function editCallTag(locator) {
 		form: {
 			target: { label: '目标分组', type: 'select', value: matchedGroup, options, description: '批量编辑时会把所有选中标签指向同一目标；导出时替换为目标分组的映射节点。' },
 			model: { label: '或模型 id（优先）', type: 'text', value: callModelPrefill(commonTarget, matchedGroup), description: '例如 namespace:item/foo；填写后忽略上面的分组选择。失效的旧 UUID 不会预填到这里。' },
+			sourceType: { label: '源映射类型（跟随源）', type: 'text', value: (groups.find(g => g.uuid === matchedGroup) || {}).imda_type || '', readonly: true, description: '复调用不能改映射类型；导出时保持与源节点一致。' },
+			threshold: { label: '阈值覆盖（父级 range_dispatch 时生效）', type: 'text', value: String(first.imda_call_threshold == null ? '' : first.imda_call_threshold), description: '留空则沿用目标分组的 imda_threshold 或分支序号。' },
+			property: { label: 'property 覆盖', type: 'text', value: String(first.imda_call_property || ''), description: '如 custom_model_data / cooldown / count / damage / time / use_cycle / use_duration；留空跟随源。' },
+			index: { label: 'index 覆盖', type: 'text', value: String(first.imda_call_index == null ? '' : first.imda_call_index), description: 'custom_model_data 下标；留空跟随源。' },
+			scale: { label: 'scale 覆盖', type: 'text', value: String(first.imda_call_scale == null ? '' : first.imda_call_scale), description: 'range_dispatch 的 scale；留空跟随源。' },
 		},
 		onConfirm(result) {
 			try {
 				const model = String(result.model || '').trim();
 				const target = model || String(result.target || '').trim();
 				try { Undo.initEdit({ elements: locators }); } catch (e) { /* ignore */ }
-				for (const item of locators) item.imda_call_target = target;
+				for (const item of locators) {
+					item.imda_call_target = target;
+					item.imda_call_threshold = String(result.threshold == null ? '' : result.threshold).trim();
+					item.imda_call_property = String(result.property || '').trim();
+					item.imda_call_index = String(result.index == null ? '' : result.index).trim();
+					item.imda_call_scale = String(result.scale == null ? '' : result.scale).trim();
+				}
 				console.log('[装配] 编辑复调用标签', locators.length, '→', target);
 				if (target && target.indexOf(':') < 0 && typeof Group !== 'undefined' && Array.isArray(Group.all) && !Group.all.some(g => g && g.uuid === target)) {
 					Blockbench.showMessageBox({ title: '目标分组不存在', message: '目标 UUID 不在当前项目里：' + target + '\n请重新选择目标分组。', icon: 'warning' });
@@ -4318,7 +4347,7 @@ function openSimulator() {
 
 /* ============================== 注册 ============================== */
 
-function registerProperties() {
+function registerProperties() {
 		try { if (typeof Animation !== 'undefined') {
 			new Property(Animation, 'string', 'imda_timeline_property', { default: 'custom_model_data', label: '时间轴 range_dispatch property', description: 'custom_model_data / cooldown / count / damage / time / use_cycle / use_duration / compass 等' });
 			new Property(Animation, 'number', 'imda_timeline_index', { default: 0, label: '时间轴 custom_model_data index' });
@@ -4363,14 +4392,18 @@ P(ModelProject, 'number', 'imda_extra_composite_layers', { label: '调试：额�
 	P(Face, 'number', 'tint', { label: '着色 index', default: -1 });
 
 	P(Group, 'string', 'imda_type', { label: '映射类型（type）', description: '语法：{"type": "minecraft:<类型>"}\n作用：决定本节点是哪一种物品模型映射。\ncomposite=结构分组；inline=内联模型（本组方块烘焙成模型）；model=引用模型；internal=内部结构（引用模型内部骨骼，不单独导出）；还有 range_dispatch / condition / select / empty', default: 'composite', enum_values: MAPPING_TYPES });
-	P(Group, 'string', 'imda_model', { label: '引用模型（imda_model）', default: '' });
+	P(Group, 'string', 'imda_model', { label: '引用模型（imda_model）', default: '' });
 	P(Group, 'string', 'imda_display_mode', { label: '强制统一显示调整', default: 'copy' });
 	try { new Property(Group, 'string', 'imda_model_shift', { default: '', exposed: false, condition: cond }); } catch (e) { /* ignore */ }
 	try { new Property(Group, 'string', 'imda_model_origin', { default: '', exposed: false, condition: cond }); } catch (e) { /* ignore */ }
 	try { new Property(Group, 'string', 'imda_pivot_offset', { default: '', exposed: false, condition: cond }); } catch (e) { /* ignore */ }
 	try { new Property(Cube, 'string', 'imda_pivot_offset', { default: '', exposed: false, condition: cond }); } catch (e) { /* ignore */ }
 	if (typeof Locator !== 'undefined') {
-		try { new Property(Locator, 'string', 'imda_call_target', { label: '复调用目标（分组 UUID 或模型 id）', default: '', exposed: false }); } catch (e) { /* ignore */ }
+		try { new Property(Locator, 'string', 'imda_call_target', { label: '复调用目标（分组 UUID 或模型 id）', default: '', exposed: false }); } catch (e) { /* ignore */ }
+		try { new Property(Locator, 'string', 'imda_call_threshold', { label: '复调用阈值覆盖', default: '', exposed: false }); } catch (e) { /* ignore */ }
+		try { new Property(Locator, 'string', 'imda_call_property', { label: '复调用 property 覆盖', default: '', exposed: false }); } catch (e) { /* ignore */ }
+		try { new Property(Locator, 'string', 'imda_call_index', { label: '复调用 index 覆盖', default: '', exposed: false }); } catch (e) { /* ignore */ }
+		try { new Property(Locator, 'string', 'imda_call_scale', { label: '复调用 scale 覆盖', default: '', exposed: false }); } catch (e) { /* ignore */ }
 		try { new Property(Locator, 'number', 'imda_frame', { default: 0, exposed: false }); } catch (e) { /* ignore */ }
 		try { new Property(Locator, 'string', 'imda_pose', { default: '', exposed: false }); } catch (e) { /* ignore */ }
 	}
@@ -4532,28 +4565,28 @@ Plugin.register('item_model_definition_assembly', {
 		format_object.codec = codec_object;
 
 		const condition = () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID);
-		actions.zip = new Action('imda_export_zip', { name: '导出装配资源包 (zip)', description: 'items + models + textures', icon: 'archive', category: 'file', condition, click: exportZip });
+		actions.zip = new Action('imda_export_zip', { name: '导出装配资源包 (zip)', description: 'items + models + textures', icon: 'archive', category: 'file', condition, click: exportZip });
 		actions.merge = new Action('imda_merge_pack', { name: '合并到资源包…', description: '直接写入资源包并覆盖旧文件；默认快捷键 F5', icon: 'folder_open', category: 'file', condition, keybind: (typeof Keybind !== 'undefined') ? new Keybind({ key: 116 }) : undefined, click: mergeToPack });
 		actions.import = new Action('imda_import_model', { name: '导入引用模型（当前分组）', description: '按 imda_model 从资源包工程导入 Java 模型为方块', icon: 'file_download', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const g = pickTargetGroup(); if (!g) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } if (!String(g.imda_model || '').trim()) { Blockbench.showMessageBox({ title: '没有引用模型', message: '该分组没有填写 imda_model（引用模型）。', icon: 'info' }); return; } importModelReference(g); } });
 		actions.call = new Action('imda_call_group', { name: '复调用选中的分组', description: '在分组枢轴处创建复调用标签（Locator），导出时替换为目标分组', icon: 'content_copy', category: 'tools', condition, click: callSelectedGroup });
 	actions.bakeTimeline = new Action('imda_bake_timeline', { name: '解析动画时间轴（写入帧标签，旧流程）', description: '按项目 FPS 采样当前动画，生成 range_dispatch(timeline) 分组与逐帧 Locator；导出时也会自动采样，一般不需要手动执行', icon: 'timeline', category: 'tools', condition: () => typeof Animation !== 'undefined' && Animation && (Animation.selected || (Array.isArray(Animation.all) && Animation.all.length)), click: () => bakeTimelineToCallTags() });
 	actions.removeTimeline = new Action('imda_remove_timeline', { name: '移除动画时间线复调用标签', description: '删除项目里所有 range_dispatch(timeline) 分组及其 Locator 帧标签', icon: 'delete', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner && Outliner.root.some(n => isGroup(n) && String(n.imda_type || '') === 'range_dispatch_timeline')), click: () => removeTimelineTags() });
-	actions.instantiateCalls = new Action('imda_instantiate_calls', { name: '实例化所有复调用标签', description: '把复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner), click: () => instantiateCallTags() });
+	actions.instantiateCalls = new Action('imda_instantiate_calls', { name: '实例化所有复调用标签', description: '把复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner), click: () => instantiateCallTags() });
 	actions.animationTimeline = new Action('imda_animation_timeline', { name: '时间轴属性…', description: '设置该动画导出时间轴使用的 range_dispatch property 与 index', icon: 'timeline', category: 'animation', condition: () => typeof Animation !== 'undefined' && !!Animation.selected, click: () => showAnimationTimelineDialog() });
-	actions.sequence = new Action('imda_sequence', { name: '生成复调用序列…', description: '按大纲顺序生成递增/递减复调用序列，节点类型可选 range_dispatch / composite', icon: 'format_list_numbered', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => openSequenceDialog() });
+	actions.sequence = new Action('imda_sequence', { name: '生成复调用序列…', description: '按大纲顺序生成递增/递减复调用序列，节点类型可选 range_dispatch / composite', icon: 'format_list_numbered', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => openSequenceDialog() });
 	actions.convertCall = new Action('imda_convert_call', { name: '将分组转化为复调用标签', description: '在同位置创建 Locator 调用该分组，并让原分组停止直接导出', icon: 'content_copy', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID) && selectedGroups().length > 0, click: () => convertSelectedGroupsToCallTags() });
 	actions.normalize = new Action('imda_normalize', { name: '规范化结构…', description: '按当前导出规范整理项目结构（当前：composite 直属 cube → inline 子分组）', icon: 'account_tree', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID), click: () => openNormalizeDialog() });
 		actions.createModel = new Action('imda_create_model', { name: '从分组创建模型…', description: '把选中分组的方块烘焙成 models/item 模型，并改为引用（自动居中）', icon: 'file_upload', category: 'tools', condition, click: () => { const group = pickTargetGroup(); if (!group) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } createModelFromGroup(group); } });
 		actions.check = new Action('imda_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
 		actions.pack = new Action('imda_pick_pack', { name: '选择资源包工程路径…', description: '打开系统文件夹选择框，设为资源包工程目录', icon: 'folder_open', category: 'file', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: pickPackPath });
 		actions.sim = new Action('imda_simulate', { name: '模拟输入…', description: '按 custom_model_data / selected 预览分支命中', icon: 'play_circle', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const panel = buildSimPanel(false); if (panel) { panel.show(); return; } openSimulator(); } });
-		actions.pivot = new Action('imda_fix_pivot', { name: '枢轴归位（对齐几何中心）…', description: '把分组 origin 移到几何中心，补偿方块坐标，外观不变', icon: 'center_focus_strong', category: 'tools', condition, click: openPivotFix });
+		actions.pivot = new Action('imda_fix_pivot', { name: '枢轴归位（对齐几何中心）…', description: '把分组 origin 移到几何中心，补偿方块坐标，外观不变', icon: 'center_focus_strong', category: 'tools', condition, click: openPivotFix });
 		actions.pivotRestore = new Action('imda_restore_pivot', { name: '从记录重建枢轴点…', description: '按「枢轴归位」保存的局部偏移，把分组/方块枢轴移回原来的位置', icon: 'restore', category: 'tools', condition, click: restorePivotFromRecordDialog });
 		actions.pivotFromSource = new Action('imda_pivot_from_source', { name: '参考源文件重建枢轴点…', description: '读取源模型几何中心相对原点的偏移，按当前旋转换算为局部坐标，移动分组枢轴和复调用标签并保持外观', icon: 'my_location', category: 'tools', condition, click: rebuildPivotFromSourceDialog });
 		actions.props = new Action('imda_group_props', { name: '编辑分组映射属性…', description: '映射类型 / 引用模型 / property 等', icon: 'tune', category: 'tools', condition, click: editGroupProps });
 		actions.boxToggle = new Action('imda_box_toggle', { name: '开关：框选方块时改选所属分组', description: '切换“一次选中多个方块时自动改为选中其父分组”', icon: 'select_all', category: 'tools', click: () => { if (!immBoxSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !boxGroupsEnabled(); setBoxSelectGroups(next); try { if (typeof immBoxSetting.save === 'function') immBoxSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('框选方块改选所属分组：' + (next ? '开' : '关') + (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID ? '（装配格式内强制开启）' : ''), 2600); } });
 		actions.batchToggle = new Action('imda_batch_toggle', { name: '开关：批量选组时取消元素选择', description: '切换“同时选中多个分组时自动取消方块/定位点选择”', icon: 'select_all', category: 'tools', click: () => { if (!immBatchSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !batchGroupsOnlyEnabled(); setBatchGroupsOnly(next); try { if (typeof immBatchSetting.save === 'function') immBatchSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('批量选择时取消单个元素：' + (next ? '开' : '关'), 2200); } });
-		actions.editCall = new Action('imda_edit_call', { name: '编辑复调用标签…', description: '修改选中的复调用 Locator 指向的分组或模型 id', icon: 'edit', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && Locator.selected && Locator.selected.length > 0), click: () => { const locator = (Locator.selected && Locator.selected[0]) || null; if (!locator) { Blockbench.showMessageBox({ title: '请先选中复调用标签', message: '在 outliner 里选中一个 Locator（复调用标签）。', icon: 'info' }); return; } editCallTag(locator); } });
+		actions.editCall = new Action('imda_edit_call', { name: '编辑复调用标签…', description: '修改选中的复调用 Locator 指向的分组或模型 id', icon: 'edit', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && Locator.selected && Locator.selected.length > 0), click: () => { const locator = (Locator.selected && Locator.selected[0]) || null; if (!locator) { Blockbench.showMessageBox({ title: '请先选中复调用标签', message: '在 outliner 里选中一个 Locator（复调用标签）。', icon: 'info' }); return; } editCallTag(locator); } });
 		actions.repairCalls = new Action('imda_repair_calls', { name: '修复失效的复调用目标…', description: '扫描所有目标 UUID 已不存在的复调用标签，统一改成指定分组', icon: 'build', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID) && invalidCallTags().length > 0, click: repairCallTargetsDialog });
 
 		addMenu(actions.zip, 'file.export');
