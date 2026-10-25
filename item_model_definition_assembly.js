@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.50';
+const VERSION = '0.68.51';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -751,7 +751,14 @@ class Exporter {
 		this.applyNodeName(node, group);
 		try { this.groupNodes.set(node, group); } catch (e) { /* ignore */ }
 		try { this.groupNodeCache.set(group, node); } catch (e) { /* ignore */ }
-		const own_shift = built ? built.shift : [0, 0, 0];
+		let own_shift = built ? built.shift : [0, 0, 0];
+		if (type === 'model') {
+			const O = Array.isArray(group.origin) ? group.origin : [0, 0, 0];
+			let Os = O;
+			try { const parsed = JSON.parse(String(group.imda_model_origin || '')); if (Array.isArray(parsed) && parsed.length === 3) Os = parsed; } catch (e) { /* ignore */ }
+			const delta = [0, 1, 2].map(a => (Number(O[a]) || 0) - (Number(Os[a]) || 0));
+			own_shift = [0, 1, 2].map(a => (Number(own_shift[a]) || 0) + delta[a]);
+		}
 		this.groupShifts.set(group, own_shift);
 		const transformation = this.buildTransformation(group, own_shift, parent_shift);
 		if (transformation) node.transformation = transformation;
@@ -2804,14 +2811,13 @@ function importModelReference(group) {
 	console.log('[装配] 解析结果', resolved.error ? ('ERR: ' + resolved.error) : (resolved.elements.length + ' 个 element'));
 	if (resolved.error) { Blockbench.showMessageBox({ title: '导入失败', message: resolved.error, icon: 'error' }); return false; }
 	const elements = resolved.elements;
-	// 引用模型的几何坐标已经是 Java 模型坐标，不能再叠加目标分组 origin，否则导出时分组变换会二次应用
-	const import_base = [0, 0, 0];
+	// 源模型原点 → 目标分组枢轴：把源模型整体平移，使坐标原点与分组枢轴重合
+	const sourceRootForImport = (resolved.groups || [])[0];
+	const sourceOriginForImport = Array.isArray(sourceRootForImport && sourceRootForImport.origin) ? sourceRootForImport.origin : [0, 0, 0];
+	const targetOriginForImport = Array.isArray(group.origin) ? group.origin : [0, 0, 0];
+	const import_base = [0, 1, 2].map(a => (Number(targetOriginForImport[a]) || 0) - (Number(sourceOriginForImport[a]) || 0));
+	try { group.imda_model_origin = JSON.stringify(sourceOriginForImport.slice()); } catch (e) { /* ignore */ }
 	try {
-		const sourceRoot = (resolved.groups || [])[0];
-		if (sourceRoot) {
-			try { group.origin = Array.isArray(sourceRoot.origin) ? sourceRoot.origin.slice() : [0, 0, 0]; } catch (e) { /* ignore */ }
-			try { group.rotation = Array.isArray(sourceRoot.rotation) ? sourceRoot.rotation.slice() : [0, 0, 0]; } catch (e) { /* ignore */ }
-		}
 		try { if (typeof unselectAll === 'function') unselectAll(); } catch (e) { /* ignore */ }
 		Undo.initEdit({ groups: [group], elements: (group.children || []).filter(isCube) });
 		// 清空原有子项与方块
@@ -4070,6 +4076,7 @@ P(ModelProject, 'number', 'imda_extra_composite_layers', { label: '调试：额�
 	P(Group, 'string', 'imda_model', { label: '引用模型（imda_model）', default: '' });
 	P(Group, 'string', 'imda_display_mode', { label: '强制统一显示调整', default: 'copy' });
 	try { new Property(Group, 'string', 'imda_model_shift', { default: '', exposed: false, condition: cond }); } catch (e) { /* ignore */ }
+	try { new Property(Group, 'string', 'imda_model_origin', { default: '', exposed: false, condition: cond }); } catch (e) { /* ignore */ }
 	if (typeof Locator !== 'undefined') {
 		try { new Property(Locator, 'string', 'imda_call_target', { label: '复调用目标（分组 UUID 或模型 id）', default: '', exposed: false }); } catch (e) { /* ignore */ }
 		try { new Property(Locator, 'number', 'imda_frame', { default: 0, exposed: false }); } catch (e) { /* ignore */ }
