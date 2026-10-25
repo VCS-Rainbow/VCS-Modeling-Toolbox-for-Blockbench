@@ -2,6 +2,10 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.66.1
+- 命名统一：插件名 **VCS' Modeling Toolbox（VMT）**；装配模块 **Item Model Definition Assembly（IMDA）**；中文“物品模型定义装配”。
+- 格式 id `item_model_definition_assembly` 与 `imm_*` 属性前缀保持不变（兼容旧项目）；`imm` 不再解释为 Item Model Mapping。
+
 ## 0.66.0
 - **display 改用项目“显示调整”页参数**：读取 `Project.display_settings`，按槽位输出 rotation/translation/scale；没有该数据时才回退旧预设。
 - **命名空间支持子空间**：`sqsptst:weapon/shotgun` → items/models 路径和模型引用都带 `weapon/shotgun/` 子路径。

@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.66.0';
+const VERSION = '0.66.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -3463,10 +3463,10 @@ function attachGroupMenu() {
 }
 
 Plugin.register('item_model_definition_assembly', {
-	title: '物品模型映射装配',
+	title: "VCS' Modeling Toolbox",
 	author: 'Blockbench',
 	icon: 'account_tree',
-	description: '新增“物品模型映射装配”格式：每个分组 = 一个 composite/range_dispatch/condition/model 子项，分组变换写入 transformation，可引用 Java 版模型，支持转换项目与直接合并到资源包。',
+	description: "VCS' Modeling Toolbox (VMT) — 物品模型定义装配 (IMDA)：每个分组 = 一个 composite/range_dispatch/condition/model 子项，分组变换写入 transformation，可引用 Java 版模型，支持转换项目与直接合并到资源包。",
 	version: VERSION,
 	variant: 'both',
 	min_version: '5.0.0',
@@ -3502,11 +3502,11 @@ Plugin.register('item_model_definition_assembly', {
 
 		format_object = new ModelFormat(FORMAT_ID, {
 			id: FORMAT_ID,
-			name: '物品模型映射装配',
+			name: '物品模型定义装配（IMDA）',
 			icon: 'icon-format_block',
 			category: 'minecraft',
 			target: 'Minecraft: Java Edition',
-			description: '按物品模型映射组织分组，导出 assets/<ns>/items/<id>.json',
+			description: '按 Item Model Definition Assembly（IMDA）组织分组，导出 assets/<ns>/items/<id>.json',
 			show_on_start_screen: true,
 			show_in_new_list: true,
 			can_convert_to: true,

@@ -1,8 +1,15 @@
-# 物品模型映射装配（item_model_definition_assembly）
+# VCS' Modeling Toolbox（VMT）— 物品模型定义装配（IMDA）
 
 独立的 Blockbench 插件，注册同名模型格式 `item_model_definition_assembly`，用于**可视化装配** Minecraft Java 版物品模型映射（`assets/<ns>/items/<id>.json`）。
 
 > 与之前那个导出插件（`item_model_mapping.js`）是两回事：这个是**模型格式**（可在新建模型/转换项目时选择），那个是一次性转换器。两者共用同一套导出规则（元素 rotation、UV 按纹理 uv 空间换算、负尺寸原样输出、紧凑 JSON 格式）。
+
+## 命名约定
+
+- 插件：**VCS' Modeling Toolbox（VMT）**
+- 模块：**Item Model Definition Assembly（IMDA）**，中文“物品模型定义装配”
+- 格式 id：`item_model_definition_assembly`
+- `imm_*` 是历史兼容前缀
 
 ## 安装 / 使用
 
