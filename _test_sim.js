@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.26', api.VERSION, '0.68.26');
+eq('版本是 0.68.27', api.VERSION, '0.68.27');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -754,6 +754,12 @@ const rangeCallJSON = JSON.stringify(rangeCallExporter.buildMapping());
 eq('range_dispatch 下的复调用被输出', rangeCallJSON.indexOf('rangecallfake') >= 0, true);
 eq('range 复调用不含占位字段', rangeCallJSON.indexOf('__imm_call_group'), -1);
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRangeRoot);
+/* ---------- 属性同步不覆盖 ---------- */
+console.log('\n[属性同步]');
+const adoptNode = { imm_call_target: 'target-uuid', imda_call_target: '' };
+api.adoptImdaProps(adoptNode);
+eq('adopt 不覆盖已有 imm 值', adoptNode.imm_call_target, 'target-uuid');
+eq('adopt 回填缺失 imda', adoptNode.imda_call_target, 'target-uuid');
 /* ---------- 复调用模型 id 预填 ---------- */
 console.log('\n[复调用预填]');
 eq('失效 UUID 不预填模型 id', api.callModelPrefill('6d52650e-a35b-ca94-5ce5-de00d6a3cd51', ''), '');
