@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.56';
+const VERSION = '0.68.57';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -755,7 +755,10 @@ class Exporter {
 		if (type === 'model') {
 			const O = Array.isArray(group.origin) ? group.origin : [0, 0, 0];
 			let Os = O;
-			try { const parsed = JSON.parse(String(group.imda_model_origin || '')); if (Array.isArray(parsed) && parsed.length === 3) Os = parsed; } catch (e) { /* ignore */ }
+			let hasOrigin = false;
+			try { const parsed = JSON.parse(String(group.imda_model_origin || '')); if (Array.isArray(parsed) && parsed.length === 3) { Os = parsed; hasOrigin = true; } } catch (e) { /* ignore */ }
+			// 旧导入数据：方块坐标里已经加了 group.origin，但没有记录 imda_model_origin
+			if (!hasOrigin && !String(group.imda_model_shift || '').trim()) Os = [0, 0, 0];
 			const delta = [0, 1, 2].map(a => (Number(O[a]) || 0) - (Number(Os[a]) || 0));
 			own_shift = [0, 1, 2].map(a => (Number(own_shift[a]) || 0) + delta[a]);
 		}
