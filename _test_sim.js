@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.39', api.VERSION, '0.68.39');
+eq('版本是 0.68.40', api.VERSION, '0.68.40');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -377,7 +377,7 @@ eq('inline 分组节点能反查', inlineExporter.groupNodes.get(inlineMapping.m
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRoot2);
 
 const buildModelNode = (shiftText) => {
-	const group = new global.Group({ name: 'refGroup', imda_type: 'model', imda_model: 'ns:item/ref', imda_model_shift: shiftText, origin: [8, 8, 8], rotation: [0, 0, 0] });
+	const group = new global.Group({ name: 'internalRefGroup', imda_type: 'model', imda_model: 'ns:item/ref', imda_model_shift: shiftText, origin: [8, 8, 8], rotation: [0, 0, 0] });
 	group.mesh = { visible: true };
 	const saved = global.Outliner.root.splice(0, global.Outliner.root.length, group);
 	const exporter = api.createExporter();
@@ -561,16 +561,16 @@ global.Outliner.selected.length = 0; boxInlineCube1.selected = true; boxInlineCu
 global.Outliner.selected.push(boxInlineCube1, boxInlineCube2);
 api.guardBoxSelection();
 eq('只选内建模型元素时保持原样', global.Outliner.selected.indexOf(boxInlineCube1) >= 0 && global.Outliner.selected.indexOf(boxInlineGroup) < 0, true);
-const refGroup = new global.Group({ name: 'refGroup', imda_type: 'model', imda_model: 'ns:item/ref' });
-global.Outliner.root.push(refGroup);
+const boxRefGroup = new global.Group({ name: 'boxRefGroup', imda_type: 'model', imda_model: 'ns:item/ref' });
+global.Outliner.root.push(boxRefGroup);
 const refCube1 = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
 const refCube2 = new global.Cube({ from: [3, 0, 0], to: [5, 2, 2], origin: [4, 1, 1], rotation: [0, 0, 0] });
-refCube1.parent = refGroup; refCube2.parent = refGroup; refGroup.children.push(refCube1, refCube2); refCube1.unselect = detachBox; refCube2.unselect = detachBox;
-refGroup.markAsSelected = function () { this.selected = true; if (global.Outliner.selected.indexOf(this) < 0) global.Outliner.selected.push(this); for (const child of this.children) { child.selected = true; if (global.Outliner.selected.indexOf(child) < 0) global.Outliner.selected.push(child); } };
+refCube1.parent = boxRefGroup; refCube2.parent = boxRefGroup; boxRefGroup.children.push(refCube1, refCube2); refCube1.unselect = detachBox; refCube2.unselect = detachBox;
+boxRefGroup.markAsSelected = function () { this.selected = true; if (global.Outliner.selected.indexOf(this) < 0) global.Outliner.selected.push(this); for (const child of this.children) { child.selected = true; if (global.Outliner.selected.indexOf(child) < 0) global.Outliner.selected.push(child); } };
 global.Outliner.selected.length = 0; refCube1.selected = true; refCube2.selected = true;
 global.Outliner.selected.push(refCube1, refCube2);
 api.guardBoxSelection();
-eq('引用模型分组不享受例外', global.Outliner.selected.indexOf(refGroup) >= 0 && global.Outliner.selected.indexOf(refCube1) >= 0, true);
+eq('引用模型分组不享受例外', global.Outliner.selected.indexOf(boxRefGroup) >= 0 && global.Outliner.selected.indexOf(refCube1) >= 0, true);
 
 const savedFormatId = global.Format.id; global.Format.id = 'other';
 global.Outliner.selected.length = 0; boxCube1.selected = true; boxCube2.selected = true;
@@ -766,6 +766,15 @@ eq('旧前缀迁移 call_target', legacyNode.imda_call_target, 'target-uuid');
 eq('旧前缀迁移 type', legacyNode.imda_type, 'composite');
 eq('旧前缀迁移 index', legacyNode.imda_index, 3);
 eq('旧键被删除', Object.keys(legacyNode).some(k => k.startsWith(OLD)), false);
+/* ---------- 内部结构 ---------- */
+console.log('\n[内部结构]');
+const internalRefGroup = new global.Group({ name: 'refModel', imda_type: 'model', imda_model: 'ns:item/foo', imda_tint_type: 'custom_model_data', imda_tint_index: '2' });
+const internalInnerGroup = new global.Group({ name: 'inner', imda_type: 'internal' });
+internalInnerGroup.parent = internalRefGroup; internalRefGroup.children.push(internalInnerGroup);
+const internalInnerCube = new global.Cube({ from: [0,0,0], to: [1,1,1], origin: [0,0,0], rotation: [0,0,0] });
+internalInnerCube.parent = internalInnerGroup; internalInnerGroup.children.push(internalInnerCube);
+eq('内部结构向上选中引用模型组', api.selectionGroupForCube(internalInnerCube.parent) === internalRefGroup, true);
+eq('内部结构继承引用模型 tint 链', internalInnerGroup.parent === internalRefGroup, true);
 /* ---------- 复调用模型 id 预填 ---------- */
 console.log('\n[复调用预填]');
 eq('失效 UUID 不预填模型 id', api.callModelPrefill('6d52650e-a35b-ca94-5ce5-de00d6a3cd51', ''), '');

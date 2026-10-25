@@ -18,11 +18,11 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.39';
+const VERSION = '0.68.40';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
-const MAPPING_TYPES = ['composite', 'inline', 'model', 'range_dispatch', 'range_dispatch_timeline', 'condition', 'select', 'empty'];
+const MAPPING_TYPES = ['composite', 'inline', 'model', 'internal', 'range_dispatch', 'range_dispatch_timeline', 'condition', 'select', 'empty'];
 const MANIFEST = '.imm-assembly-manifest.json';
 
 const BLOCK_DISPLAY = {
@@ -727,7 +727,8 @@ class Exporter {
 		const children = (group.children || []).filter(c => c && c.export !== false);
 		const childGroups = children.filter(isGroup).filter(c => !this.timelineSkip || !this.timelineSkip.has(c));
 		const cubes = children.filter(isCube);
-		const type = this.normalizeType(group.imda_type);
+		let type = this.normalizeType(group.imda_type);
+		if (type === 'internal') type = 'composite';
 
 		const inlineCubes = [];
 		const ownCubes = [];
@@ -2192,11 +2193,20 @@ function editGroupProps() {
 					const own = tintIndexOf(node);
 					const effective = (own !== undefined) ? own : inherited;
 					for (const child of node.children || []) {
-						if (isGroup(child)) { walkTint(child, effective); continue; }
+						if (isGroup(child)) {
+							if (effective !== undefined && String(child.imda_type || '').replace(/^minecraft:/, '') === 'internal') {
+								if (node.imda_tint_type !== undefined && node.imda_tint_type !== '') child.imda_tint_type = node.imda_tint_type;
+								if (node.imda_tint_index !== undefined && String(node.imda_tint_index).trim() !== '') child.imda_tint_index = node.imda_tint_index;
+								if (node.imda_tint_value !== undefined) child.imda_tint_value = node.imda_tint_value;
+								if (node.imda_tints !== undefined) child.imda_tints = node.imda_tints;
+							}
+							walkTint(child, effective);
+							continue;
+						}
 						if (!isCube(child)) continue;
 						const faces = Object.values(child.faces || {});
 						if (!faces.length) continue;
-						if (faces.some(f => typeof f.tint === 'number' && f.tint >= 0)) continue;
+						
 						if (effective === undefined) continue;
 						for (const f of faces) f.tint = effective;
 						tinted++;
@@ -2827,7 +2837,7 @@ function importModelReference(group) {
 					node = new Group({ name: String(src.name || 'group'), origin, rotation }).addTo(parentNode);
 					try { if (typeof node.init === 'function') node.init(); } catch (e) { /* ignore */ }
 					try { if (typeof node.createUniqueName === 'function') node.createUniqueName(); } catch (e) { /* ignore */ }
-					node.imda_type = 'inline';
+					node.imda_type = 'internal';
 					if (hasSourceTint) {
 						node.imda_tint_type = sourceTintType;
 						if (group.imda_tint_index !== undefined) node.imda_tint_index = group.imda_tint_index;
@@ -3037,11 +3047,22 @@ function simApplySlot(inputs, key, slot) {
 /* 只改运行时材质/可见性：不碰纹理、UV、元素数据，也不写项目/撤销。 */
 
 /* 预览着色：按面的 tintindex 取 colors[tintindex]，只替换运行时材质，不改纹理/UV */
+function tintGroupOf(group) {
+	let node = group;
+	while (isGroup(node)) {
+		const type = String(node.imda_tint_type == null ? '' : node.imda_tint_type).replace(/^minecraft:/, '').trim();
+		const index = String(node.imda_tint_index == null ? '' : node.imda_tint_index).trim();
+		if (type && type !== 'none' && /^-?\d+$/.test(index)) return node;
+		node = node.parent;
+	}
+	return null;
+}
+
 function simTintColorOf(cube) {
 	const faces = cube && cube.faces;
 	if (!faces) return null;
 	// 分组明确“不生成 tints”时不着色
-	const group = cube.parent;
+	const group = tintGroupOf(cube.parent);
 	if (!group) return null;
 	if (group.imda_tint_type === '' || group.imda_tint_type === 'none') return null;
 	const type = String(group.imda_tint_type == null ? 'custom_model_data' : group.imda_tint_type).replace(/^minecraft:/, '').trim() || 'custom_model_data';
@@ -3236,6 +3257,18 @@ function isBuiltInModelGroup(group) {
 }
 
 /** 一次选中多个方块时，改为选中它们各自的父分组 */
+function selectionGroupForCube(parent) {
+	let node = parent;
+	let last = parent;
+	while (isGroup(node)) {
+		last = node;
+		const type = String(node.imda_type || '').toLowerCase().replace(/^minecraft:/, '');
+		if (type !== 'internal') return node;
+		node = node.parent;
+	}
+	return last;
+}
+
 function guardBoxSelection() {
 	// 用户点选的是分组（含父分组优先级）：不要重算选择，交给 Blockbench 原生 gizmo 逻辑
 	if (Array.isArray(Outliner.selected) && Outliner.selected.length && isGroup(Outliner.selected[0])) return;
@@ -4014,7 +4047,7 @@ P(ModelProject, 'number', 'imda_extra_composite_layers', { label: '调试：额�
 	// 面着色：Blockbench 的 UV 编辑器“着色”开关绑定 Face.properties.tint（默认 -1 表示未着色）
 	P(Face, 'number', 'tint', { label: '着色 index', default: -1 });
 
-	P(Group, 'string', 'imda_type', { label: '映射类型（type）', description: '语法：{"type": "minecraft:<类型>"}\n作用：决定本节点是哪一种物品模型映射。\ncomposite=结构分组；inline=内联模型（本组方块烘焙成模型）；model=引用模型；还有 range_dispatch / condition / select / empty', default: 'composite', enum_values: MAPPING_TYPES });
+	P(Group, 'string', 'imda_type', { label: '映射类型（type）', description: '语法：{"type": "minecraft:<类型>"}\n作用：决定本节点是哪一种物品模型映射。\ncomposite=结构分组；inline=内联模型（本组方块烘焙成模型）；model=引用模型；internal=内部结构（引用模型内部骨骼，不单独导出）；还有 range_dispatch / condition / select / empty', default: 'composite', enum_values: MAPPING_TYPES });
 	P(Group, 'string', 'imda_model', { label: '引用模型（imda_model）', default: '' });
 	P(Group, 'string', 'imda_display_mode', { label: '强制统一显示调整', default: 'copy' });
 	try { new Property(Group, 'string', 'imda_model_shift', { default: '', exposed: false, condition: cond }); } catch (e) { /* ignore */ }
@@ -4254,7 +4287,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, migrateLegacyAll, migrateLegacyNode, callModelPrefill, orderedSelectedGroups, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callModelPrefill, orderedSelectedGroups, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
