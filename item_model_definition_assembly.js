@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.8';
+const VERSION = '0.68.9';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -3977,7 +3977,7 @@ Plugin.register('item_model_definition_assembly', {
 					value: false,
 				});
 				immBatchSetting = new Setting('imm_batch_groups_only', {
-					name: '批量选择分组时自动取消单个元素',
+					name: '批量选择分组时只保留分组（取消方块/定位点选择）',
 					description: '同时选中两个及以上分组时，自动取消被一起选中的方块/定位点，避免批量操作误改单个元素。',
 					category: 'edit',
 					type: 'checkbox',
@@ -4051,16 +4051,15 @@ Plugin.register('item_model_definition_assembly', {
 	actions.migratePrefix = new Action('imm_migrate_prefix', { name: '迁移属性前缀（imm_ → imda_）…', description: '把项目里所有 imm_* 属性迁移到 imda_*：可复制（保留旧键）或重命名（删除旧键）', icon: 'swap_horiz', category: 'tools', click: () => migratePrefixDialog() });
 	actions.sequence = new Action('imda_sequence', { name: '生成复调用序列…', description: '按大纲顺序生成递增/递减复调用序列，节点类型可选 range_dispatch / composite', icon: 'format_list_numbered', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID) && selectedGroups().length >= 2, click: () => openSequenceDialog() });
 	actions.convertCall = new Action('imda_convert_call', { name: '将分组转化为复调用标签', description: '在同位置创建 Locator 调用该分组，并让原分组停止直接导出', icon: 'content_copy', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID) && selectedGroups().length > 0, click: () => convertSelectedGroupsToCallTags() });
-	actions.normalize = new Action('imda_normalize', { name: '规范化结构（composite 内联模型）…', description: '把 composite 的直属 cubes 收进 inline 子分组，等价于导出结构', icon: 'account_tree', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID), click: () => openNormalizeDialog() });
+	actions.normalize = new Action('imda_normalize', { name: '规范化结构…', description: '按当前导出规范整理项目结构（当前：composite 直属 cube → inline 子分组）', icon: 'account_tree', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID), click: () => openNormalizeDialog() });
 		actions.createModel = new Action('imm_create_model', { name: '从分组创建模型…', description: '把选中分组的方块烘焙成 models/item 模型，并改为引用（自动居中）', icon: 'file_upload', category: 'tools', condition, click: () => { const group = pickTargetGroup(); if (!group) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } createModelFromGroup(group); } });
 		actions.check = new Action('imm_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
 		actions.pack = new Action('imm_pick_pack', { name: '选择资源包工程路径…', description: '打开系统文件夹选择框，设为资源包工程目录', icon: 'folder_open', category: 'file', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: pickPackPath });
 		actions.sim = new Action('imm_simulate', { name: '模拟输入…', description: '按 custom_model_data / selected 预览分支命中', icon: 'play_circle', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const panel = buildSimPanel(false); if (panel) { panel.show(); return; } openSimulator(); } });
-		actions.viewDiag = new Action('imm_view_diag', { name: '诊断：模拟视图联动', description: '打印匹配到的分组/方块/材质数量', icon: 'bug_report', category: 'tools', condition, click: diagnoseSimView });
 		actions.pivot = new Action('imm_fix_pivot', { name: '枢轴归位（对齐几何中心）…', description: '把分组 origin 移到几何中心，补偿方块坐标，外观不变', icon: 'center_focus_strong', category: 'tools', condition, click: openPivotFix });
 		actions.props = new Action('imm_group_props', { name: '编辑分组映射属性…', description: '映射类型 / 引用模型 / property 等', icon: 'tune', category: 'tools', condition, click: editGroupProps });
 		actions.boxToggle = new Action('imm_box_toggle', { name: '开关：框选方块时改选所属分组', description: '切换“一次选中多个方块时自动改为选中其父分组”', icon: 'select_all', category: 'tools', click: () => { if (!immBoxSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !boxGroupsEnabled(); setBoxSelectGroups(next); try { if (typeof immBoxSetting.save === 'function') immBoxSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('框选方块改选所属分组：' + (next ? '开' : '关') + (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID ? '（装配格式内强制开启）' : ''), 2600); } });
-		actions.batchToggle = new Action('imm_batch_toggle', { name: '开关：批量选择时取消单个元素', description: '切换“同时选中多个分组时自动取消方块/定位点选择”', icon: 'select_all', category: 'tools', click: () => { if (!immBatchSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !batchGroupsOnlyEnabled(); setBatchGroupsOnly(next); try { if (typeof immBatchSetting.save === 'function') immBatchSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('批量选择时取消单个元素：' + (next ? '开' : '关'), 2200); } });
+		actions.batchToggle = new Action('imm_batch_toggle', { name: '开关：批量选组时取消元素选择', description: '切换“同时选中多个分组时自动取消方块/定位点选择”', icon: 'select_all', category: 'tools', click: () => { if (!immBatchSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !batchGroupsOnlyEnabled(); setBatchGroupsOnly(next); try { if (typeof immBatchSetting.save === 'function') immBatchSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('批量选择时取消单个元素：' + (next ? '开' : '关'), 2200); } });
 		actions.editCall = new Action('imm_edit_call', { name: '编辑复调用标签…', description: '修改选中的复调用 Locator 指向的分组或模型 id', icon: 'edit', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && Locator.selected && Locator.selected.length > 0), click: () => { const locator = (Locator.selected && Locator.selected[0]) || null; if (!locator) { Blockbench.showMessageBox({ title: '请先选中复调用标签', message: '在 outliner 里选中一个 Locator（复调用标签）。', icon: 'info' }); return; } editCallTag(locator); } });
 
 		addMenu(actions.zip, 'file.export');
@@ -4068,14 +4067,12 @@ Plugin.register('item_model_definition_assembly', {
 		placeInFileMenu(actions.pack, ['save_model', 'export', 'import']);
 		
 		const toolsMenu = (typeof MenuBar !== 'undefined' && MenuBar.menus) ? MenuBar.menus.tools : null;
-		const toolSep = (id) => { try { if (toolsMenu && typeof MenuSeparator !== 'undefined') toolsMenu.addAction(new MenuSeparator(id)); } catch (e) { /* ignore */ } };
+		const toolSep = (id, label) => { try { if (toolsMenu && typeof MenuSeparator !== 'undefined') toolsMenu.addAction(new MenuSeparator(id, label)); } catch (e) { /* ignore */ } };
 		const tool = (action) => addMenu(action, 'tools');
 		toolSep('imda_group_structure');
-		tool(actions.check);
 		tool(actions.props);
 		tool(actions.import);
 		tool(actions.createModel);
-		tool(actions.normalize);
 		tool(actions.sequence);
 		toolSep('imda_group_calls');
 		tool(actions.call);
@@ -4090,8 +4087,9 @@ Plugin.register('item_model_definition_assembly', {
 		tool(actions.boxToggle);
 		tool(actions.batchToggle);
 		tool(actions.pivot);
-		tool(actions.viewDiag);
-		toolSep('imda_group_migrate');
+		toolSep('imda_group_debug', '调试');
+		tool(actions.check);
+		tool(actions.normalize);
 		tool(actions.migratePrefix);
 		try { attachAnimationTimelineMenu(); } catch (e) { /* ignore */ }
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
