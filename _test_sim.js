@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.63', api.VERSION, '0.68.63');
+eq('版本是 0.68.64', api.VERSION, '0.68.64');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -829,6 +829,15 @@ global.Outliner.selected.length = 0; global.Outliner.selected.push(seqCall, seqG
 const seqItems = api.orderedSequenceItems();
 eq('序列项包含分组和复调用 Locator', seqItems.length, 2);
 eq('序列项按大纲顺序', seqItems[0] === seqGroup && seqItems[1] === seqCall, true);
+/* ---------- 序列自动补本体 ---------- */
+console.log('\n[序列自动补本体]');
+const seqTarget = new global.Group({ name: 'seqTarget', imda_type: 'composite', uuid: 'seq-target-uuid' });
+const seqCallA = new global.Locator({ name: '调用 A', position: [1,0,0], rotation: [0,0,0] }); seqCallA.imda_call_target = 'seq-target-uuid';
+const seqCallB = new global.Locator({ name: '调用 B', position: [2,0,0], rotation: [0,0,0] }); seqCallB.imda_call_target = 'seq-target-uuid';
+global.Group.all.push(seqTarget); global.Outliner.root.length = 0; global.Outliner.root.push(seqCallA, seqCallB);
+global.Outliner.selected.length = 0; global.Outliner.selected.push(seqCallA, seqCallB);
+const seqAuto = api.orderedSequenceItems();
+eq('只选同目标 Locator 时自动补目标分组', seqAuto[0] === seqTarget && seqAuto.length === 3, true);
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);

@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.63';
+const VERSION = '0.68.64';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2584,6 +2584,14 @@ function orderedSequenceItems() {
 		}
 	};
 	walk((typeof Outliner !== 'undefined' && Outliner) ? Outliner.root : []);
+	// 只选了复调用标签时，把它们的共同目标分组补成本体项，保证满数量节点里有真实分组
+	if (ordered.length && !ordered.some(isGroup) && ordered.every(isLocator)) {
+		const targets = ordered.map(l => String(l.imda_call_target || '').trim()).filter(Boolean);
+		if (targets.length === ordered.length && targets.every(t => t === targets[0])) {
+			const targetGroup = ((typeof Group !== 'undefined' && Group.all) ? Group.all : []).find(g => g && g.uuid === targets[0]);
+			if (targetGroup) ordered.unshift(targetGroup);
+		}
+	}
 	return ordered;
 }
 
@@ -2629,7 +2637,7 @@ function generateCallSequence(options) {
 	for (let i = 0; i < counts.length; i++) {
 		const count = counts[i];
 		const isBody = count === total;
-		const node = new Group({ name: sequenceName + ' #' + (i + 1), imda_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
+		const node = new Group({ name: sequenceName + ' #' + count, imda_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
 		generatedGroups.push(node);
 		if (type === 'range_dispatch') node.imda_threshold = thresholdStart + i * thresholdStep;
 		addAndInit(node, container);
@@ -2642,10 +2650,11 @@ function generateCallSequence(options) {
 				const sourceGroup = isGroup(item) ? item : null;
 				const position = sourceGroup ? (sourceGroup.origin || [0, 0, 0]).slice() : (Array.isArray(item.position) ? item.position.slice() : [0, 0, 0]);
 				const rotation = sourceGroup ? (sourceGroup.rotation || [0, 0, 0]).slice() : (Array.isArray(item.rotation) ? item.rotation.slice() : [0, 0, 0]);
-				const locator = new Locator({ name: '调用 ' + labelOf(item), position, rotation, ignore_inherited_scale: true });
+				const targetGroup = sourceGroup || (((typeof Group !== 'undefined' && Group.all) ? Group.all : []).find(g => g && g.uuid === String(item.imda_call_target || '').trim()) || null);
+				const locator = new Locator({ name: sourceGroup ? ('调用 ' + labelOf(sourceGroup)) : (item.name || ('调用 ' + labelOf(item))), position, rotation, ignore_inherited_scale: true });
 				addAndInit(locator, node);
 				generatedLocators.push(locator);
-				locator.imda_call_target = sourceGroup ? sourceGroup.uuid : String(item.imda_call_target || '').trim();
+				locator.imda_call_target = targetGroup ? targetGroup.uuid : String(item.imda_call_target || '').trim();
 				created++;
 			} catch (error) { console.warn('[装配] 创建序列复调用失败', error); }
 		}
