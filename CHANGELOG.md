@@ -2,6 +2,10 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.60
+- 修 cooldown 时间轴帧被倒置：只倒置阈值（第一帧 1 → 最后一帧 0），entries 保持原帧顺序，不再 reverse。
+- 单测 197 项。
+
 ## 0.68.59
 - 时间轴属性支持 cooldown：阈值钳制到 0..1 并倒置（第一帧 1、最后一帧 0），entries 按阈值升序。
 - 时间轴增加与分组一致的属性：compass target/wobble、time source/wobble、count/damage normalize、use_cycle period、use_duration remaining；动画右键与时间轴属性对话框均可设置。

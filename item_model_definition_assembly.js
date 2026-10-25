@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.59';
+const VERSION = '0.68.60';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1173,7 +1173,7 @@ class Exporter {
 			let finalEntries = entries;
 			if (prop === 'cooldown' && entries.length) {
 				const thresholds = cooldownThresholds(entries.length);
-				finalEntries = entries.map((entry, i) => ({ threshold: thresholds[i], model: entry.model })).reverse();
+				finalEntries = entries.map((entry, i) => ({ threshold: thresholds[i], model: entry.model }));
 			}
 			const node = this.buildTimelineRange(prop, index, this.timelineAttrs || {}, name);
 			node.entries = finalEntries;
@@ -1963,12 +1963,12 @@ function pivotContentPoints(group) {
 
 /** 把分组（及其后代）的内容整体平移 d（本分组本地坐标） */
 /** 平均点：分组枢轴归中与源模型几何中心必须共用这一套 */
-/** cooldown 时间轴阈值：第一帧 1，最后一帧 0；返回按 range_dispatch 升序排列的阈值 */
+/** cooldown 时间轴阈值：按原帧顺序返回，第一帧 1，最后一帧 0 */
 function cooldownThresholds(count) {
 	const n = Math.max(0, Math.floor(num(count)));
 	if (!n) return [];
 	if (n === 1) return [1];
-	return Array.from({ length: n }, (_, i) => clean(1 - i / (n - 1))).reverse();
+	return Array.from({ length: n }, (_, i) => clean(1 - i / (n - 1)));
 }
 
 function averagePoints(points) {
