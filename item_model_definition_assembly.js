@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.82';
+const VERSION = '0.68.83';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1007,17 +1007,17 @@ class Exporter {
 		if (!target) { this.warn('复调用目标没有可导出的映射节点，已跳过。'); return null; }
 		const clone = JSON.parse(JSON.stringify(target));
 		this.stripCallPlaceholders(clone);
-		const result = this.wrapCallPose(clone, group, placeholder.__imda_call_pose) || clone;
 		try {
 			const ov = placeholder.__imda_call_overrides || {};
-			if (ov.property) result.property = 'minecraft:' + String(ov.property).replace(/^minecraft:/, '');
-			for (const key of ['index', 'scale', 'period']) if (ov[key] !== undefined && ov[key] !== '') result[key] = clean(num(ov[key]));
-			for (const key of ['wobble', 'normalize', 'remaining', 'ignore_default']) if (ov[key] === 'true' || ov[key] === 'false') result[key] = ov[key] === 'true';
-			for (const key of ['component', 'predicate', 'value', 'keybind', 'target', 'source', 'condition']) if (ov[key] !== undefined && ov[key] !== '') result[key] = String(ov[key]);
-			if (ov.threshold_format && result.type === 'minecraft:range_dispatch' && Array.isArray(result.entries)) {
-				result.entries.forEach((entry, i) => { const threshold = this.evalThreshold(ov.threshold_format, i); if (threshold !== null) entry.threshold = clean(threshold); });
+			if (ov.property) clone.property = 'minecraft:' + String(ov.property).replace(/^minecraft:/, '');
+			for (const key of ['index', 'scale', 'period']) if (ov[key] !== undefined && ov[key] !== '') clone[key] = clean(num(ov[key]));
+			for (const key of ['wobble', 'normalize', 'remaining', 'ignore_default']) if (ov[key] === 'true' || ov[key] === 'false') clone[key] = ov[key] === 'true';
+			for (const key of ['component', 'predicate', 'value', 'keybind', 'target', 'source', 'condition']) if (ov[key] !== undefined && ov[key] !== '') clone[key] = String(ov[key]);
+			if (ov.threshold_format && clone.type === 'minecraft:range_dispatch' && Array.isArray(clone.entries)) {
+				clone.entries.forEach((entry, k) => { const threshold = this.evalThreshold(ov.threshold_format, k); if (threshold !== null) entry.threshold = clean(threshold); });
 			}
 		} catch (e) { /* ignore */ }
+		const result = this.wrapCallPose(clone, group, placeholder.__imda_call_pose) || clone;
 		if (placeholder.__imda_call_name) result.node_name = placeholder.__imda_call_name;
 		return result;
 	}
@@ -2812,37 +2812,45 @@ function instantiateCallTags(targets) {
 		buttons: ['实例化', '取消'], confirm: 0, cancel: 1,
 	}, (button) => {
 		if (button !== 0) return;
-		try { Undo.initEdit({ outliner: true, elements: [] }); } catch (e) { /* ignore */ }
+		try { Undo.initEdit({ outliner: true, elements: locators.slice() }); } catch (e) { /* ignore */ }
 		let done = 0;
+		const createdGroups = [];
+		const createdCubes = [];
+		const collectCubes = (node) => { for (const child of (node.children || [])) { if (isCube(child)) createdCubes.push(child); else if (isGroup(child)) collectCubes(child); } };
 		for (const locator of locators) {
 			try {
 				const target = String(locator.imda_call_target || '').trim();
 				const groups = (typeof Group !== 'undefined' && Group.all) ? Group.all : [];
 				const targetGroup = groups.find(g => g && g.uuid === target);
 				const parent = locator.parent || null;
+				const siblings = parent && Array.isArray(parent.children) ? parent.children : ((typeof Outliner !== 'undefined' && Outliner && Array.isArray(Outliner.root)) ? Outliner.root : []);
+				const index = siblings.indexOf(locator);
 				let created = null;
 				if (targetGroup) {
 					created = (typeof targetGroup.duplicate === 'function') ? targetGroup.duplicate() : ((typeof targetGroup.clone === 'function') ? targetGroup.clone() : null);
 					if (created) {
-				const oldOrigin = Array.isArray(created.origin) ? created.origin.slice() : [0, 0, 0];
-				const nextOrigin = Array.isArray(locator.position) ? locator.position.slice() : oldOrigin;
-				created.name = locator.name || (labelOf(targetGroup) + ' 实例');
-				try { translateGroupCoordinates(created, [nextOrigin[0] - oldOrigin[0], nextOrigin[1] - oldOrigin[1], nextOrigin[2] - oldOrigin[2]]); } catch (e) { /* ignore */ }
-				created.origin = nextOrigin;
-				created.rotation = Array.isArray(locator.rotation) ? locator.rotation.slice() : (created.rotation || [0, 0, 0]);
-				created.selected = false;
-			}
+						const oldOrigin = Array.isArray(created.origin) ? created.origin.slice() : [0, 0, 0];
+						const nextOrigin = Array.isArray(locator.position) ? locator.position.slice() : oldOrigin;
+						created.name = locator.name || (labelOf(targetGroup) + ' 实例');
+						try { translateGroupCoordinates(created, [nextOrigin[0] - oldOrigin[0], nextOrigin[1] - oldOrigin[1], nextOrigin[2] - oldOrigin[2]]); } catch (e) { /* ignore */ }
+						created.origin = nextOrigin;
+						created.rotation = Array.isArray(locator.rotation) ? locator.rotation.slice() : (created.rotation || [0, 0, 0]);
+						created.selected = false;
+					}
 				} else if (target) {
 					created = new Group({ name: '实例 ' + target.split(':').pop(), imda_type: 'model', imda_model: target, origin: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() });
 				}
 				if (!created) continue;
 				if (parent) created.addTo(parent); else created.addTo();
 				try { created.init(); } catch (e) { /* ignore */ }
+				if (index >= 0) { const at = siblings.indexOf(created); if (at >= 0) siblings.splice(at, 1); siblings.splice(Math.min(index, siblings.length), 0, created); }
+				createdGroups.push(created);
+				collectCubes(created);
 				try { locator.remove(); } catch (e) { /* ignore */ }
 				done++;
 			} catch (error) { console.warn('[装配] 实例化复调用失败', error); }
 		}
-		try { Undo.finishEdit('实例化所有复调用标签', { outliner: true, groups: createdGroups, elements: createdCubes.concat(locators) }); } catch (e) { /* ignore */ }
+		try { Undo.finishEdit('实例化复调用标签', { outliner: true, groups: createdGroups, elements: createdCubes.concat(locators) }); } catch (e) { /* ignore */ }
 		try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 		try { Project.saved = false; } catch (e) { /* ignore */ }
 		Blockbench.showQuickMessage('已实例化 ' + done + ' 个复调用标签', 3000);
@@ -4577,8 +4585,14 @@ function attachGroupMenu() {
 			const menu = Locator.prototype.menu;
 			addSeparator(menu);
 			menu.addAction(actions.editCall);
+			if (actions.instantiateThis) menu.addAction(actions.instantiateThis);
 			locatorMenuAttached = true;
 			console.log('[装配] 已加入复调用标签右键菜单');
+		}
+		if (actions.instantiateThis && typeof Locator !== 'undefined' && Locator.prototype && Locator.prototype.menu && typeof Locator.prototype.menu.addAction === 'function') {
+			const menu = Locator.prototype.menu;
+			const has = Array.isArray(menu.structure) && menu.structure.some(item => item === actions.instantiateThis || (item && item.id === actions.instantiateThis.id));
+			if (!has) menu.addAction(actions.instantiateThis);
 		}
 	} catch (error) { /* ignore */ }
 }
@@ -4680,7 +4694,7 @@ Plugin.register('item_model_definition_assembly', {
 		actions.call = new Action('imda_call_group', { name: '复调用选中的分组', description: '在分组枢轴处创建复调用标签（Locator），导出时替换为目标分组', icon: 'content_copy', category: 'tools', condition, click: callSelectedGroup });
 	actions.bakeTimeline = new Action('imda_bake_timeline', { name: '解析动画时间轴（写入帧标签，旧流程）', description: '按项目 FPS 采样当前动画，生成 range_dispatch(timeline) 分组与逐帧 Locator；导出时也会自动采样，一般不需要手动执行', icon: 'timeline', category: 'tools', condition: () => typeof Animation !== 'undefined' && Animation && (Animation.selected || (Array.isArray(Animation.all) && Animation.all.length)), click: () => bakeTimelineToCallTags() });
 	actions.removeTimeline = new Action('imda_remove_timeline', { name: '移除动画时间线复调用标签', description: '删除项目里所有 range_dispatch(timeline) 分组及其 Locator 帧标签', icon: 'delete', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner && Outliner.root.some(n => isGroup(n) && String(n.imda_type || '') === 'range_dispatch_timeline')), click: () => removeTimelineTags() });
-	actions.instantiateCalls = new Action('imda_instantiate_calls', { name: '实例化所有复调用标签', description: '把复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner), click: () => instantiateCallTags() });
+	actions.instantiateCalls = new Action('imda_instantiate_calls', { name: '实例化所有复调用标签', description: '把复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner), click: () => instantiateCallTags() });
 		actions.instantiateSelected = new Action('imda_instantiate_selected_calls', { name: '实例化选中的复调用标签', description: '把当前选中的复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && Locator.selected && Locator.selected.some(l => String(l.imda_call_target || '').trim())), click: () => instantiateCallTags(selectedCallTags()) });
 		actions.instantiateThis = new Action('imda_instantiate_this_call', { name: '实例化此标签', description: '把当前复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && selectedCallTags().length > 0), click: () => { const list = selectedCallTags(); instantiateCallTags(list.length ? [list[0]] : []); } });
 	actions.animationTimeline = new Action('imda_animation_timeline', { name: '时间轴属性…', description: '设置该动画导出时间轴使用的 range_dispatch property 与 index', icon: 'timeline', category: 'animation', condition: () => typeof Animation !== 'undefined' && !!Animation.selected, click: () => showAnimationTimelineDialog() });
