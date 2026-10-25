@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.44';
+const VERSION = '0.68.45';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -3301,6 +3301,10 @@ function guardBoxSelection() {
 				};
 				mark(target);
 				try { if (typeof updateSelection === 'function') updateSelection(); } catch (e) { /* ignore */ }
+				setTimeout(() => {
+					guardingBox = true;
+					try { mark(target); try { if (typeof updateSelection === 'function') updateSelection(); } catch (e) { /* ignore */ } } finally { guardingBox = false; }
+				}, 0);
 			} finally { guardingBox = false; }
 			return;
 		}
