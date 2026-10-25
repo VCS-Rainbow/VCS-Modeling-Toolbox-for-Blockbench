@@ -2,6 +2,11 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.0
+- 移除无效的 display 载体模型（composite 子项是平行关系，空模型不能承载 display）。
+- 新增项目属性「调试：额外空 composite 层数」：导出时在映射根外包 N 层空 composite，用于检测嵌套深度是否导致 display 失效。
+- 单测 173 项。
+
 ## 0.67.9
 - 时间轴根 composite 前插入一个空几何的 display 载体模型，让 `range_dispatch` 结构下游戏仍能解析手持/GUI display。
 - 单测 173 项。

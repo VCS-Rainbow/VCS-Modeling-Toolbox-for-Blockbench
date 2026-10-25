@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.67.9';
+const VERSION = '0.68.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1132,10 +1132,7 @@ class Exporter {
 		}
 		this.timelinePoses = null; this.timelineSkip = null;
 		if (!nodes.length) return null;
-		const root = { type: 'minecraft:composite', models: [] };
-		try { root.models.push({ type: 'minecraft:model', model: this.displayCarrierReference() }); } catch (e) { /* ignore */ }
-		root.models = root.models.concat(nodes);
-		return root;
+		return { type: 'minecraft:composite', models: nodes };
 	}
 
 	buildMapping() {
@@ -1198,6 +1195,14 @@ const models = [];
 		if (this.negativeCount) notes.push('负尺寸（from > to）方块：' + this.negativeCount + ' 个，已原样输出。');
 		for (const w of this.warnings) notes.push('- ' + w);
 		return notes.length ? notes.join('\n') : null;
+	}
+
+	/** 调试：在映射根外包 N 层空 composite，用于检测嵌套深度对 display 的影响 */
+	wrapExtraLayers(node) {
+		const count = Math.max(0, Math.min(10, num(projectValue('imda_extra_composite_layers', 0))));
+		let out = node;
+		for (let i = 0; i < count; i++) out = { type: 'minecraft:composite', models: [out] };
+		return out;
 	}
 
 	buildFiles() {
@@ -3680,7 +3685,8 @@ P(ModelProject, 'string', 'imm_namespace', { label: '命名空间（可带子空
 P(ModelProject, 'number', 'imm_anim_fps', { label: '时间轴 FPS', default: 20, min: 1, max: 120 });
 P(ModelProject, 'number', 'imm_anim_index', { label: '时间轴 custom_model_data index', default: 0 });
 P(ModelProject, 'string', 'imm_anim_property', { label: '时间轴 range_dispatch property', default: 'custom_model_data' });
-P(ModelProject, 'boolean', 'imda_display_all_slots', { label: 'display 输出全部槽位（GUI/地面/固定）', default: false });
+P(ModelProject, 'number', 'imda_extra_composite_layers', { label: '调试：额外空 composite 层数', default: 0, min: 0, max: 10 });
+	P(ModelProject, 'boolean', 'imda_display_all_slots', { label: 'display 输出全部槽位（GUI/地面/固定）', default: false });
 	P(ModelProject, 'boolean', 'imm_export_node_names', { label: '输出 node_name（来源分组名）', default: true });
 	P(ModelProject, 'boolean', 'imm_anim_auto', { label: '导出时自动采样动画时间轴', default: true });
 	P(ModelProject, 'boolean', 'imm_hide_unavailable', { label: '隐藏当前条件下不可用的分组', default: true });
