@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.36';
+const VERSION = '0.68.37';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -3946,16 +3946,7 @@ function registerProperties() {
 			new Property(Animation, 'number', 'imda_timeline_index', { default: 0, label: '时间轴 custom_model_data index' });
 		} } catch (e) { /* ignore */ }
 	const cond = { formats: [FORMAT_ID] };
-	const P = (target, type, name, options) => {
-		let primaryName = name;
-		let legacyName = null;
-		if (String(name).startsWith('imda_')) { primaryName = String(name).replace(/^imda_/, 'imda_'); legacyName = name; }
-		const prop = new Property(target, type, primaryName, Object.assign({ condition: cond, exposed: true }, options));
-		if (legacyName) {
-			try { new Property(target, type, legacyName, Object.assign({ condition: cond, exposed: false }, options)); } catch (e) { /* ignore */ }
-		}
-		return prop;
-	};
+	const P = (target, type, name, options) => new Property(target, type, name, Object.assign({ condition: cond, exposed: true }, options));
 P(ModelProject, 'string', 'imda_namespace', { label: '命名空间（可带子空间，如 sqsptst:weapon/shotgun）', default: 'custom' });
 	P(ModelProject, 'boolean', 'imda_center_pivot', { label: '旋转枢轴用 (0.5,0.5,0.5)（= 像素 8,8,8）', default: false });
 	P(ModelProject, 'boolean', 'imda_block_display', { label: '模型附带“显示调整”页的 display', default: true });
