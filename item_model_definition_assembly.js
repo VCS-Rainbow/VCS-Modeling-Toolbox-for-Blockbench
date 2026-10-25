@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.83';
+const VERSION = '0.68.84';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2835,6 +2835,16 @@ function instantiateCallTags(targets) {
 						try { translateGroupCoordinates(created, [nextOrigin[0] - oldOrigin[0], nextOrigin[1] - oldOrigin[1], nextOrigin[2] - oldOrigin[2]]); } catch (e) { /* ignore */ }
 						created.origin = nextOrigin;
 						created.rotation = Array.isArray(locator.rotation) ? locator.rotation.slice() : (created.rotation || [0, 0, 0]);
+						try {
+							const ov = callOverridesOf(locator);
+							if (ov.property) created.imda_property = String(ov.property).replace(/^minecraft:/, '');
+							for (const key of ['index', 'scale', 'threshold', 'threshold_format', 'component', 'predicate', 'value', 'keybind', 'target', 'source', 'wobble', 'normalize', 'period', 'remaining', 'condition']) {
+								if (ov[key] === undefined || ov[key] === '') continue;
+								const prop = ({ threshold: 'imda_threshold', threshold_format: 'imda_threshold_format', target: 'imda_range_target', source: 'imda_range_source', wobble: 'imda_range_wobble', normalize: 'imda_range_normalize', period: 'imda_range_period', remaining: 'imda_range_remaining' })[key] || ('imda_' + key);
+								if (['wobble', 'normalize', 'remaining'].includes(key)) created[prop] = ov[key] === 'true';
+								else created[prop] = ov[key];
+							}
+						} catch (e) { /* ignore */ }
 						created.selected = false;
 					}
 				} else if (target) {

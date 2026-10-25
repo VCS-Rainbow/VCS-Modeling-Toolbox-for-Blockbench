@@ -2,6 +2,10 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.84
+- 实例化时把复调用覆盖属性写入复制分组（property/index/scale/threshold_format/range/condition 等），编号格式随实例继承。
+- Locator 右键菜单顺序改为「实例化此标签」在上、「编辑复调用标签」在下。
+- 单测 207 项。
 ## 0.68.83
 - 重写实例化：登记创建分组与所有 cube 到 Undo，恢复撤销；按原 Locator 在父级中的位置插入复制组，保持大纲顺序。
 - 复调用覆盖改为应用到目标 clone 之后再包位姿层，修复 threshold_format 等覆盖不生效。
