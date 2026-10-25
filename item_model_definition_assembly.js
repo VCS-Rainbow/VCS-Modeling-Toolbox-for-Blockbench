@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.67';
+const VERSION = '0.68.68';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1996,6 +1996,20 @@ function pivotTranslateContents(group, delta) {
 	}
 }
 
+/** 整棵子树坐标平移 delta（含子分组 origin 与所有方块），用于实例化到新位置 */
+function translateGroupCoordinates(group, delta) {
+	for (const child of (group.children || [])) {
+		if (isCube(child)) {
+			addVec(child.from, delta);
+			addVec(child.to, delta);
+			if (Array.isArray(child.origin)) addVec(child.origin, delta);
+		} else if (isGroup(child)) {
+			if (Array.isArray(child.origin)) addVec(child.origin, delta);
+			translateGroupCoordinates(child, delta);
+		}
+	}
+}
+
 /** 把方块的 rotation 枢轴（origin）移到它自己的 from/to 几何中心；返回移动距离 */
 /** 把方块的 rotation 枢轴移到 target（父分组的几何中心），并补偿 from/to 保持外观不变 */
 function centerCubePivot(cube, target) {
@@ -2730,7 +2744,7 @@ function instantiateCallTags() {
 				const oldOrigin = Array.isArray(created.origin) ? created.origin.slice() : [0, 0, 0];
 				const nextOrigin = Array.isArray(locator.position) ? locator.position.slice() : oldOrigin;
 				created.name = locator.name || (labelOf(targetGroup) + ' 实例');
-				try { pivotTranslateContents(created, [nextOrigin[0] - oldOrigin[0], nextOrigin[1] - oldOrigin[1], nextOrigin[2] - oldOrigin[2]]); } catch (e) { /* ignore */ }
+				try { translateGroupCoordinates(created, [nextOrigin[0] - oldOrigin[0], nextOrigin[1] - oldOrigin[1], nextOrigin[2] - oldOrigin[2]]); } catch (e) { /* ignore */ }
 				created.origin = nextOrigin;
 				created.rotation = Array.isArray(locator.rotation) ? locator.rotation.slice() : (created.rotation || [0, 0, 0]);
 				created.selected = false;
