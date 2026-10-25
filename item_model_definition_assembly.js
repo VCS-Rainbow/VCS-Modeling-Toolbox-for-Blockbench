@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.67.8';
+const VERSION = '0.67.9';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1052,6 +1052,16 @@ class Exporter {
 		return false;
 	}
 
+	/** 空几何的 display 载体：放在时间轴根 composite 的第一个子项，保证 display 能被解析 */
+	displayCarrierReference() {
+		if (this.displayCarrier) return this.displayCarrier;
+		const name = this.unique(this.stem + '_display', this.modelNames);
+		const data = { display: this.desiredDisplay(), elements: [] };
+		this.models.push({ name, data });
+		this.displayCarrier = this.namespace + ':item/' + (this.subpath ? this.subpath + '/' : '') + name;
+		return this.displayCarrier;
+	}
+
 	/** 在姿态节点原位置替换为 range_dispatch；静态祖先保持原层级 */
 	frameLabel(frame, fps) {
 		const total = Math.max(0, Math.floor(num(frame)));
@@ -1122,7 +1132,10 @@ class Exporter {
 		}
 		this.timelinePoses = null; this.timelineSkip = null;
 		if (!nodes.length) return null;
-		return { type: 'minecraft:composite', models: nodes };
+		const root = { type: 'minecraft:composite', models: [] };
+		try { root.models.push({ type: 'minecraft:model', model: this.displayCarrierReference() }); } catch (e) { /* ignore */ }
+		root.models = root.models.concat(nodes);
+		return root;
 	}
 
 	buildMapping() {
