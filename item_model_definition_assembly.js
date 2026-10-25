@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.72';
+const VERSION = '0.68.73';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1014,6 +1014,9 @@ class Exporter {
 			for (const key of ['index', 'scale', 'period']) if (ov[key] !== undefined && ov[key] !== '') result[key] = clean(num(ov[key]));
 			for (const key of ['wobble', 'normalize', 'remaining', 'ignore_default']) if (ov[key] === 'true' || ov[key] === 'false') result[key] = ov[key] === 'true';
 			for (const key of ['component', 'predicate', 'value', 'keybind', 'target', 'source', 'condition']) if (ov[key] !== undefined && ov[key] !== '') result[key] = String(ov[key]);
+			if (ov.threshold_format && result.type === 'minecraft:range_dispatch' && Array.isArray(result.entries)) {
+				result.entries.forEach((entry, i) => { const threshold = this.evalThreshold(ov.threshold_format, i); if (threshold !== null) entry.threshold = clean(threshold); });
+			}
 		} catch (e) { /* ignore */ }
 		if (placeholder.__imda_call_name) result.node_name = placeholder.__imda_call_name;
 		return result;
@@ -2844,6 +2847,7 @@ function callOverrideFields(source, locator) {
 		ov_predicate: { label: 'predicate 覆盖', type: 'text', value: val('predicate'), condition: (r) => r.ov_property === 'component', description: '留空不覆盖。' },
 		ov_value: { label: 'value 覆盖（JSON）', type: 'text', value: val('value'), condition: (r) => r.ov_property === 'component', description: '留空不覆盖。' },
 		ov_keybind: { label: 'keybind 覆盖', type: 'text', value: val('keybind'), condition: (r) => r.ov_property === 'keybind_down', description: '留空不覆盖。' },
+		ov_threshold_format: { label: '分支编号格式覆盖', type: 'text', value: val('threshold_format'), condition: () => isRange, description: '同分组属性：i / 2i / 10+2i / 0,1,3；留空不覆盖。源节点：' + String(src.imda_threshold_format || '') },
 		ov_index: { label: 'index 覆盖', type: 'text', value: val('index'), condition: () => isRange, description: '留空不覆盖；源节点：' + String(src.imda_index == null ? '' : src.imda_index) },
 		ov_scale: { label: 'scale 覆盖', type: 'text', value: val('scale'), condition: () => isRange, description: '留空不覆盖。' },
 		ov_target: { label: 'compass target 覆盖', type: 'select', value: val('target'), options: { '': '（不覆盖）', lodestone: 'lodestone', none: 'none', spawn: 'spawn', recovery: 'recovery' }, condition: (r) => r.ov_property === 'compass', description: '留空不覆盖。' },
@@ -2900,7 +2904,7 @@ function editCallTag(locator) {
 				const target = model || String(result.target || '').trim();
 				try { Undo.initEdit({ elements: locators }); } catch (e) { /* ignore */ }
 				const overrides = {};
-				const map = { ov_threshold: 'threshold', ov_property: 'property', ov_index: 'index', ov_scale: 'scale', ov_component: 'component', ov_ignore_default: 'ignore_default', ov_predicate: 'predicate', ov_value: 'value', ov_keybind: 'keybind', ov_target: 'target', ov_source: 'source', ov_wobble: 'wobble', ov_normalize: 'normalize', ov_period: 'period', ov_remaining: 'remaining', ov_condition: 'condition' };
+				const map = { ov_threshold: 'threshold', ov_threshold_format: 'threshold_format', ov_property: 'property', ov_index: 'index', ov_scale: 'scale', ov_component: 'component', ov_ignore_default: 'ignore_default', ov_predicate: 'predicate', ov_value: 'value', ov_keybind: 'keybind', ov_target: 'target', ov_source: 'source', ov_wobble: 'wobble', ov_normalize: 'normalize', ov_period: 'period', ov_remaining: 'remaining', ov_condition: 'condition' };
 				for (const key of Object.keys(map)) {
 					const text = String(result[key] == null ? '' : result[key]).trim();
 					if (text !== '') overrides[map[key]] = text;
