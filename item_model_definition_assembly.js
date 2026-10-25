@@ -18,11 +18,11 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.62.8';
+const VERSION = '0.63.3';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
-const MAPPING_TYPES = ['composite', 'inline', 'model', 'range_dispatch', 'condition', 'select', 'empty'];
+const MAPPING_TYPES = ['composite', 'inline', 'model', 'range_dispatch', 'range_dispatch_timeline', 'condition', 'select', 'empty'];
 const MANIFEST = '.imm-assembly-manifest.json';
 
 const BLOCK_DISPLAY = {
@@ -38,7 +38,31 @@ const actions = {};
 
 /* ============================== 小工具 ============================== */
 
-const clean = (v) => { const n = Number(v); if (!isFinite(n)) return 0; const r = Math.round(n * 1e6) / 1e6; return Math.abs(r) < 1e-6 ? 0 : r; };
+const clean = (v) => { const n = Number(v); if (!isFinite(n)) return 0; const r = Math.round(n * 1e6) / 1e6; return Math.abs(r) < 1e-6 ? 0 : r; }
+/** 读取 Blockbench “显示调整”页的参数；没有该数据时返回 null（回退到内置预设） */
+function readProjectDisplay() {
+	if (typeof Project === 'undefined' || !Project || !Project.display_settings) return null;
+	const out = {};
+	for (const slot of Object.keys(Project.display_settings)) {
+		const ds = Project.display_settings[slot];
+		if (!ds) continue;
+		let data = null;
+		try { data = (typeof ds.export === 'function') ? ds.export() : null; } catch (e) { data = null; }
+		if (!data) {
+			data = {};
+			if (Array.isArray(ds.rotation)) data.rotation = ds.rotation.slice();
+			if (Array.isArray(ds.translation)) data.translation = ds.translation.slice();
+			if (Array.isArray(ds.scale)) data.scale = ds.scale.slice();
+		}
+		const clean = {};
+		if (Array.isArray(data.rotation) && data.rotation.some(v => Math.abs(num(v)) > 1e-6)) clean.rotation = data.rotation.map(v => Math.round(num(v) * 1e6) / 1e6);
+		if (Array.isArray(data.translation) && data.translation.some(v => Math.abs(num(v)) > 1e-6)) clean.translation = data.translation.map(v => Math.round(num(v) * 1e6) / 1e6);
+		if (Array.isArray(data.scale) && data.scale.some(v => Math.abs(num(v) - 1) > 1e-6)) clean.scale = data.scale.map(v => Math.round(num(v) * 1e6) / 1e6);
+		if (Object.keys(clean).length) out[slot] = clean;
+	}
+	return out;
+}
+;
 const cleanAll = (list) => list.map(clean);
 const labelOf = (node) => (node && node.name) ? node.name : 'unnamed';
 const isGroup = (node) => typeof Group !== 'undefined' && node instanceof Group;
@@ -59,6 +83,17 @@ function sanitizeNamespace(value) {
 		.replace(/^[_.\-]+/, '').replace(/[_.\-]+$/, '');
 	return s || 'custom';
 }
+/** 命名空间支持子空间：sqsptst:weapon/shotgun → {namespace:'sqsptst', subpath:'weapon/shotgun'} */
+function parseNamespaceSetting(value) {
+	const raw = String(value == null ? '' : value).trim().replace(/\\/g, '/');
+	const colon = raw.indexOf(':');
+	const ns = colon >= 0 ? raw.slice(0, colon) : raw;
+	const subRaw = colon >= 0 ? raw.slice(colon + 1) : '';
+	const subpath = subRaw.split('/').map(seg => String(seg).toLowerCase().replace(/[^a-z0-9_\-]+/g, '_').replace(/^_+|_+$/g, ''))
+		.filter(seg => seg && seg !== '.' && seg !== '..').join('/');
+	return { namespace: sanitizeNamespace(ns), subpath };
+}
+
 
 const inline = (v) => Array.isArray(v) ? '[' + v.map(inline).join(', ') + ']'
 	: (v && typeof v === 'object') ? '{' + Object.keys(v).map(k => JSON.stringify(k) + ': ' + inline(v[k])).join(', ') + '}'
@@ -186,6 +221,7 @@ function projectValue(name, fallback) {
 class Exporter {
 	constructor(settings) {
 		this.namespace = settings.namespace;
+		this.subpath = settings.subpath || '';
 		this.item_id = settings.item_id;
 		this.stem = sanitizePath(String(settings.item_id).replace(/\//g, '_'), 'item');
 		this.centerPivot = settings.center_pivot === true;
@@ -200,6 +236,13 @@ class Exporter {
 		this.groupNodeCache = new Map(); // 分组 → 已构建的映射节点（复调用克隆用）
 		this.textureNames = new Set();
 		this.negativeCount = 0;
+		this.projectDisplay = readProjectDisplay();
+		this.timelinePoses = null;
+		this.modelCache = new Map();
+		this.displayCopies = new Map();
+		this.overwrites = [];
+		this.cubeIds = new WeakMap();
+		this.cubeIdSeq = 0;
 	}
 
 	warn(msg) { if (msg && this.warnings.indexOf(msg) < 0 && this.warnings.length < 40) this.warnings.push(msg); }
@@ -315,7 +358,7 @@ class Exporter {
 		if (!count) { this.warn('方块 “' + labelOf(cube) + '” 没有带纹理的面，已跳过。'); return null; }
 
 		const element = { from: cleanAll(from), to: cleanAll(to), faces };
-		const rotation = this.elementRotation(cube);
+		const rotation = cube.__imm_omit_rotation ? null : this.elementRotation(cube);
 		if (rotation) element.rotation = rotation;
 		if (cube.shade === false) element.shade = false;
 		return element;
@@ -338,6 +381,9 @@ class Exporter {
 	}
 
 	addModel(cubes, hint) {
+		const cubeKey = (cube) => { if (!cube) return '?'; if (cube.uuid) return cube.uuid; if (cube.name) return cube.name; let id = this.cubeIds.get(cube); if (!id) { id = 'cube-' + (++this.cubeIdSeq); this.cubeIds.set(cube, id); } return id; };
+		const modelKey = cubes.map(cubeKey).join('|');
+		if (this.modelCache.has(modelKey)) return this.modelCache.get(modelKey);
 		const order = new Map();
 		const elements = [];
 		for (const cube of cubes) {
@@ -366,11 +412,14 @@ class Exporter {
 		if (particle) textures.particle = particle;
 
 		const model = { textures, elements };
-		if (this.blockDisplay) model.display = JSON.parse(JSON.stringify(BLOCK_DISPLAY));
+		const display = this.blockDisplay ? (this.projectDisplay || JSON.parse(JSON.stringify(BLOCK_DISPLAY))) : null;
+		if (display && Object.keys(display).length) model.display = JSON.parse(JSON.stringify(display));
 
 		const name = this.unique(sanitizePath(this.stem + '_' + (hint || 'part'), 'model'), this.modelNames);
 		this.models.push({ name, data: model });
-		return { reference: this.namespace + ':item/' + name, shift };
+		const built = { reference: this.namespace + ':item/' + (this.subpath ? this.subpath + '/' : '') + name, shift };
+		this.modelCache.set(modelKey, built);
+		return built;
 	}
 
 	/**
@@ -392,8 +441,9 @@ class Exporter {
 
 		const d = Array.isArray(shift) ? shift : [0, 0, 0];
 		const dp = Array.isArray(parent_shift) ? parent_shift : [0, 0, 0];
+		const translate = (node && Array.isArray(node.__imm_translate)) ? node.__imm_translate : null;
 		const hasShift = Math.abs(d[0]) + Math.abs(d[1]) + Math.abs(d[2]) > 1e-6;
-		if (Math.abs(q.w) > 1 - 1e-7 && !hasShift) return null;
+		if (Math.abs(q.w) > 1 - 1e-7 && !hasShift && !(translate && translate.some(v => Math.abs(num(v)) > 1e-6))) return null;
 
 		const m = quatMatrix(q);
 		const origin = (node && node.origin) || [0, 0, 0];
@@ -402,7 +452,7 @@ class Exporter {
 		const rp = rotVec(m, pivot);
 		const rd = rotVec(m, d);
 		return {
-			translation: cleanAll([0, 1, 2].map(a => (rd[a] + pivot[a] - rp[a] - dp[a]) / UNIT)),
+			translation: cleanAll([0, 1, 2].map(a => (rd[a] + pivot[a] - rp[a] - dp[a] + (translate ? num(translate[a]) : 0)) / UNIT)),
 			left_rotation: cleanAll([q.x, q.y, q.z, q.w]),
 			scale: [1, 1, 1],
 			right_rotation: [0, 0, 0, 1],
@@ -511,6 +561,18 @@ class Exporter {
 	}
 
 	buildNode(group, hint, parent_shift) {
+		if (this.normalizeType(group.imm_type) === 'range_dispatch_timeline') return this.buildTimelineNode(group, hint, parent_shift);
+		const pose = this.timelinePoses ? this.timelinePoses.get(group.uuid || group.name) : null;
+		if (pose) {
+			group = Object.assign({}, group, {
+				origin: Array.isArray(pose.origin) ? pose.origin.slice() : group.origin,
+				rotation: Array.isArray(pose.rotation) ? pose.rotation.slice() : group.rotation,
+				children: group.children,
+				__imm_translate: Array.isArray(pose.position) ? pose.position.slice() : null,
+			});
+		} else if (this.timelinePoses && this.groupNodeCache.has(group) && !this.nodeIsEmpty(this.groupNodeCache.get(group)) && !this.hasPoseInSubtree(group)) {
+			return this.groupNodeCache.get(group);
+		}
 		const children = (group.children || []).filter(c => c && c.export !== false);
 		const childGroups = children.filter(isGroup);
 		const cubes = children.filter(isCube);
@@ -552,7 +614,7 @@ class Exporter {
 		if (type === 'model') {
 			const ref = built ? built.reference : (extras[0] ? extras[0].model : null);
 			if (!ref) { this.warn('分组 “' + labelOf(group) + '” 是 model 类型但没有可用模型，已跳过。'); return null; }
-			node.model = ref;
+			node.model = this.unifyReferenceDisplay(ref, group.imm_display_mode);
 			const tints = this.buildTints(group);
 			if (tints) node.tints = tints;
 			return node;
@@ -658,6 +720,49 @@ class Exporter {
 
 
 	/** 定位点 → 复调用节点：指向分组时先占位，构建完成后克隆目标节点 */
+	desiredDisplay() {
+		if (!this.blockDisplay) return {};
+		return this.projectDisplay || JSON.parse(JSON.stringify(BLOCK_DISPLAY));
+	}
+
+	readReferenceModel(reference) {
+		const root = String(projectValue('imm_pack_path', '') || '').trim();
+		if (!root) return null;
+		try {
+			const pathmod = getPath();
+			const fsmod = getScopedFs(root);
+			if (!pathmod || !fsmod) return null;
+			const abs = modelPathOf(pathmod, root, reference);
+			if (!fsmod.existsSync(abs)) return null;
+			return { data: JSON.parse(fsmod.readFileSync(abs, 'utf8')), abs, root, pathmod };
+		} catch (e) { return null; }
+	}
+
+	/** 强制统一引用模型的 display：copy=生成副本，overwrite=覆盖源文件，none=不处理 */
+	unifyReferenceDisplay(reference, mode) {
+		if (!reference || mode === 'none') return reference;
+		const desired = this.desiredDisplay();
+		const source = this.readReferenceModel(reference);
+		if (!source || !source.data) return reference;
+		const current = source.data.display || {};
+		if (JSON.stringify(current) === JSON.stringify(desired)) return reference;
+		if (mode === 'overwrite') {
+			const rel = source.pathmod.relative(source.root, source.abs).replace(/\\/g, '/');
+			const data = Object.assign({}, source.data, { display: desired });
+			this.overwrites.push({ path: rel, data: formatModel(data) });
+			return reference;
+		}
+		const key = reference + '|' + JSON.stringify(desired);
+		if (this.displayCopies.has(key)) return this.displayCopies.get(key);
+		const base = this.stem + '_' + sanitizePath(String(reference).split(':').pop(), 'ref') + '_display';
+		const name = this.unique(base, this.modelNames);
+		const data = Object.assign({}, source.data, { display: desired });
+		this.models.push({ name, data });
+		const ref = this.namespace + ':item/' + (this.subpath ? this.subpath + '/' : '') + name;
+		this.displayCopies.set(key, ref);
+		return ref;
+	}
+
 	buildCallNode(locator) {
 		const target = String((locator && locator.imm_call_target) || '').trim();
 		if (!target) return null;
@@ -707,9 +812,105 @@ class Exporter {
 		}
 	}
 
+	/** 分组子树里是否有任何节点带当前帧姿态 */
+	hasPoseInSubtree(group) {
+		if (!this.timelinePoses || !group) return false;
+		if (this.timelinePoses.has(group.uuid || group.name)) return true;
+		for (const child of (group.children || [])) {
+			if (isGroup(child) && this.hasPoseInSubtree(child)) return true;
+		}
+		return false;
+	}
+
+	/** 空节点判断 */
+	nodeIsEmpty(node) {
+		if (!node) return true;
+		const type = String(node.type || '');
+		if (type === 'minecraft:composite') return !(node.models || []).length;
+		if (type === 'minecraft:range_dispatch') return !(node.entries || []).length && !node.fallback;
+		if (type === 'minecraft:select') return !(node.cases || []).length && !node.fallback;
+		if (type === 'minecraft:condition') return !node.on_true && !node.on_false;
+		return false;
+	}
+
+	/** range_dispatch(timeline)：优先用 Locator 的 imm_frame/imm_pose，否则自动采样当前动画 */
+	buildTimelineNode(group, hint, parent_shift) {
+		const frames = new Map();
+		for (const locator of (group.children || []).filter(isLocator)) {
+			const frame = num(locator.imm_frame);
+			if (!isFinite(frame) || frame < 0) continue;
+			let pose = {};
+			try { pose = JSON.parse(String(locator.imm_pose || '{}')); } catch (e) { pose = {}; }
+			const map = frames.get(frame) || new Map();
+			for (const uuid of Object.keys(pose || {})) if (pose[uuid] && typeof pose[uuid] === 'object') map.set(uuid, pose[uuid]);
+			frames.set(frame, map);
+		}
+		if (!frames.size) return this.buildAutoTimeline(group, hint, parent_shift);
+		return this.buildFrameEntries(group, Array.from(frames.keys()).sort((a, b) => a - b), frames, hint, parent_shift);
+	}
+
+	/** 从当前动画自动采样帧（不依赖项目里的标签） */
+	buildAutoTimeline(group, hint, parent_shift) {
+		const animation = (typeof Animation !== 'undefined' && Animation) ? (Animation.selected || (Array.isArray(Animation.all) ? Animation.all[0] : null)) : null;
+		if (!animation) { this.warn('时间轴分组没有帧标签，且当前没有选中动画。'); return null; }
+		const fps = Math.max(1, num(projectValue('imm_anim_fps', 20)) || 20);
+		let duration = num(animation.length);
+		if (!(duration > 0) && typeof Timeline !== 'undefined') duration = num(Timeline.length);
+		if (!(duration > 0)) { this.warn('动画长度为 0，无法自动输出时间轴。'); return null; }
+		const frameCount = Math.max(1, Math.ceil(duration * fps));
+		const sampled = sampleTimelinePoses(animation, fps, frameCount);
+		if (!sampled.animated.length) { this.warn('当前动画没有带关键帧的分组。'); return null; }
+		const frames = new Map();
+		for (let frame = 0; frame < sampled.poses.length; frame++) {
+			const map = new Map();
+			for (const uuid of Object.keys(sampled.poses[frame])) map.set(uuid, sampled.poses[frame][uuid]);
+			frames.set(frame, map);
+		}
+		return this.buildFrameEntries(group, Array.from(frames.keys()), frames, hint, parent_shift);
+	}
+
+	buildFrameEntries(group, sorted, frames, hint, parent_shift) {
+		const roots = ((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []).filter(n => isGroup(n) && n !== group && this.normalizeType(n.imm_type) !== 'range_dispatch_timeline' && n.export !== false);
+		this.timelinePoses = null;
+		for (const rootGroup of roots) { try { this.buildNode(rootGroup, hint, parent_shift); } catch (e) { /* ignore */ } }
+		const entries = [];
+		for (const frame of sorted) {
+			this.timelinePoses = frames.get(frame);
+			const nodes = [];
+			for (const rootGroup of roots) {
+				const node = this.buildNode(rootGroup, hint, parent_shift);
+				if (node && !this.nodeIsEmpty(node)) nodes.push(node);
+			}
+			this.timelinePoses = null;
+			if (!nodes.length) continue;
+			const model = nodes.length === 1 ? nodes[0] : { type: 'minecraft:composite', models: nodes };
+			entries.push({ threshold: frame, model });
+		}
+		if (!entries.length) return null;
+		const prop = String(group.imm_property || 'custom_model_data').replace(/^minecraft:/, '').trim() || 'custom_model_data';
+		const index = (group.imm_index != null) ? num(group.imm_index) : num(projectValue('imm_anim_index', 0));
+		const node = { type: 'minecraft:range_dispatch', property: 'minecraft:' + prop };
+		if (prop === 'custom_model_data') node.index = clean(index);
+		node.entries = entries;
+		return node;
+	}
+
 	buildMapping() {
 		const root = (typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : [];
-		const models = [];
+		const timelineRoot = (root || []).find(node => isGroup(node) && this.normalizeType(node.imm_type) === 'range_dispatch_timeline');
+if (timelineRoot) {
+  const timelineNode = this.buildTimelineNode(timelineRoot, sanitizePath(labelOf(timelineRoot), 'timeline'), [0, 0, 0]);
+  if (!timelineNode) throw new Error('时间轴分组没有可导出的帧。');
+  const timelineResult = { model: timelineNode };
+  this.resolveCallPlaceholders(timelineResult.model);
+  return timelineResult;
+}
+if (projectValue('imm_anim_auto', true) !== false && typeof Animation !== 'undefined' && Animation && (Animation.selected || (Array.isArray(Animation.all) && Animation.all.length))) {
+  const synthetic = { uuid: '__imm_auto_timeline', name: '[auto timeline]', imm_type: 'range_dispatch_timeline', imm_property: String(projectValue('imm_anim_property', 'custom_model_data') || 'custom_model_data'), imm_index: projectValue('imm_anim_index', 0), children: [] };
+  const autoNode = this.buildAutoTimeline(synthetic, 'timeline', [0, 0, 0]);
+  if (autoNode) { const autoResult = { model: autoNode }; this.resolveCallPlaceholders(autoResult.model); return autoResult; }
+}
+const models = [];
 		const loose = [];
 		for (const node of root) {
 			if (!node || node.export === false) continue;
@@ -758,9 +959,10 @@ class Exporter {
 
 	buildFiles() {
 		const mapping = this.buildMapping();
-		const files = [{ path: 'assets/' + this.namespace + '/items/' + this.item_id + '.json', data: formatMapping(mapping) }];
+		const sub = this.subpath ? this.subpath + '/' : '';
+		const files = [{ path: 'assets/' + this.namespace + '/items/' + sub + this.item_id + '.json', data: formatMapping(mapping) }];
 		for (const model of this.models) {
-			files.push({ path: 'assets/' + this.namespace + '/models/item/' + model.name + '.json', data: formatModel(model.data) });
+			files.push({ path: 'assets/' + this.namespace + '/models/item/' + sub + model.name + '.json', data: formatModel(model.data) });
 		}
 		for (const texture of this.textures) {
 			const source = texture.texture && texture.texture.source;
@@ -775,15 +977,84 @@ class Exporter {
 			}
 			this.warn('纹理 “' + texture.name + '” 未内嵌，需手动放置。');
 		}
+		for (const overwrite of this.overwrites) files.push({ path: overwrite.path, data: overwrite.data });
 		const notes = this.buildNotes();
 		if (notes) files.push({ path: this.stem + '.notes.txt', data: notes });
 		return { files, mapping };
 	}
 }
 
+/** 采样当前动画：poses[frame][uuid] = {rotation, origin, position} */
+function sampleTimelinePoses(animation, fps, frameCount) {
+	const animated = [];
+	for (const group of (typeof Group !== 'undefined' ? Group.all : [])) {
+		let animator = null;
+		try { animator = animation.getBoneAnimator(group); } catch (e) { animator = null; }
+		if (!animator) continue;
+		const hasKeys = !!(animator.keyframes && animator.keyframes.length) || !!(animator.channels && Object.keys(animator.channels).some(k => animator.channels[k] && animator.channels[k].length));
+		if (!hasKeys) continue;
+		animated.push({ group, animator, baseRotation: (group.rotation || [0, 0, 0]).slice(), baseOrigin: (group.origin || [0, 0, 0]).slice() });
+	}
+	const oldTime = animation.time;
+	const poses = [];
+	for (let frame = 0; frame < frameCount; frame++) {
+		try { animation.time = frame / fps; } catch (e) { /* ignore */ }
+		const map = {};
+		for (const item of animated) {
+			let rotation = item.baseRotation.slice();
+			let position = [0, 0, 0];
+			try {
+				const delta = item.animator.interpolate('rotation');
+				if (Array.isArray(delta)) rotation = rotation.map((v, i) => num(v) + num(delta[i]));
+			} catch (e) { /* ignore */ }
+			try {
+				const delta = item.animator.interpolate('position');
+				if (Array.isArray(delta)) position = delta.map(v => num(v));
+			} catch (e) { /* ignore */ }
+			map[item.group.uuid || item.group.name] = { rotation, origin: item.baseOrigin.slice(), position };
+		}
+		poses.push(map);
+	}
+	try { animation.time = oldTime; } catch (e) { /* ignore */ }
+	return { animated, poses };
+}
+
+/** 旧流程：把当前动画逐帧烘焙成 [timeline] 分组 + Locator 标签（导出时会自动采样，一般不需要） */
+function bakeTimelineToCallTags() {
+	const animation = (typeof Animation !== 'undefined' && Animation) ? (Animation.selected || (Array.isArray(Animation.all) ? Animation.all[0] : null)) : null;
+	if (!animation) { Blockbench.showMessageBox({ title: '没有动画', message: '请先打开动画模式并选择一个动画。', icon: 'info' }); return; }
+	const fps = Math.max(1, num(projectValue('imm_anim_fps', 20)) || 20);
+	let duration = num(animation.length);
+	if (!(duration > 0) && typeof Timeline !== 'undefined') duration = num(Timeline.length);
+	if (!(duration > 0)) { Blockbench.showMessageBox({ title: '动画长度为 0', message: '时间轴上没有可采样的关键帧。', icon: 'info' }); return; }
+	const sampled = sampleTimelinePoses(animation, fps, Math.max(1, Math.ceil(duration * fps)));
+	if (!sampled.animated.length) { Blockbench.showMessageBox({ title: '没有关键帧', message: '当前动画里没有带关键帧的分组。', icon: 'info' }); return; }
+	const oldTimeline = (Outliner.root || []).filter(node => isGroup(node) && String(node.imm_type || '') === 'range_dispatch_timeline');
+	try { Undo.initEdit({ outliner: true, groups: oldTimeline, elements: [] }); } catch (e) { /* ignore */ }
+	for (const old of oldTimeline) { try { old.remove(); } catch (e) { /* ignore */ } }
+	const timeline = new Group({ name: '[timeline]', imm_type: 'range_dispatch_timeline', imm_property: 'minecraft:custom_model_data', imm_index: num(projectValue('imm_anim_index', 0)) || 0, origin: [8, 8, 8], rotation: [0, 0, 0] });
+	try { timeline.addTo(); } catch (e) { /* ignore */ }
+	try { timeline.init(); } catch (e) { /* ignore */ }
+	for (let frame = 0; frame < sampled.poses.length; frame++) {
+		try {
+			const locator = new Locator({ name: 'frame ' + frame, position: [8, 8, 8], rotation: [0, 0, 0] });
+			try { locator.addTo(timeline); } catch (e) { locator.addTo(); }
+			try { locator.init(); } catch (e) { /* ignore */ }
+			locator.imm_frame = frame;
+			locator.imm_pose = JSON.stringify(sampled.poses[frame]);
+			locator.imm_call_target = 'timeline';
+		} catch (error) { console.warn('[装配] 创建帧标签失败', error); }
+	}
+	try { Undo.finishEdit('解析时间轴为复调用标签'); } catch (e) { /* ignore */ }
+	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+	try { Project.saved = false; } catch (e) { /* ignore */ }
+	try { simInvalidate(); } catch (e) { /* ignore */ }
+	Blockbench.showQuickMessage('已解析时间轴：' + sampled.poses.length + ' 帧 × ' + sampled.animated.length + ' 个动画分组（' + fps + ' FPS）', 5000);
+}
+
 function createExporter() {
 	return new Exporter({
-		namespace: sanitizeNamespace(projectValue('imm_namespace', 'custom')),
+		...(function(){ const parsed = parseNamespaceSetting(projectValue('imm_namespace', 'custom')); return { namespace: parsed.namespace, subpath: parsed.subpath }; })(),
 		item_id: sanitizePath(String(projectValue('model_identifier', '') || (Project && Project.name) || 'item'), 'item'),
 		center_pivot: projectValue('imm_center_pivot', false) === true,
 		block_display: projectValue('imm_block_display', true) !== false,
@@ -1455,6 +1726,7 @@ function assignGroupMapProps(group, result) {
 	const type = String(group.imm_type || '').replace(/^minecraft:/, '');
 	if (type !== 'range_dispatch' && type !== 'condition' && type !== 'select') stripChildPrefixes(group);
 	if (result.imm_model !== undefined) group.imm_model = result.imm_model;
+				if (result.imm_display_mode !== undefined) group.imm_display_mode = result.imm_display_mode;
 	if (result.imm_property !== undefined) group.imm_property = result.imm_property;
 	if (result.imm_component !== undefined) group.imm_component = result.imm_component;
 	if (result.imm_ignore_default !== undefined) group.imm_ignore_default = !!result.imm_ignore_default;
@@ -1494,9 +1766,10 @@ function editGroupProps() {
 		form: {
 			imm_type: {
 				label: '映射类型（type）', description: '语法：{"type": "minecraft:<类型>"}\n作用：决定本节点是哪一种物品模型映射。\n可选：composite / model / range_dispatch / condition / empty', type: 'select', value: String(group.imm_type || 'composite'),
-				options: { composite: 'composite', inline: 'inline（内联模型）', model: 'model（引用模型）', range_dispatch: 'range_dispatch', condition: 'condition', select: 'select', empty: 'empty' },
+				options: { composite: 'composite', inline: 'inline（内联模型）', model: 'model（引用模型）', range_dispatch: 'range_dispatch', range_dispatch_timeline: 'range_dispatch(timeline)（逐帧时间轴）', condition: 'condition', select: 'select', empty: 'empty' },
 			},
-			imm_model: { label: '引用模型（model）', description: '语法：{"type": "minecraft:model", "model": "<命名空间>:item/<路径>"}\n作用：本节点直接引用一个 Java 版模型；\n留空则由本层方块生成模型文件。', type: 'text', value: String(group.imm_model || ''), condition: (r) => r.imm_type === 'model' },
+			imm_model: { label: '引用模型（model）', description: '语法：{"type": "minecraft:model", "model": "<命名空间>:item/<路径>"}\n作用：本节点直接引用一个 Java 版模型；\n留空则由本层方块生成模型文件。', type: 'text', value: String(group.imm_model || ''), condition: (r) => r.imm_type === 'model' },
+			imm_display_mode: { label: '强制统一显示调整', type: 'select', value: String(group.imm_display_mode || 'copy'), options: { copy: '生成模型副本', none: '不处理', overwrite: '覆盖源模型参数' }, description: '引用模型的 display 与当前“显示调整”页不一致时：\n生成副本 = 在项目里生成一份改好 display 的模型副本（默认）\n不处理 = 保持原模型\n覆盖源模型参数 = 直接改写资源包里的原模型文件', condition: (r) => r.imm_type === 'model' },
 			imm_property: { label: 'property（谓词 / 属性）', type: 'select', value: String(group.imm_property || ''), options: { '': '（未设置）', selected: 'selected', broken: 'broken', damaged: 'damaged', carried: 'carried', extended_view: 'extended_view', using_item: 'using_item', view_entity: 'view_entity', 'fishing_rod/cast': 'fishing_rod/cast', 'bundle/has_selected_item': 'bundle/has_selected_item', custom_model_data: 'custom_model_data', has_component: 'has_component', component: 'component', keybind_down: 'keybind_down', compass: 'compass（range）', count: 'count（range）', damage: 'damage（range）', time: 'time（range）', use_cycle: 'use_cycle（range）', use_duration: 'use_duration（range）', 'bundle/fullness': 'bundle/fullness（range）', cooldown: 'cooldown（range）', 'crossbow/pull': 'crossbow/pull（range）', context_dimension: 'context_dimension（select）', block_state: 'block_state（select）', local_time: 'local_time（select）' }, description: 'condition：谓词（selected / broken / custom_model_data / has_component / component / keybind_down …）；\nrange_dispatch：数值属性（custom_model_data / compass / count / damage / time / use_cycle / use_duration）', condition: (r) => r.imm_type === 'range_dispatch' || r.imm_type === 'condition' },
 			imm_component: { label: 'component（has_component 用）', type: 'text', value: String(group.imm_component || ''), description: '语法："component": "minecraft:lodestone_tracker"', condition: (r) => r.imm_property === 'has_component' },
 			imm_ignore_default: { label: 'ignore_default', type: 'checkbox', value: !!group.imm_ignore_default, description: 'has_component：组件值与默认值相同时是否视为不存在', condition: (r) => r.imm_property === 'has_component' },
@@ -1621,6 +1894,59 @@ function callSelectedGroup() {
 	Blockbench.showQuickMessage('已创建 ' + created + ' 个复调用标签', 3000);
 }
 
+/** 移除项目里所有 range_dispatch(timeline) 分组及其帧标签 */
+function removeTimelineTags() {
+	const groups = ((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []).filter(node => isGroup(node) && String(node.imm_type || '') === 'range_dispatch_timeline');
+	if (!groups.length) { Blockbench.showQuickMessage('没有动画时间线复调用标签。', 2500); return; }
+	try { Undo.initEdit({ outliner: true, groups, elements: [] }); } catch (e) { /* ignore */ }
+	for (const group of groups) { try { group.remove(); } catch (e) { /* ignore */ } }
+	try { Undo.finishEdit('移除动画时间线复调用标签'); } catch (e) { /* ignore */ }
+	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+	try { Project.saved = false; } catch (e) { /* ignore */ }
+	Blockbench.showQuickMessage('已移除 ' + groups.length + ' 个时间线标签分组', 3000);
+}
+
+/** 把所有复调用 Locator 实例化成真实的分组/模型节点 */
+function instantiateCallTags() {
+	const locators = [];
+	const walk = (nodes) => { for (const node of (nodes || [])) { if (isLocator(node) && String(node.imm_call_target || '').trim()) locators.push(node); else if (isGroup(node)) walk(node.children); } };
+	walk((typeof Outliner !== 'undefined' && Outliner) ? Outliner.root : []);
+	if (!locators.length) { Blockbench.showQuickMessage('没有复调用标签。', 2500); return; }
+	Blockbench.showMessageBox({
+		title: '实例化复调用标签',
+		message: '将把 ' + locators.length + ' 个复调用标签替换为真实分组/模型节点（可撤销）。',
+		buttons: ['取消', '实例化'], confirm: 1, cancel: 0,
+	}, (button) => {
+		if (button !== 1) return;
+		try { Undo.initEdit({ outliner: true, elements: [] }); } catch (e) { /* ignore */ }
+		let done = 0;
+		for (const locator of locators) {
+			try {
+				const target = String(locator.imm_call_target || '').trim();
+				const groups = (typeof Group !== 'undefined' && Group.all) ? Group.all : [];
+				const targetGroup = groups.find(g => g && g.uuid === target);
+				const parent = locator.parent || null;
+				let created = null;
+				if (targetGroup) {
+					created = (typeof targetGroup.clone === 'function') ? targetGroup.clone() : null;
+					if (created) { created.name = labelOf(targetGroup) + ' 实例'; created.selected = false; }
+				} else if (target) {
+					created = new Group({ name: '实例 ' + target.split(':').pop(), imm_type: 'model', imm_model: target, origin: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() });
+				}
+				if (!created) continue;
+				if (parent) created.addTo(parent); else created.addTo();
+				try { created.init(); } catch (e) { /* ignore */ }
+				try { locator.remove(); } catch (e) { /* ignore */ }
+				done++;
+			} catch (error) { console.warn('[装配] 实例化复调用失败', error); }
+		}
+		try { Undo.finishEdit('实例化所有复调用标签'); } catch (e) { /* ignore */ }
+		try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+		try { Project.saved = false; } catch (e) { /* ignore */ }
+		Blockbench.showQuickMessage('已实例化 ' + done + ' 个复调用标签', 3000);
+	});
+}
+
 /** 编辑一个复调用 Locator 的目标（分组 UUID 或模型 id） */
 function editCallTag(locator) {
 	if (!locator) return;
@@ -1702,7 +2028,7 @@ function createModelFromGroup(group) {
 				Blockbench.showMessageBox({ title: '无法写入', message: '需要桌面版 Blockbench，并且资源包路径可用。', icon: 'warning' });
 				return;
 			}
-			const dir = pathmod.join(root, 'assets', exporter.namespace, 'models', 'item');
+			const dir = pathmod.join(root, 'assets', exporter.namespace, 'models', 'item', ...(exporter.subpath ? exporter.subpath.split('/') : []));
 			const file = pathmod.join(dir, model.name + '.json');
 			try {
 				fsmod.mkdirSync(dir, { recursive: true });
@@ -3050,9 +3376,13 @@ function registerProperties() {
 	const cond = { formats: [FORMAT_ID] };
 	const P = (target, type, name, options) => new Property(target, type, name, Object.assign({ condition: cond, exposed: true }, options));
 
-	P(ModelProject, 'string', 'imm_namespace', { label: '命名空间（namespace）', default: 'custom' });
+	P(ModelProject, 'string', 'imm_namespace', { label: '命名空间（可带子空间，如 sqsptst:weapon/shotgun）', default: 'custom' });
 	P(ModelProject, 'boolean', 'imm_center_pivot', { label: '旋转枢轴用 (0.5,0.5,0.5)（= 像素 8,8,8）', default: false });
-	P(ModelProject, 'boolean', 'imm_block_display', { label: '模型附带手持 display 变换（与引用模型一致）', default: true });
+	P(ModelProject, 'boolean', 'imm_block_display', { label: '模型附带“显示调整”页的 display', default: true });
+P(ModelProject, 'number', 'imm_anim_fps', { label: '时间轴 FPS', default: 20, min: 1, max: 120 });
+P(ModelProject, 'number', 'imm_anim_index', { label: '时间轴 custom_model_data index', default: 0 });
+P(ModelProject, 'string', 'imm_anim_property', { label: '时间轴 range_dispatch property', default: 'custom_model_data' });
+P(ModelProject, 'boolean', 'imm_anim_auto', { label: '导出时自动采样动画时间轴', default: true });
 	P(ModelProject, 'boolean', 'imm_hide_unavailable', { label: '隐藏当前条件下不可用的分组', default: true });
 	P(ModelProject, 'string', 'imm_pack_path', { label: '资源包工程路径（pack.mcmeta 所在目录）', default: '' });
 	P(ModelProject, 'string', 'imm_pack_version', {
@@ -3072,10 +3402,13 @@ function registerProperties() {
 	P(Face, 'number', 'tint', { label: '着色 index', default: -1 });
 
 	P(Group, 'string', 'imm_type', { label: '映射类型（type）', description: '语法：{"type": "minecraft:<类型>"}\n作用：决定本节点是哪一种物品模型映射。\ncomposite=结构分组；inline=内联模型（本组方块烘焙成模型）；model=引用模型；还有 range_dispatch / condition / select / empty', default: 'composite', enum_values: MAPPING_TYPES });
-	P(Group, 'string', 'imm_model', { label: '引用模型（imm_model）', default: '' });
+	P(Group, 'string', 'imm_model', { label: '引用模型（imm_model）', default: '' });
+	P(Group, 'string', 'imm_display_mode', { label: '强制统一显示调整', default: 'copy' });
 	try { new Property(Group, 'string', 'imm_model_shift', { default: '', exposed: false, condition: cond }); } catch (e) { /* ignore */ }
 	if (typeof Locator !== 'undefined') {
-		try { new Property(Locator, 'string', 'imm_call_target', { label: '复调用目标（分组 UUID 或模型 id）', default: '', exposed: false }); } catch (e) { /* ignore */ }
+		try { new Property(Locator, 'string', 'imm_call_target', { label: '复调用目标（分组 UUID 或模型 id）', default: '', exposed: false }); } catch (e) { /* ignore */ }
+		try { new Property(Locator, 'number', 'imm_frame', { default: 0, exposed: false }); } catch (e) { /* ignore */ }
+		try { new Property(Locator, 'string', 'imm_pose', { default: '', exposed: false }); } catch (e) { /* ignore */ }
 	}
 	P(Group, 'string', 'imm_property', { label: '取值来源 / 条件（property / when）', default: '' });
 	P(Group, 'number', 'imm_index', { label: 'index（仅 range_dispatch：custom_model_data 下标）', default: 0 });
@@ -3189,7 +3522,7 @@ Plugin.register('item_model_definition_assembly', {
 			rotation_snap: false,
 			integer_size: false,
 			display_mode: true,
-			animation_mode: false,
+			animation_mode: true,
 			euler_order: 'ZYX',
 			model_identifier: true,
 			parent_model_id: true,
@@ -3219,6 +3552,9 @@ Plugin.register('item_model_definition_assembly', {
 		actions.merge = new Action('imm_merge_pack', { name: '合并到资源包…', description: '直接写入资源包并覆盖旧文件', icon: 'folder_open', category: 'file', condition, click: mergeToPack });
 		actions.import = new Action('imm_import_model', { name: '导入引用模型（当前分组）', description: '按 imm_model 从资源包工程导入 Java 模型为方块', icon: 'file_download', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const g = pickTargetGroup(); if (!g) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } if (!String(g.imm_model || '').trim()) { Blockbench.showMessageBox({ title: '没有引用模型', message: '该分组没有填写 imm_model（引用模型）。', icon: 'info' }); return; } importModelReference(g); } });
 		actions.call = new Action('imm_call_group', { name: '复调用选中的分组', description: '在分组枢轴处创建复调用标签（Locator），导出时替换为目标分组', icon: 'content_copy', category: 'tools', condition, click: callSelectedGroup });
+	actions.bakeTimeline = new Action('imm_bake_timeline', { name: '解析动画时间轴（写入帧标签，旧流程）', description: '按项目 FPS 采样当前动画，生成 range_dispatch(timeline) 分组与逐帧 Locator；导出时也会自动采样，一般不需要手动执行', icon: 'timeline', category: 'tools', condition: () => typeof Animation !== 'undefined' && Animation && (Animation.selected || (Array.isArray(Animation.all) && Animation.all.length)), click: () => bakeTimelineToCallTags() });
+	actions.removeTimeline = new Action('imm_remove_timeline', { name: '移除动画时间线复调用标签', description: '删除项目里所有 range_dispatch(timeline) 分组及其 Locator 帧标签', icon: 'delete', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner && Outliner.root.some(n => isGroup(n) && String(n.imm_type || '') === 'range_dispatch_timeline')), click: () => removeTimelineTags() });
+	actions.instantiateCalls = new Action('imm_instantiate_calls', { name: '实例化所有复调用标签', description: '把复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner), click: () => instantiateCallTags() });
 		actions.createModel = new Action('imm_create_model', { name: '从分组创建模型…', description: '把选中分组的方块烘焙成 models/item 模型，并改为引用（自动居中）', icon: 'file_upload', category: 'tools', condition, click: () => { const group = pickTargetGroup(); if (!group) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } createModelFromGroup(group); } });
 		actions.check = new Action('imm_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
 		actions.pack = new Action('imm_pick_pack', { name: '选择资源包工程路径…', description: '打开系统文件夹选择框，设为资源包工程目录', icon: 'folder_open', category: 'file', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: pickPackPath });
@@ -3260,7 +3596,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

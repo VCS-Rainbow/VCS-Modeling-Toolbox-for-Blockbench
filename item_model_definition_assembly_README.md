@@ -75,9 +75,12 @@
 
 | 属性 | 默认 | 说明 |
 | --- | --- | --- |
-| `命名空间`（`imm_namespace`） | `custom` | 决定 `assets/<ns>/...` |
+| `命名空间`（`imm_namespace`） | `custom` | 决定 `assets/<ns>/...`；支持子空间，如 `sqsptst:weapon/shotgun` → `assets/sqsptst/items/weapon/shotgun/...` |
 | `变换原点用物品中心 (8,8,8)`（`imm_center_pivot`） | 开 | Minecraft 的物品模型变换以物品中心为原点，建议保持开启 |
-| `模型附带手持 display 变换`（`imm_block_display`） | 开 | 只补 `thirdperson_*`（0.85）和 `firstperson_*`（0.68），与引用模型一致；GUI/地面/固定走默认 |
+| `模型附带 display`（`imm_block_display`） | 开 | 读取项目“显示调整”页的槽位参数写入模型；没有数据时回退内置预设 |
+| `时间轴 FPS`（`imm_anim_fps`） | 20 | 自动采样动画的帧率 |
+| `时间轴 index`（`imm_anim_index`） | 0 | `range_dispatch` 的 custom_model_data 下标 |
+| `自动采样动画时间轴`（`imm_anim_auto`） | 开 | 导出时自动把当前动画采样成 `range_dispatch(timeline)`，无需手动打帧标签 |
 | `资源包工程路径`（`imm_pack_path`） | 空 | 合并目标目录（`pack.mcmeta` 所在目录），由「选择资源包工程路径…」写入 |
 | `目标 Minecraft 版本`（`imm_pack_version`） | `26.2` | 决定 `pack.mcmeta` 的格式字段，见上文；在项目设置里直接下拉选择 |
 
@@ -236,6 +239,16 @@ Blockbench 5.x 的实现方式有两条，本插件都接上了：
 2. 几何会自动居中（元素坐标平移到以 (8,8,8) 为中心）；
 3. 分组改为 `model` 类型并引用新模型，同时把居中补偿量记到隐藏属性 `imm_model_shift`，所以**外观不变**；
 4. 分组里的方块保留下来作为编辑参考，导出时由引用模型代替。
+
+## 动画时间轴（逐帧）
+
+导出时会自动采样当前动画：按 `imm_anim_fps` 生成 `range_dispatch`，阈值 `0,1,2…`，每帧只改 `transformation`，几何模型复用。项目里存在 `range_dispatch_timeline` 分组时优先用它的 Locator 帧标签（`imm_frame` / `imm_pose`）。
+
+- `Tools → 解析动画时间轴（写入帧标签，旧流程）`：手动生成 `[timeline]` 分组和帧 Locator；
+- `Tools → 移除动画时间线复调用标签`：删除这些分组；
+- `Tools → 实例化所有复调用标签`：把复调用 Locator 替换成真实分组/模型节点。
+
+引用模型分组的 `强制统一显示调整`：`生成模型副本`（默认，在项目里生成改好 display 的副本）、`不处理`、`覆盖源模型参数`。
 
 ## 复调用标签
 

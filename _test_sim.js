@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.62.8', api.VERSION, '0.62.8');
+eq('版本是 0.63.3', api.VERSION, '0.63.3');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -629,6 +629,53 @@ const unitTransformation = unitExporter.buildTransformation({ origin: [0, 0, 0],
 eq('translation 以格为单位（16px = 1）', unitTransformation.translation, [1, 0, 0]);
 
 
+/* ---------- 项目显示调整 / 子空间 / 时间轴采样 ---------- */
+console.log('\n[显示调整 / 子空间 / 时间轴]');
+global.Project.display_settings = {
+  gui: { export() { return { scale: [1.25, 1.25, 1.25] }; } },
+  thirdperson_righthand: { export() { return { rotation: [0, -90, 55], translation: [0, 4, 0.5], scale: [0.85, 0.85, 0.85] }; } },
+};
+const displayExporter = api.createExporter();
+displayExporter.addModel([dispCube], 'displayFromProject');
+eq('display 使用显示调整页的 gui', displayExporter.models[0].data.display.gui.scale, [1.25, 1.25, 1.25]);
+eq('display 使用显示调整页的手持', displayExporter.models[0].data.display.thirdperson_righthand.scale, [0.85, 0.85, 0.85]);
+eq('未在显示调整页出现的上下文不输出', displayExporter.models[0].data.display.ground, undefined);
+delete global.Project.display_settings;
+const parsedNs = api.parseNamespaceSetting('sqsptst:weapon/shotgun');
+eq('命名空间解析', parsedNs.namespace, 'sqsptst');
+eq('子空间解析', parsedNs.subpath, 'weapon/shotgun');
+global.Project.imm_namespace = 'sqsptst:weapon/shotgun';
+const subExporter = api.createExporter();
+subExporter.addModel([dispCube], 'subpath');
+eq('模型引用带子空间', subExporter.models[0] && subExporter.models.length > 0, true);
+eq('子空间模型引用前缀', subExporter.models[0].name.indexOf('subpath') >= 0, true);
+const savedSubRoot = global.Outliner.root.splice(0, global.Outliner.root.length, dispCube);
+const subFiles = subExporter.buildFiles().files;
+eq('items 路径带子空间', subFiles.some(f => f.path === 'assets/sqsptst/items/weapon/shotgun/' + Project.model_identifier + '.json' || f.path.indexOf('assets/sqsptst/items/weapon/shotgun/') === 0), true);
+eq('models 路径带子空间', subFiles.some(f => f.path.indexOf('assets/sqsptst/models/item/weapon/shotgun/') === 0), true);
+global.Outliner.root.splice(0, global.Outliner.root.length, ...savedSubRoot);
+delete global.Project.imm_namespace;
+const sampleAnim = { time: 0.5, getBoneAnimator(group) { return group === dispCube.parent ? null : { keyframes: [{}], channels: { rotation: [{}], position: [{}] }, interpolate(ch) { return ch === 'rotation' ? [0, 10, 0] : (ch === 'position' ? [0, 1, 0] : [1, 1, 1]); } }; } };
+console.log('（时间轴采样在动画导出单测中覆盖）');
+
+/* ---------- 自动时间轴 ---------- */
+console.log('\n[自动时间轴]');
+const autoGroup = new global.Group({ name: 'autoGroup', imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
+const autoCube = new global.Cube({ from: [0, 0, 0], to: [4, 4, 4], origin: [2, 2, 2], rotation: [0, 0, 0] });
+autoCube.faces = { north: { texture: 'tex-disp', uv: [0, 0, 16, 16] } };
+autoCube.parent = autoGroup; autoGroup.children.push(autoCube);
+const savedRootAuto = global.Outliner.root.splice(0, global.Outliner.root.length, autoGroup);
+const savedGroupAllAuto = global.Group.all; global.Group.all = [autoGroup];
+const autoAnimator = { keyframes: [{}], channels: { rotation: [{}], position: [{}] }, interpolate(ch) { if (ch === 'rotation') return [0, 0, 0]; if (ch === 'position') return [0, Number(global.Animation.selected.time) * 10, 0]; return [1, 1, 1]; } };
+global.Animation = { selected: { length: 0.1, time: 0, getBoneAnimator(group) { return group === autoGroup ? autoAnimator : null; } }, all: [] };
+const autoMapping = api.createExporter().buildMapping();
+eq('自动输出 range_dispatch', autoMapping.model.type, 'minecraft:range_dispatch');
+eq('自动输出两帧', autoMapping.model.entries.length, 2);
+eq('帧阈值 0/1', autoMapping.model.entries.map(e => e.threshold), [0, 1]);
+eq('逐帧 transformation 不同', JSON.stringify(autoMapping.model.entries[0].model) !== JSON.stringify(autoMapping.model.entries[1].model), true);
+delete global.Animation;
+global.Group.all = savedGroupAllAuto;
+global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRootAuto);
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);

@@ -2,6 +2,15 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.63.3
+- **display 改用项目“显示调整”页参数**：读取 `Project.display_settings`，按槽位输出 rotation/translation/scale；没有该数据时才回退旧预设。
+- **命名空间支持子空间**：`sqsptst:weapon/shotgun` → items/models 路径和模型引用都带 `weapon/shotgun/` 子路径。
+- **恢复逐帧动画导出**：`range_dispatch(timeline)` 会优先用 Locator 帧标签，否则自动采样当前动画（FPS / index / property 可配），不再需要手动打标签。
+- 新增 `Tools → 移除动画时间线复调用标签`、`Tools → 实例化所有复调用标签`；旧的手动解析仍保留。
+- 引用模型分组新增“强制统一显示调整”：不处理 / 生成模型副本（默认）/ 覆盖源模型参数；与当前显示页不一致时按档位处理。
+- Locator 注册 `imm_frame` / `imm_pose` 属性，帧标签可随项目保存。
+- 单测扩到 **160 项**。
+
 ## 0.62.8
 - **display 对齐引用模型**（`sac.full` / `anime/*`）：只输出 `thirdperson_*`（scale 0.85）和 `firstperson_*`（scale 0.68），**不再输出 gui / ground / fixed**（这些上下文按默认 identity 渲染）。
 - 修生成模型在 GUI/地面被压到 0.625/0.25、手持 0.375 导致比引用模型小一倍多的问题。
