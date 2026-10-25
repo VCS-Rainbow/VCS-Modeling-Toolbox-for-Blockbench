@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.18';
+const VERSION = '0.68.19';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -4088,15 +4088,17 @@ Plugin.register('item_model_definition_assembly', {
 		const tool = (action) => addMenu(action, 'tools');
 		toolSep('imda_vmt_top');
 		toolHeading('==VCS Modeling Toolbox==');
-		toolSep('imda_group_assembly', '[ 模型装配 ]');
+		toolSep('imda_group_assembly', '[ 模型装配 ] - 结构');
 		tool(actions.props);
 		tool(actions.import);
 		tool(actions.createModel);
 		tool(actions.sequence);
+		toolSep('imda_group_calls', '复调用');
 		tool(actions.call);
 		tool(actions.convertCall);
 		tool(actions.editCall);
 		tool(actions.instantiateCalls);
+		toolSep('imda_group_debug', '调试');
 		tool(actions.check);
 		tool(actions.normalize);
 		tool(actions.migratePrefix);
