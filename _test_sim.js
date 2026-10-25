@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.4', api.VERSION, '0.68.4');
+eq('版本是 0.68.5', api.VERSION, '0.68.5');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -716,6 +716,10 @@ const seq3 = new global.Group({ name: 'a3', imm_type: 'composite' });
 const savedSeqRoot = global.Outliner.root.splice(0, global.Outliner.root.length, seq1, seq2, seq3);
 seq1.selected = true; seq3.selected = true; seq2.selected = true; global.Outliner.selected = [seq3, seq1, seq2];
 eq('按大纲顺序排列 a1..aN', api.orderedSelectedGroups().map(g => g.name), ['a1', 'a2', 'a3']);
+eq('递减序列计数', api.sequenceCounts(5, 1, 'decrease'), [5, 4, 3, 2, 1]);
+eq('递增序列计数', api.sequenceCounts(5, 1, 'increase'), [1, 2, 3, 4, 5]);
+eq('步长 2 递增', api.sequenceCounts(5, 2, 'increase'), [1, 3, 5]);
+eq('步长 2 递减', api.sequenceCounts(5, 2, 'decrease'), [5, 3, 1]);
 global.Outliner.selected = [];
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedSeqRoot);
 /* ---------- 属性前缀迁移 ---------- */

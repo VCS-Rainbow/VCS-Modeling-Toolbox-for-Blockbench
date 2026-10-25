@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.4';
+const VERSION = '0.68.5';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2211,25 +2211,53 @@ function orderedSelectedGroups() {
 	return ordered;
 }
 
-/** 生成递减复调用序列：a1..aN 本体 → a1..a(N-1) 复调用 → … → a1 */
-function generateDecreasingCallSequence(name, step) {
+/** 序列节点覆盖的分组数量：递减 N…1，递增 1…N */
+function sequenceCounts(total, step, direction) {
+	const counts = [];
+	step = Math.max(1, Math.floor(num(step) || 1));
+	if (String(direction) === 'increase') {
+		for (let count = 1; count <= total; count += step) counts.push(count);
+		if (counts[counts.length - 1] !== total) counts.push(total);
+	} else {
+		for (let count = total; count >= 1; count -= step) counts.push(count);
+		if (counts[counts.length - 1] !== 1) counts.push(1);
+	}
+	return counts;
+}
+
+/** 生成复调用序列：满节点放本体，其余节点用 a1…ak 的复调用 */
+function generateCallSequence(options) {
+	options = options || {};
 	const groups = orderedSelectedGroups();
 	if (groups.length < 2) { Blockbench.showMessageBox({ title: '分组不足', message: '请先选中至少 2 个分组（按大纲顺序作为 a1…aN）。', icon: 'info' }); return; }
 	if (typeof Locator === 'undefined') { Blockbench.showMessageBox({ title: '不支持定位点', message: '当前 Blockbench 没有 Locator。', icon: 'warning' }); return; }
-	step = Math.max(1, Math.floor(num(step) || 1));
+	const total = groups.length;
+	const countStep = Math.max(1, Math.floor(num(options.countStep) || 1));
+	const direction = String(options.direction || 'decrease') === 'increase' ? 'increase' : 'decrease';
+	const type = String(options.nodeType || 'range_dispatch') === 'composite' ? 'composite' : 'range_dispatch';
+	const counts = sequenceCounts(total, countStep, direction);
 	const parent = groups[0].parent || null;
 	const allSameParent = groups.every(g => (g.parent || null) === parent);
-	const sequenceName = String(name || '').trim() || '[sequence]';
+	const sequenceName = String(options.name || '').trim() || '[sequence]';
+	const property = 'minecraft:' + String(options.property || 'custom_model_data').replace(/^minecraft:/, '');
+	const index = num(options.index);
+	const thresholdStart = num(options.thresholdStart);
+	const thresholdStep = num(options.thresholdStep);
 	try { Undo.initEdit({ outliner: true, groups, elements: [] }); } catch (e) { /* ignore */ }
-	const container = new Group({ name: sequenceName, imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
+	const container = new Group({ name: sequenceName, imm_type: type, origin: [8, 8, 8], rotation: [0, 0, 0] });
+	if (type === 'range_dispatch') { container.imm_property = property; container.imm_index = index; }
 	addAndInit(container, parent);
-	const first = new Group({ name: '[' + groups.length + '] 本体', imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
-	addAndInit(first, container);
-	for (const group of groups) { try { group.addTo(first); } catch (e) { /* ignore */ } }
 	let created = 0;
-	for (let count = groups.length - step; count >= 1; count -= step) {
-		const node = new Group({ name: '[' + count + '] 复调用', imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
+	for (let i = 0; i < counts.length; i++) {
+		const count = counts[i];
+		const isBody = count === total;
+		const node = new Group({ name: '[' + count + '] ' + (isBody ? '本体' : '复调用'), imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
+		if (type === 'range_dispatch') node.imm_threshold = thresholdStart + i * thresholdStep;
 		addAndInit(node, container);
+		if (isBody) {
+			for (const group of groups) { try { group.addTo(node); } catch (e) { /* ignore */ } }
+			continue;
+		}
 		for (const group of groups.slice(0, count)) {
 			try {
 				const locator = new Locator({ name: '调用 ' + labelOf(group), position: (group.origin || [0, 0, 0]).slice(), rotation: (group.rotation || [0, 0, 0]).slice(), ignore_inherited_scale: true });
@@ -2239,25 +2267,32 @@ function generateDecreasingCallSequence(name, step) {
 			} catch (error) { console.warn('[装配] 创建序列复调用失败', error); }
 		}
 	}
-	try { Undo.finishEdit('生成递减复调用序列'); } catch (e) { /* ignore */ }
+	try { Undo.finishEdit('生成复调用序列'); } catch (e) { /* ignore */ }
 	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 	try { Project.saved = false; } catch (e) { /* ignore */ }
 	try { simInvalidate(); } catch (e) { /* ignore */ }
 	if (!allSameParent) console.warn('[装配] 选中的分组父级不同，序列容器放在第一个分组的父级下。');
-	Blockbench.showQuickMessage('已生成 ' + sequenceName + '：' + (1 + Math.ceil((groups.length - 1) / step)) + ' 个节点，' + created + ' 个复调用', 4000);
+	Blockbench.showQuickMessage('已生成 ' + sequenceName + '（' + direction + '）：' + counts.length + ' 个节点，' + created + ' 个复调用', 4000);
 }
 
 function openSequenceDialog() {
 	new Dialog({
 		id: 'imda_sequence',
-		title: '生成递减复调用序列',
-		width: 520,
+		title: '生成复调用序列',
+		width: 560,
 		form: {
 			name: { label: '容器名称', type: 'text', value: '[sequence]' },
-			step: { label: '每次递减数量', type: 'number', value: 1, step: 1, min: 1, max: 64 },
-			info: { type: 'info', text: '节点 1 放入选中分组本体；后续节点依次引用 a1…a(N-step)、a1…，最后一个节点只引用 a1。' },
+			direction: { label: '方向', type: 'select', value: 'decrease', options: { decrease: '递减（aN…a1）', increase: '递增（a1…aN）' } },
+			nodeType: { label: '节点类型', type: 'select', value: 'range_dispatch', options: { range_dispatch: 'range_dispatch', composite: 'composite' } },
+			countStep: { label: '每次递增/递减的分组数（步长）', type: 'number', value: 1, step: 1, min: 1, max: 64 },
+			_: '_',
+			property: { label: 'range_dispatch 来源（property）', type: 'select', value: 'custom_model_data', options: { custom_model_data: 'custom_model_data', cooldown: 'cooldown', count: 'count', damage: 'damage', time: 'time', use_cycle: 'use_cycle', use_duration: 'use_duration', compass: 'compass' } },
+			index: { label: 'custom_model_data index', type: 'number', value: 0 },
+			thresholdStart: { label: '阈值起点', type: 'number', value: 0 },
+			thresholdStep: { label: '阈值步长', type: 'number', value: 1, step: 1, min: -100, max: 100 },
+			info: { type: 'info', text: 'range_dispatch：子节点按输出顺序写入 threshold = 起点 + i × 阈值步长；composite 时忽略 property/index/阈值。满节点只放一次本体。' },
 		},
-		onConfirm(result) { generateDecreasingCallSequence(result.name, result.step); },
+		onConfirm(result) { generateCallSequence(result); },
 	}).show();
 }
 
@@ -3944,7 +3979,7 @@ Plugin.register('item_model_definition_assembly', {
 	actions.instantiateCalls = new Action('imm_instantiate_calls', { name: '实例化所有复调用标签', description: '把复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner), click: () => instantiateCallTags() });
 	actions.animationTimeline = new Action('imda_animation_timeline', { name: '时间轴属性…', description: '设置该动画导出时间轴使用的 range_dispatch property 与 index', icon: 'timeline', category: 'animation', condition: () => typeof Animation !== 'undefined' && !!Animation.selected, click: () => showAnimationTimelineDialog() });
 	actions.migratePrefix = new Action('imm_migrate_prefix', { name: '迁移属性前缀（imm_ → imda_）…', description: '把项目里所有 imm_* 属性迁移到 imda_*：可复制（保留旧键）或重命名（删除旧键）', icon: 'swap_horiz', category: 'tools', click: () => migratePrefixDialog() });
-	actions.sequence = new Action('imda_sequence', { name: '生成递减复调用序列…', description: '按大纲顺序把选中分组生成 a1…aN 本体 → 递减复调用序列', icon: 'format_list_numbered', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID), click: () => openSequenceDialog() });
+	actions.sequence = new Action('imda_sequence', { name: '生成复调用序列…', description: '按大纲顺序生成递增/递减复调用序列，节点类型可选 range_dispatch / composite', icon: 'format_list_numbered', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID), click: () => openSequenceDialog() });
 		actions.createModel = new Action('imm_create_model', { name: '从分组创建模型…', description: '把选中分组的方块烘焙成 models/item 模型，并改为引用（自动居中）', icon: 'file_upload', category: 'tools', condition, click: () => { const group = pickTargetGroup(); if (!group) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } createModelFromGroup(group); } });
 		actions.check = new Action('imm_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
 		actions.pack = new Action('imm_pick_pack', { name: '选择资源包工程路径…', description: '打开系统文件夹选择框，设为资源包工程目录', icon: 'folder_open', category: 'file', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: pickPackPath });
@@ -3993,7 +4028,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, copyImmToImda, migratePropPrefixes, formatMapping, orderedSelectedGroups, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, copyImmToImda, migratePropPrefixes, formatMapping, orderedSelectedGroups, sequenceCounts, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

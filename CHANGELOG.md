@@ -2,6 +2,11 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.5
+- 复调用序列生成器支持：方向（递增/递减）、节点类型（默认 range_dispatch，可选 composite）、每次分组数步长、range_dispatch 的 property/index、阈值起点与阈值步长。
+- 节点按输出顺序写 `imm_threshold = 起点 + i × 阈值步长`；满节点只放一次本体。
+- 单测 181 项。
+
 ## 0.68.4
 - 新增 **AGENTS.md** 与 HANDOFF 0.1：新建 Group/Locator/Cube 必须 add + init 都调用。
 - 统一 `addAndInit()`，序列生成、复调用、时间轴、实例化等路径改用该封装。
