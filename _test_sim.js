@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.62.7', api.VERSION, '0.62.7');
+eq('版本是 0.62.8', api.VERSION, '0.62.8');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -619,8 +619,8 @@ const dispCube = new global.Cube({ from: [0, 0, 0], to: [4, 4, 4], origin: [2, 2
 dispCube.faces = { north: { texture: 'tex-disp', uv: [0, 0, 16, 16] } };
 const dispExporter = api.createExporter();
 dispExporter.addModel([dispCube], 'displayTest');
-eq('GUI display scale = 0.625（block/block）', dispExporter.models[0].data.display.gui.scale, [0.625, 0.625, 0.625]);
-eq('地面 display scale = 0.25（block/block）', dispExporter.models[0].data.display.ground.scale, [0.25, 0.25, 0.25]);
+eq('手持 display scale = 0.85（对齐引用模型）', dispExporter.models[0].data.display.thirdperson_righthand.scale, [0.85, 0.85, 0.85]);
+eq('不再输出 gui display', dispExporter.models[0].data.display.gui, undefined);
 
 /* ---------- transformation 单位 ---------- */
 console.log('\n[transformation 单位]');

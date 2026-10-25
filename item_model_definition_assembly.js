@@ -18,11 +18,11 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.28.1';
+const VERSION = '0.62.8';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
-const MAPPING_TYPES = ['composite', 'model', 'range_dispatch', 'condition', 'select', 'empty'];
+const MAPPING_TYPES = ['composite', 'inline', 'model', 'range_dispatch', 'condition', 'select', 'empty'];
 const MANIFEST = '.imm-assembly-manifest.json';
 
 const BLOCK_DISPLAY = {
@@ -43,6 +43,7 @@ const cleanAll = (list) => list.map(clean);
 const labelOf = (node) => (node && node.name) ? node.name : 'unnamed';
 const isGroup = (node) => typeof Group !== 'undefined' && node instanceof Group;
 const isCube = (node) => typeof Cube !== 'undefined' && node instanceof Cube;
+const isLocator = (node) => typeof Locator !== 'undefined' && node instanceof Locator;
 const num = (v) => Number(v) || 0;
 
 function sanitizePath(value, fallback) {
@@ -195,6 +196,8 @@ class Exporter {
 		this.textureRefs = new Map();
 		this.uvScales = new Map();
 		this.modelNames = new Set();
+		this.groupNodes = new Map(); // 映射节点 → 来源分组（视图联动用，不参与导出）
+		this.groupNodeCache = new Map(); // 分组 → 已构建的映射节点（复调用克隆用）
 		this.textureNames = new Set();
 		this.negativeCount = 0;
 	}
@@ -239,13 +242,26 @@ class Exporter {
 		return all.find(t => t.uuid === face.texture) || null;
 	}
 
+/** 从贴图文件路径解析 assets/<namespace>/textures/<path>.png；解析不到则用贴图名 */
+	textureLocation(texture) {
+		const rawPath = String((texture && (texture.path || texture.file_path)) || '').replace(/\\/g, '/');
+		const match = rawPath.match(/(?:^|\/)assets\/([^/]+)\/textures\/(.+?)\.png$/i);
+		if (match) {
+			return { namespace: sanitizeNamespace(match[1]), path: sanitizePath(match[2], 'texture') };
+		}
+		const folder = String((texture && texture.folder) || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+		const base = sanitizePath(String((texture && texture.name) || 'texture').replace(/\.png$/i, ''), 'texture');
+		return { namespace: this.namespace, path: (folder ? sanitizePath(folder, 'texture') + '/' : '') + base };
+	}
+
 	textureRef(texture) {
 		if (this.textureRefs.has(texture)) return this.textureRefs.get(texture);
-		const base = sanitizePath(String(texture.name || 'texture').replace(/\.png$/i, ''), 'texture');
+		const location = this.textureLocation(texture);
+		const base = sanitizePath(String(location.path || 'texture').split('/').pop(), 'texture');
 		const name = this.unique(base, this.textureNames);
-		const ref = this.namespace + ':item/' + name;
+		const ref = location.namespace + ':' + location.path;
 		this.textureRefs.set(texture, ref);
-		this.textures.push({ name, texture });
+		this.textures.push({ name, texture, namespace: location.namespace, path: location.path });
 		return ref;
 	}
 
@@ -336,6 +352,9 @@ class Exporter {
 			el.to = el.to.map((v, a) => clean(v - shift[a]));
 			if (el.rotation) el.rotation.origin = el.rotation.origin.map((v, a) => clean(v - shift[a]));
 		}
+
+		const outside = elements.filter(el => el.from.concat(el.to).some(v => v < -16 - 1e-6 || v > 32 + 1e-6));
+		if (outside.length) this.warn('模型 “' + (hint || 'part') + '” 有 ' + outside.length + ' 个元素居中后仍超出 -16~32；请检查该分组的枢轴/旋转（源数据可能已被异常变换）');
 
 		const textures = {};
 		let particle = null;
@@ -436,8 +455,10 @@ class Exporter {
 		// 纹理着色：索引为空 → 不输出任何 tints；类型默认 custom_model_data
 		const index_text = String(group.imm_tint_index == null ? '' : group.imm_tint_index).trim();
 		if (!/^-?\d+$/.test(index_text)) return null;
+		// 明确选择“不生成 tints”（空字符串）时直接退出；只有从未设置（undefined）才按默认 custom_model_data
+		if (group.imm_tint_type === '' || group.imm_tint_type === 'none') return null;
 		const index = Number(index_text);
-		const type = (String(group.imm_tint_type || 'custom_model_data').replace(/^minecraft:/, '').trim()) || 'custom_model_data';
+		const type = (String(group.imm_tint_type == null ? 'custom_model_data' : group.imm_tint_type).replace(/^minecraft:/, '').trim()) || 'custom_model_data';
 		const value_text = String(group.imm_tint_value == null ? '' : group.imm_tint_value).trim();
 		if (type === 'custom_model_data') return [{ type: 'custom_model_data', index, default: index }];
 		if (type === 'constant') return [{ type: 'constant', value: value_text.length ? Number(value_text) : 0 }];
@@ -483,6 +504,7 @@ class Exporter {
 		const built = this.addModel([cube], hint + '_' + sanitizePath(labelOf(cube), 'cube'));
 		if (!built) return null;
 		const node = { type: 'minecraft:model', model: built.reference };
+		if (cube && cube.parent && isGroup(cube.parent)) this.groupNodes.set(node, cube.parent);
 		const transformation = this.buildTransformation(cube, built.shift, parent_shift);
 		if (transformation) node.transformation = transformation;
 		return node;
@@ -499,15 +521,31 @@ class Exporter {
 		for (const cube of cubes) (this.needsOwnNode(cube) ? ownCubes : inlineCubes).push(cube);
 
 		let built = null;
-		if (type === 'model' && group.imm_model) built = { reference: String(group.imm_model).trim(), shift: [0, 0, 0] };
+		if (type === 'model' && group.imm_model) {
+			let shift = [0, 0, 0];
+			try {
+				const parsed = JSON.parse(String(group.imm_model_shift || ''));
+				if (Array.isArray(parsed) && parsed.length === 3 && parsed.every(v => isFinite(Number(v)))) shift = parsed.map(Number);
+			} catch (e) { /* ignore */ }
+			built = { reference: String(group.imm_model).trim(), shift };
+		}
 		else if (inlineCubes.length) built = this.addModel(inlineCubes, hint);
 
-		const node = { type: 'minecraft:' + type };
+		// inline（内联模型）在导出结构里等同于 composite：自身方块烘焙成模型，子分组各自输出
+		const outputType = type === 'inline' ? 'composite' : type;
+		const node = { type: 'minecraft:' + outputType };
+		try { this.groupNodes.set(node, group); } catch (e) { /* ignore */ }
+		try { this.groupNodeCache.set(group, node); } catch (e) { /* ignore */ }
 		const own_shift = built ? built.shift : [0, 0, 0];
 		const transformation = this.buildTransformation(group, own_shift, parent_shift);
 		if (transformation) node.transformation = transformation;
 
 		const extras = ownCubes.map(cube => this.buildCubeNode(cube, hint, parent_shift)).filter(Boolean);
+		const calls = children.filter(isLocator).map(locator => this.buildCallNode(locator)).filter(Boolean);
+		if (calls.length && type !== 'composite' && type !== 'inline') {
+			this.warn('复调用标签只支持放在 composite / inline 分组里，已忽略 ' + calls.length + ' 个。');
+			calls.length = 0;
+		}
 
 		if (type === 'empty') return node;
 
@@ -532,7 +570,7 @@ class Exporter {
 				node.cases.push({ when: this.parseWhen(child.imm_case_when), model: childNode });
 			}
 			const fallback = built ? { type: 'minecraft:model', model: built.reference } : (extras[0] || null);
-			if (fallback) node.fallback = fallback;
+			if (fallback) { this.groupNodes.set(fallback, group); node.fallback = fallback; }
 			if (!node.cases.length && !node.fallback) return null;
 			return node;
 		}
@@ -571,7 +609,7 @@ class Exporter {
 				branch_index++;
 			}
 			const fallback = built ? { type: 'minecraft:model', model: built.reference } : (extras[0] || null);
-			if (fallback) node.fallback = fallback;
+			if (fallback) { this.groupNodes.set(fallback, group); node.fallback = fallback; }
 			if (!node.entries.length && !node.fallback) return null;
 			return node;
 		}
@@ -581,11 +619,13 @@ class Exporter {
 				if (built) {
 					const model_node = { type: 'minecraft:model', model: built.reference };
 					if (tints) model_node.tints = tints;
+					this.groupNodes.set(model_node, group);
 					models.push(model_node);
 				} else if (tints) {
 					this.warn('分组 "' + labelOf(group) + '" 设置了 tints 但没有自己的模型，已忽略。');
 				}
 		for (const extra of extras) models.push(extra);
+		for (const call of calls) models.push(call);
 		for (const child of childGroups) {
 			const childNode = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'), own_shift);
 			if (childNode) models.push(childNode);
@@ -616,6 +656,57 @@ class Exporter {
 		return node;
 	}
 
+
+	/** 定位点 → 复调用节点：指向分组时先占位，构建完成后克隆目标节点 */
+	buildCallNode(locator) {
+		const target = String((locator && locator.imm_call_target) || '').trim();
+		if (!target) return null;
+		if (target.indexOf(':') >= 0) return { type: 'minecraft:model', model: target };
+		let group = null;
+		try { if (typeof Group !== 'undefined' && Array.isArray(Group.all)) group = Group.all.find(g => g && g.uuid === target) || null; } catch (e) { /* ignore */ }
+		if (!group) { this.warn('复调用标签 “' + labelOf(locator) + '” 找不到目标分组：' + target); return null; }
+		return { type: 'minecraft:empty', __imm_call_group: group };
+	}
+
+	/** 把占位替换为目标分组的映射节点（深拷贝，保留 transformation） */
+	resolveCallPlaceholders(node) {
+		if (!node || typeof node !== 'object') return;
+		if (Array.isArray(node)) {
+			for (let i = node.length - 1; i >= 0; i--) {
+				const item = node[i];
+				if (item && typeof item === 'object' && item.__imm_call_group) {
+					const target = this.groupNodeCache ? this.groupNodeCache.get(item.__imm_call_group) : null;
+					if (!target) { this.warn('复调用目标没有可导出的映射节点，已跳过。'); node.splice(i, 1); continue; }
+					const clone = JSON.parse(JSON.stringify(target));
+					this.stripCallPlaceholders(clone);
+					node[i] = clone;
+				} else this.resolveCallPlaceholders(item);
+			}
+			return;
+		}
+		for (const key of Object.keys(node)) {
+			const value = node[key];
+			if (value && typeof value === 'object') this.resolveCallPlaceholders(value);
+		}
+	}
+
+	/** 克隆体内残留的复调用占位改成 empty，避免自引用无限展开 */
+	stripCallPlaceholders(node) {
+		if (!node || typeof node !== 'object') return;
+		if (Array.isArray(node)) {
+			for (let i = node.length - 1; i >= 0; i--) {
+				const item = node[i];
+				if (item && typeof item === 'object' && item.__imm_call_group) node[i] = { type: 'minecraft:empty' };
+				else this.stripCallPlaceholders(item);
+			}
+			return;
+		}
+		for (const key of Object.keys(node)) {
+			const value = node[key];
+			if (value && typeof value === 'object') this.stripCallPlaceholders(value);
+		}
+	}
+
 	buildMapping() {
 		const root = (typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : [];
 		const models = [];
@@ -625,6 +716,9 @@ class Exporter {
 			if (isGroup(node)) {
 				const built = this.buildNode(node, sanitizePath(labelOf(node), 'group'), [0, 0, 0]);
 				if (built) models.push(built);
+			} else if (isLocator(node)) {
+				const call = this.buildCallNode(node);
+				if (call) models.push(call);
 			} else if (isCube(node)) loose.push(node);
 		}
 		if (loose.length) {
@@ -649,7 +743,10 @@ class Exporter {
 			}
 		}
 		if (!models.length) throw new Error('当前项目没有可导出的分组或方块。');
-		return { model: { type: 'minecraft:composite', models } };
+		const result = { model: { type: 'minecraft:composite', models } };
+
+		this.resolveCallPlaceholders(result.model);
+		return result;
 	}
 
 	buildNotes() {
@@ -670,7 +767,9 @@ class Exporter {
 			if (typeof source === 'string' && source.startsWith('data:image')) {
 				const comma = source.indexOf(',');
 				if (comma > 0) {
-					files.push({ path: 'assets/' + this.namespace + '/textures/item/' + texture.name + '.png', data: source.slice(comma + 1), base64: true });
+					const textureNamespace = texture.namespace || this.namespace;
+					const texturePath = texture.path || ('item/' + texture.name);
+					files.push({ path: 'assets/' + textureNamespace + '/textures/' + texturePath + '.png', data: source.slice(comma + 1), base64: true });
 					continue;
 				}
 			}
@@ -763,8 +862,66 @@ async function pickPack() {
 	return picked || null;
 }
 
-const PACK_FORMATS = { '26.2': 71 };
-const PACK_VERSION_ID = '26.2';
+/* 资源包格式表：数值来自 minecraft.wiki（Pack_format / Template:Resource pack format），2026-10-24 校对。
+ * 1.21.9 起（25w31a，resource 65.0）pack.mcmeta 改用 min_format / max_format；更早的版本用 pack_format。
+ * major >= 65 视为新版格式。minor 为 0 时按整数写（等价于 [major,0]）。 */
+const PACK_VERSIONS = [
+	{ id: '26.3', major: 97, minor: 1 },
+	{ id: '26.2', major: 88, minor: 0 },
+	{ id: '26.1.2', major: 84, minor: 0 },
+	{ id: '26.1', major: 84, minor: 0 },
+	{ id: '1.21.11', major: 75, minor: 0 },
+	{ id: '1.21.10', major: 69, minor: 0 },
+	{ id: '1.21.9', major: 69, minor: 0 },
+	{ id: '1.21.8', major: 64, minor: 0 },
+	{ id: '1.21.7', major: 64, minor: 0 },
+	{ id: '1.21.6', major: 63, minor: 0 },
+	{ id: '1.21.5', major: 55, minor: 0 },
+	{ id: '1.21.4', major: 46, minor: 0 },
+];
+const DEFAULT_PACK_VERSION = '26.2';
+const PACK_MODERN_MIN_MAJOR = 65;
+
+function findPackVersion(id) {
+	return PACK_VERSIONS.find(v => v.id === id)
+		|| PACK_VERSIONS.find(v => v.id === DEFAULT_PACK_VERSION)
+		|| PACK_VERSIONS[0];
+}
+
+function packFormatLabel(version) {
+	return version.major + (version.minor ? '.' + version.minor : '');
+}
+
+/** 生成 pack.mcmeta 的 pack 段；versionId 缺省时取项目设置 imm_pack_version */
+function packMcmetaData(description, versionId) {
+	const version = findPackVersion(versionId || projectValue('imm_pack_version', DEFAULT_PACK_VERSION));
+	const pack = { description };
+	if (version.major >= PACK_MODERN_MIN_MAJOR) {
+		const value = version.minor ? [version.major, version.minor] : version.major;
+		pack.min_format = value;
+		pack.max_format = value;
+	} else {
+		pack.pack_format = version.major;
+	}
+	return { version, pack };
+}
+
+/** 读出现有 pack.mcmeta 声明的格式文本（用于提示版本不一致） */
+function packMcmetaFormat(mcmeta) {
+	const pack = (mcmeta && mcmeta.pack) || null;
+	if (!pack) return null;
+	const asText = (v) => (Array.isArray(v) ? v.join('.') : String(v));
+	if (pack.min_format != null || pack.max_format != null) return asText(pack.max_format != null ? pack.max_format : pack.min_format);
+	if (pack.pack_format != null) return asText(pack.pack_format);
+	return null;
+}
+
+/** 老项目没有 imm_pack_version 时补默认值，避免项目设置的下拉落到第一项（26.3） */
+function ensurePackVersion() {
+	try {
+		if (typeof Project !== 'undefined' && Project && !Project.imm_pack_version) Project.imm_pack_version = DEFAULT_PACK_VERSION;
+	} catch (e) { /* ignore */ }
+}
 
 function readPackMcmeta(fsmod, pathmod, root) {
 	try {
@@ -779,12 +936,16 @@ function createPackProject(root) {
 	const fsmod = getScopedFs(root);
 	if (!pathmod || !fsmod) { Blockbench.showMessageBox({ title: '不支持写入', message: '需要桌面版 Blockbench。', icon: 'warning' }); return false; }
 	try {
-		const format = PACK_FORMATS[PACK_VERSION_ID] || 71;
-		const data = { pack: { pack_format: format, description: ((typeof Project !== 'undefined' && Project && Project.name) ? Project.name : 'Resource Pack') + ' · Blockbench' } };
+		const description = ((typeof Project !== 'undefined' && Project && Project.name) ? Project.name : 'Resource Pack') + ' · Blockbench';
+		const built = packMcmetaData(description);
+		const data = { pack: built.pack };
 		fsmod.mkdirSync(root, { recursive: true });
 		Blockbench.writeFile(pathmod.join(root, 'pack.mcmeta'), { content: JSON.stringify(data, null, '\t'), savetype: 'text' });
 		if (typeof Project !== 'undefined' && Project) { Project.imm_pack_path = root; Project.saved = false; }
-		Blockbench.showQuickMessage('已创建资源包工程 pack.mcmeta（pack_format=' + format + '，' + PACK_VERSION_ID + '）', 4000);
+		const field = built.pack.min_format != null
+			? ('min_format/max_format=' + packFormatLabel(built.version))
+			: ('pack_format=' + built.pack.pack_format);
+		Blockbench.showQuickMessage('已创建 pack.mcmeta（' + built.version.id + '，' + field + '）', 4000);
 		return true;
 	} catch (error) {
 		Blockbench.showMessageBox({ title: '创建失败', message: String((error && error.message) || error), icon: 'error' });
@@ -805,7 +966,13 @@ async function pickPackPath() {
 			buttons: ['好', '创建 pack.mcmeta'], confirm: 1, cancel: 0,
 		}, (button) => { if (button === 1) createPackProject(picked); });
 	} else {
-		Blockbench.showQuickMessage('资源包工程路径：' + picked, 4000);
+		let note = '';
+		if (pathmod && fsmod) {
+			const actual = packMcmetaFormat(readPackMcmeta(fsmod, pathmod, picked));
+			const expected = packFormatLabel(packMcmetaData('', '').version);
+			if (actual) note = '（pack.mcmeta 格式 ' + actual + (actual === expected ? '' : '，目标 ' + expected) + '）';
+		}
+		Blockbench.showQuickMessage('资源包工程路径：' + picked + note, 4000);
 	}
 }
 
@@ -933,12 +1100,14 @@ function scheduleBranchSync(target) {
 		try {
 			const active = (typeof document !== 'undefined') ? document.activeElement : null;
 			if (active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName || '')) return;
+			let changed = stripStrayBranchPrefixes();
 			const group = target || pickTargetGroup();
-			if (!group) return;
-			const parent = group.parent || null;
-			let changed = sortBranchChildren(group) + syncBranchLabels(group);
-			if (parent) changed += sortBranchChildren(parent) + syncBranchLabels(parent);
-			if (changed) { try { Project.saved = false; Canvas.updateAll(); } catch (e) { /* ignore */ } }
+			if (group) {
+				const parent = group.parent || null;
+				changed += sortBranchChildren(group) + syncBranchLabels(group);
+				if (parent) changed += sortBranchChildren(parent) + syncBranchLabels(parent);
+			}
+			if (changed) { simInvalidate(); try { Project.saved = false; Canvas.updateAll(); } catch (e) { /* ignore */ } }
 		} catch (error) { /* ignore */ }
 	}, 250);
 }
@@ -1013,6 +1182,221 @@ function stripChildPrefixes(group) {
 	return changed;
 }
 
+/* 分组被挪出分支容器（或挪到根目录）后，去掉名字里的 [k] / ⚠ 前缀 */
+function stripStrayBranchPrefixes() {
+	const branchTypes = ['condition', 'range_dispatch', 'select'];
+	let changed = 0;
+	const walk = (nodes, parent) => {
+		for (const node of nodes || []) {
+			if (!isGroup(node)) continue;
+			const parentType = parent ? String(parent.imm_type || '').replace(/^minecraft:/, '') : '';
+			if (branchTypes.indexOf(parentType) < 0) {
+				const base = String(node.name || '').replace(/^\[[^\]]*\]\s*/, '').replace(/^\u26a0\s*/, '');
+				if (base && base !== node.name) { node.name = base; changed++; }
+				if (node.imm_auto_disabled) { node.imm_auto_disabled = false; changed++; }
+			}
+			walk(node.children, node);
+		}
+	};
+	walk((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : [], null);
+	return changed;
+}
+
+/* 拖拽重排分组不会触发 add_group，这里兜底：outliner 上松开鼠标/拖拽结束就跑一次同步 */
+let outlinerHookBound = false;
+function bindOutlinerHook() {
+	if (outlinerHookBound || typeof document === 'undefined' || !document.addEventListener) return;
+	outlinerHookBound = true;
+	const onMaybeReparent = (event) => {
+		const target = event && event.target;
+		if (!target || !target.closest || !target.closest('#outliner')) return;
+		simInvalidate();
+		scheduleBranchSync(pickTargetGroup());
+	};
+	try { document.addEventListener('mouseup', onMaybeReparent, true); } catch (e) { /* ignore */ }
+	try { document.addEventListener('dragend', onMaybeReparent, true); } catch (e) { /* ignore */ }
+}
+
+/* ============================== 枢轴归位 ============================== */
+/* 分组变换 A(p) = R(p − O) + O（O 在父坐标系里）。把枢轴从 O 挪到 O′ 时，
+ * 内容坐标要平移 d = (I − R⁻¹)(O′ − O) 才能保持外观不变；子分组再按 R_c⁻¹ d 递归。 */
+const PIVOT_IDENTITY = { x: 0, y: 0, z: 0, w: 1 };
+
+function pivotQuat(node) {
+	try { const q = readQuaternion(node); if (q) return q; } catch (e) { /* ignore */ }
+	return PIVOT_IDENTITY;
+}
+
+function pivotConj(q) { return { x: -q.x, y: -q.y, z: -q.z, w: q.w }; }
+
+function rotateAroundQuat(q, origin, point) {
+	const rel = [point[0] - origin[0], point[1] - origin[1], point[2] - origin[2]];
+	const rot = rotVec(quatMatrix(q), rel);
+	return [rot[0] + origin[0], rot[1] + origin[1], rot[2] + origin[2]];
+}
+
+function addVec(target, delta) {
+	if (!Array.isArray(target)) return;
+	target[0] += delta[0]; target[1] += delta[1]; target[2] += delta[2];
+}
+
+/** 方块自身变换后的中心（分组本地坐标） */
+function pivotCubeCenter(cube) {
+	const from = cube.from || [0, 0, 0], to = cube.to || [0, 0, 0];
+	const center = [(num(from[0]) + num(to[0])) / 2, (num(from[1]) + num(to[1])) / 2, (num(from[2]) + num(to[2])) / 2];
+	return rotateAroundQuat(pivotQuat(cube), cube.origin || [0, 0, 0], center);
+}
+
+/** 分组本地坐标里、包含所有后代方块的中心点集合 */
+function pivotContentPoints(group) {
+	const points = [];
+	for (const child of (group.children || [])) {
+		if (isCube(child)) points.push(pivotCubeCenter(child));
+		else if (isGroup(child)) {
+			const q = pivotQuat(child), origin = child.origin || [0, 0, 0];
+			for (const p of pivotContentPoints(child)) points.push(rotateAroundQuat(q, origin, p));
+		}
+	}
+	return points;
+}
+
+/** 把分组（及其后代）的内容整体平移 d（本分组本地坐标） */
+function pivotTranslateContents(group, delta) {
+	for (const child of (group.children || [])) {
+		if (isCube(child)) {
+			addVec(child.from, delta);
+			addVec(child.to, delta);
+			if (Array.isArray(child.origin)) addVec(child.origin, delta);
+		} else if (isGroup(child)) {
+			const inv = rotVec(quatMatrix(pivotConj(pivotQuat(child))), delta);
+			pivotTranslateContents(child, inv);
+		}
+	}
+}
+
+/** 把方块的 rotation 枢轴（origin）移到它自己的 from/to 几何中心；返回移动距离 */
+/** 把方块的 rotation 枢轴移到 target（父分组的几何中心），并补偿 from/to 保持外观不变 */
+function centerCubePivot(cube, target) {
+	if (!cube || !Array.isArray(cube.from) || !Array.isArray(cube.to) || !Array.isArray(target)) return 0;
+	const old = Array.isArray(cube.origin) ? cube.origin.slice() : [0, 0, 0];
+	const moved = Math.hypot(target[0] - num(old[0]), target[1] - num(old[1]), target[2] - num(old[2]));
+	if (moved <= 1e-9) { cube.origin = target.slice(); return 0; }
+	const d = [num(old[0]) - target[0], num(old[1]) - target[1], num(old[2]) - target[2]];
+	const back = rotVec(quatMatrix(pivotConj(pivotQuat(cube))), d);
+	const shift = [back[0] - d[0], back[1] - d[1], back[2] - d[2]];
+	addVec(cube.from, shift);
+	addVec(cube.to, shift);
+	cube.origin = target.slice();
+	return moved;
+}
+
+/** 把枢轴移到“自身 + 后代方块”的几何中心；方块同步补偿，外观不变。返回枢轴移动距离 */
+function fixGroupPivot(group) {
+	const points = pivotContentPoints(group);
+	if (!points.length) return 0;
+	const q = pivotQuat(group);
+	const origin = (group.origin || [0, 0, 0]).slice();
+	const rendered = points.map(p => rotateAroundQuat(q, origin, p));
+	const target = [0, 1, 2].map(i => rendered.reduce((sum, p) => sum + p[i], 0) / rendered.length);
+	const delta = [target[0] - origin[0], target[1] - origin[1], target[2] - origin[2]];
+	const back = rotVec(quatMatrix(pivotConj(q)), delta);
+	const shift = [delta[0] - back[0], delta[1] - back[1], delta[2] - back[2]];
+	pivotTranslateContents(group, shift);
+	group.origin = target;
+	return Math.hypot(delta[0], delta[1], delta[2]);
+}
+
+function walkGroups(nodes, callback) {
+	for (const node of nodes || []) {
+		if (!isGroup(node)) continue;
+		callback(node);
+		walkGroups(node.children, callback);
+	}
+}
+
+function selectedGroups() {
+	const found = [];
+	const push = (n) => { if (isGroup(n) && found.indexOf(n) < 0) found.push(n); };
+	try { if (typeof Group !== 'undefined' && Array.isArray(Group.selected)) Group.selected.forEach(push); } catch (e) { /* ignore */ }
+	try { if (typeof Outliner !== 'undefined' && Outliner && Array.isArray(Outliner.selected)) Outliner.selected.forEach(push); } catch (e) { /* ignore */ }
+	return found;
+}
+
+function applyPivotFix(selectedOnly) {
+	const roots = (typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : [];
+	const targets = selectedOnly ? selectedGroups() : roots.filter(isGroup);
+	if (!targets.length) {
+		Blockbench.showMessageBox({ title: '没有目标', message: selectedOnly ? '先在 outliner 里选中至少一个分组。' : '当前项目没有分组。', icon: 'info' });
+		return;
+	}
+	const groups = [], cubes = [];
+	walkGroups(targets, g => { groups.push(g); for (const c of (g.children || [])) if (isCube(c)) cubes.push(c); });
+	try { Undo.initEdit({ groups, elements: cubes }); } catch (e) { /* ignore */ }
+	let fixed = 0, total = 0, max = 0;
+	let cubesFixed = 0, cubeTotal = 0, cubeMax = 0;
+	const run = (g) => {
+		const moved = fixGroupPivot(g);
+		if (moved > 0.001) { fixed++; total += moved; if (moved > max) max = moved; }
+		// 分组枢轴已到自身内容中心；本层方块的旋转枢轴再归到这个父级中心（带补偿，外观不变）
+		for (const child of (g.children || [])) {
+			if (!isCube(child)) continue;
+			const movedCube = centerCubePivot(child, g.origin);
+			if (movedCube > 0.001) { cubesFixed++; cubeTotal += movedCube; if (movedCube > cubeMax) cubeMax = movedCube; }
+		}
+		for (const child of (g.children || [])) if (isGroup(child)) run(child);
+	};
+	for (const t of targets) run(t);
+	try { Undo.finishEdit('枢轴归位'); } catch (e) { /* ignore */ }
+	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+	try { Project.saved = false; } catch (e) { /* ignore */ }
+	simInvalidate();
+	Blockbench.showQuickMessage(((fixed || cubesFixed)
+		? ('枢轴归位：' + fixed + ' 个分组、' + cubesFixed + ' 个方块枢轴已归中' + (cubesFixed ? ('（方块平均 ' + (cubeTotal / cubesFixed).toFixed(1) + 'px，最大 ' + cubeMax.toFixed(1) + 'px）') : ''))
+		: '所有分组和方块枢轴已经在几何中心附近'), 4000);
+}
+
+function diagnoseSimView() {
+	const items = sim.lastItems || [];
+	const entries = simViewEntries(items);
+	const inactive = entries.filter(entry => !entry.active);
+	const lines = [
+		'模式：' + (sim.viewMode || 'off'),
+		'映射节点 → 分组：' + (sim.groupNodes ? sim.groupNodes.size : 0),
+		'本次求值分支：' + items.length + '（命中 ' + items.filter(item => item.hit).length + '）',
+		'匹配到分组：' + entries.length + '（未命中 ' + inactive.length + '）',
+	];
+	if (!entries.length) lines.push('', '没有匹配到分组：检查分组是否真的生成了映射节点（范围/条件/选择的分支）。');
+	for (const entry of inactive.slice(0, 6)) {
+		const cubes = (entry.group.children || []).filter(isCube);
+		const withMesh = cubes.filter(cube => cube.mesh);
+		const withMaterial = withMesh.filter(cube => cube.mesh.material);
+		lines.push('', '· ' + labelOf(entry.group) + '：mesh=' + !!entry.group.mesh + '，方块 ' + cubes.length + '（有 mesh ' + withMesh.length + '，有材质 ' + withMaterial.length + '）');
+		const firstMaterial = withMaterial.length ? (Array.isArray(withMaterial[0].mesh.material) ? withMaterial[0].mesh.material[0] : withMaterial[0].mesh.material) : null;
+		if (firstMaterial) lines.push('  材质：' + (firstMaterial.type || '未知') + (firstMaterial.uniforms ? '（uniforms: ' + Object.keys(firstMaterial.uniforms).join(', ') + '）' : ''));
+	}
+	Blockbench.showMessageBox({ title: '模拟视图联动诊断', message: lines.join('\n'), icon: 'info' });
+	console.log('[装配] view diag', { mode: sim.viewMode, groupNodes: sim.groupNodes ? sim.groupNodes.size : 0, items: items.length, entries: entries.length, inactive: inactive.length });
+}
+
+function openPivotFix() {
+	if (typeof Project === 'undefined' || !Project) { Blockbench.showQuickMessage('请先打开项目', 3000); return; }
+	new Dialog({
+		id: 'imm_fix_pivot',
+		title: '枢轴归位（对齐几何中心）',
+		width: 560,
+		form: {
+			scope: {
+				label: '范围',
+				type: 'select',
+				value: 'all',
+				options: { all: '全部分组', selected: '选中的分组（含子分组）' },
+				description: '把每个分组的 origin 归到自身内容中心，再把该组方块的旋转枢轴归到父分组的几何中心；方块坐标同步补偿，外观不变。嵌套旋转也会正确换算。',
+			},
+		},
+		onConfirm(result) { applyPivotFix(result.scope === 'selected'); },
+	}).show();
+}
+
 function syncBranchLabels(group) {
 	const type = String((group && group.imm_type) || '').replace(/^minecraft:/, '');
 	if (type !== 'range_dispatch' && type !== 'condition') return 0;
@@ -1064,6 +1448,37 @@ function pickTargetGroup() {
 	return found[0] || null;
 }
 
+/** 把对话框结果写进一个分组（批量编辑复用） */
+function assignGroupMapProps(group, result) {
+	group.imm_type = result.imm_type;
+	resetTypeSpecificProps(group, result.imm_type);
+	const type = String(group.imm_type || '').replace(/^minecraft:/, '');
+	if (type !== 'range_dispatch' && type !== 'condition' && type !== 'select') stripChildPrefixes(group);
+	if (result.imm_model !== undefined) group.imm_model = result.imm_model;
+	if (result.imm_property !== undefined) group.imm_property = result.imm_property;
+	if (result.imm_component !== undefined) group.imm_component = result.imm_component;
+	if (result.imm_ignore_default !== undefined) group.imm_ignore_default = !!result.imm_ignore_default;
+	if (result.imm_predicate !== undefined) group.imm_predicate = result.imm_predicate;
+	if (result.imm_value !== undefined) group.imm_value = result.imm_value;
+	if (result.imm_keybind !== undefined) group.imm_keybind = result.imm_keybind;
+	if (result.imm_range_target !== undefined) group.imm_range_target = result.imm_range_target;
+	if (result.imm_range_source !== undefined) group.imm_range_source = result.imm_range_source;
+	if (result.imm_range_wobble !== undefined) group.imm_range_wobble = !!result.imm_range_wobble;
+	if (result.imm_range_normalize !== undefined) group.imm_range_normalize = !!result.imm_range_normalize;
+	if (result.imm_range_period !== undefined) group.imm_range_period = num(result.imm_range_period);
+	if (result.imm_range_remaining !== undefined) group.imm_range_remaining = !!result.imm_range_remaining;
+	if (result.imm_index !== undefined) group.imm_index = num(result.imm_index);
+	if (result.imm_threshold !== undefined) group.imm_threshold = num(result.imm_threshold);
+	if (result.imm_threshold_format !== undefined) group.imm_threshold_format = result.imm_threshold_format;
+	if (result.imm_condition !== undefined) group.imm_condition = result.imm_condition;
+	if (result.imm_scale !== undefined) group.imm_scale = num(result.imm_scale) || 1;
+	if (result.imm_tints !== undefined) group.imm_tints = result.imm_tints;
+	if (result.imm_align_center !== undefined) group.imm_align_center = !!result.imm_align_center;
+	if (result.imm_tint_type !== undefined) group.imm_tint_type = (result.imm_tint_type === '' ? 'none' : result.imm_tint_type);
+	if (result.imm_tint_index !== undefined) group.imm_tint_index = num(result.imm_tint_index);
+	if (result.imm_tint_value !== undefined) group.imm_tint_value = result.imm_tint_value;
+}
+
 function editGroupProps() {
 	const group = pickTargetGroup();
 	const parent = (group && group.parent) || null;
@@ -1074,12 +1489,12 @@ function editGroupProps() {
 	}
 	new Dialog({
 		id: 'imm_group_props',
-		title: '分组映射属性 — ' + labelOf(group),
+		title: '分组映射属性 — ' + labelOf(group) + (selectedGroups().length > 1 ? ('（共 ' + selectedGroups().length + ' 个）') : ''),
 		width: 660,
 		form: {
 			imm_type: {
 				label: '映射类型（type）', description: '语法：{"type": "minecraft:<类型>"}\n作用：决定本节点是哪一种物品模型映射。\n可选：composite / model / range_dispatch / condition / empty', type: 'select', value: String(group.imm_type || 'composite'),
-				options: { composite: 'composite', model: 'model', range_dispatch: 'range_dispatch', condition: 'condition', select: 'select', empty: 'empty' },
+				options: { composite: 'composite', inline: 'inline（内联模型）', model: 'model（引用模型）', range_dispatch: 'range_dispatch', condition: 'condition', select: 'select', empty: 'empty' },
 			},
 			imm_model: { label: '引用模型（model）', description: '语法：{"type": "minecraft:model", "model": "<命名空间>:item/<路径>"}\n作用：本节点直接引用一个 Java 版模型；\n留空则由本层方块生成模型文件。', type: 'text', value: String(group.imm_model || ''), condition: (r) => r.imm_type === 'model' },
 			imm_property: { label: 'property（谓词 / 属性）', type: 'select', value: String(group.imm_property || ''), options: { '': '（未设置）', selected: 'selected', broken: 'broken', damaged: 'damaged', carried: 'carried', extended_view: 'extended_view', using_item: 'using_item', view_entity: 'view_entity', 'fishing_rod/cast': 'fishing_rod/cast', 'bundle/has_selected_item': 'bundle/has_selected_item', custom_model_data: 'custom_model_data', has_component: 'has_component', component: 'component', keybind_down: 'keybind_down', compass: 'compass（range）', count: 'count（range）', damage: 'damage（range）', time: 'time（range）', use_cycle: 'use_cycle（range）', use_duration: 'use_duration（range）', 'bundle/fullness': 'bundle/fullness（range）', cooldown: 'cooldown（range）', 'crossbow/pull': 'crossbow/pull（range）', context_dimension: 'context_dimension（select）', block_state: 'block_state（select）', local_time: 'local_time（select）' }, description: 'condition：谓词（selected / broken / custom_model_data / has_component / component / keybind_down …）；\nrange_dispatch：数值属性（custom_model_data / compass / count / damage / time / use_cycle / use_duration）', condition: (r) => r.imm_type === 'range_dispatch' || r.imm_type === 'condition' },
@@ -1092,7 +1507,7 @@ function editGroupProps() {
 			imm_threshold: { label: '分支编号 / 阈值（entries[].threshold）', type: 'number', value: num(group.imm_threshold), description: '语法：{"threshold": 0}\n作用：父分组为 range_dispatch 时，本分组的阈值；修改后自动按阈值重排。', condition: (r) => r.imm_type === 'range_dispatch' || parent_type === 'range_dispatch' },
 			imm_condition: { label: '分支条件（on_true / on_false）', type: 'select', value: String(group.imm_condition || ''), options: { '': '（按位置）', on_true: 'on_true', on_false: 'on_false' }, description: '语法："on_true" / "on_false"\n作用：父分组为 condition 时决定本分支走哪一支；修改后自动重排。', condition: (r) => parent_type === 'condition' },
 			imm_scale: { label: '数值缩放（scale）', description: '语法："scale": 1.0\n作用：仅 range_dispatch，property 数值乘以该倍数后再查阈值。', type: 'number', value: num(group.imm_scale) || 1, condition: (r) => r.imm_type === 'range_dispatch' },
-						imm_tint_type: { label: '纹理着色类型（tints[].type）', description: '语法："tints": [{"type": "<类型>"}]\n作用：染色来源类型（默认 custom_model_data）。\n可选：custom_model_data / constant / dye / potion / grass / team\n仅“纹理着色索引”非空时生效。', type: 'select', value: String(group.imm_tint_type || 'custom_model_data'), options: { '': '（不生成 tints）', custom_model_data: 'custom_model_data', constant: 'constant', dye: 'dye', potion: 'potion', grass: 'grass', team: 'team' }, description: '纹理着色来源类型；保存为键 imm_tint_type', condition: (r) => r.imm_type === 'model' || r.imm_type === 'composite' },
+						imm_tint_type: { label: '纹理着色类型（tints[].type）', description: '语法："tints": [{"type": "<类型>"}]\n作用：染色来源类型（默认 custom_model_data）。\n可选：custom_model_data / constant / dye / potion / grass / team\n仅“纹理着色索引”非空时生效。', type: 'select', value: String(group.imm_tint_type == null ? 'custom_model_data' : (group.imm_tint_type === 'none' ? '' : group.imm_tint_type)), options: { '': '（不生成 tints）', custom_model_data: 'custom_model_data', constant: 'constant', dye: 'dye', potion: 'potion', grass: 'grass', team: 'team' }, description: '纹理着色来源类型；保存为键 imm_tint_type', condition: (r) => r.imm_type === 'model' || r.imm_type === 'composite' },
 			imm_range_target: { label: 'compass target', type: 'select', value: String(group.imm_range_target || ''), options: { '': '（未设置）', lodestone: 'lodestone', none: 'none', spawn: 'spawn', recovery: 'recovery' }, description: '语法："target": "spawn"\n作用：compass 必填，指定指南针指向目标。', condition: (r) => r.imm_property === 'compass' },
 			imm_range_source: { label: 'time source', type: 'select', value: String(group.imm_range_source || ''), options: { '': '（未设置）', daytime: 'daytime', random: 'random', moon_phase: 'moon_phase' }, description: '语法："source": "daytime"\n作用：time 必填，指定时间来源。', condition: (r) => r.imm_property === 'time' },
 			imm_range_wobble: { label: 'wobble（摆动浮动）', type: 'checkbox', value: group.imm_range_wobble !== false, description: '默认 true；关闭后摆动立即平滑到正确值。', condition: (r) => r.imm_property === 'compass' || r.imm_property === 'time' },
@@ -1105,40 +1520,11 @@ function editGroupProps() {
 		},
 		onConfirm(result) {
 			try {
-				Undo.initEdit({ groups: [group] });
-				group.imm_type = result.imm_type;
-				const new_type = resetTypeSpecificProps(group, result.imm_type);
-				if (new_type !== 'range_dispatch' && new_type !== 'condition' && new_type !== 'select') stripChildPrefixes(group);
-				const previous_model = String(group.imm_model || '').trim();
-				if (result.imm_model !== undefined) group.imm_model = result.imm_model;
-				const next_model = String(result.imm_model || '').trim();
-				if (next_model && next_model !== previous_model) {
-					Blockbench.showQuickMessage('引用模型已更新，请用 Tools → 导入引用模型（当前分组）导入几何', 4000);
-				}
-				if (result.imm_property !== undefined) group.imm_property = result.imm_property;
-				if (result.imm_component !== undefined) group.imm_component = result.imm_component;
-				if (result.imm_ignore_default !== undefined) group.imm_ignore_default = !!result.imm_ignore_default;
-				if (result.imm_predicate !== undefined) group.imm_predicate = result.imm_predicate;
-				if (result.imm_value !== undefined) group.imm_value = result.imm_value;
-				if (result.imm_keybind !== undefined) group.imm_keybind = result.imm_keybind;
-				if (result.imm_range_target !== undefined) group.imm_range_target = result.imm_range_target;
-				if (result.imm_range_source !== undefined) group.imm_range_source = result.imm_range_source;
-				if (result.imm_range_wobble !== undefined) group.imm_range_wobble = !!result.imm_range_wobble;
-				if (result.imm_range_normalize !== undefined) group.imm_range_normalize = !!result.imm_range_normalize;
-				if (result.imm_range_period !== undefined) group.imm_range_period = num(result.imm_range_period);
-				if (result.imm_range_remaining !== undefined) group.imm_range_remaining = !!result.imm_range_remaining;
-				if (result.imm_index !== undefined) group.imm_index = num(result.imm_index);
-				if (result.imm_threshold !== undefined) group.imm_threshold = num(result.imm_threshold);
-				if (result.imm_threshold_format !== undefined) group.imm_threshold_format = result.imm_threshold_format;
-				if (result.imm_condition !== undefined) group.imm_condition = result.imm_condition;
-				if (result.imm_scale !== undefined) group.imm_scale = num(result.imm_scale) || 1;
-				if (result.imm_tints !== undefined) group.imm_tints = result.imm_tints;
-				if (result.imm_align_center !== undefined) group.imm_align_center = !!result.imm_align_center;
-				if (result.imm_tint_type !== undefined) group.imm_tint_type = result.imm_tint_type;
-				if (result.imm_tint_index !== undefined) group.imm_tint_index = num(result.imm_tint_index);
-				if (result.imm_tint_value !== undefined) group.imm_tint_value = result.imm_tint_value;
-								// 按 index 自动勾选着色：本层 index 下发给直接子项，子项自己的 index 优先
-				// 生效的 tint index：tints 数字简写 > tints[0].index > imm_index（0 视为未设置）
+				const selected = selectedGroups();
+				let targets = selected.length ? selected.slice() : [group];
+				if (selected.length && selected.indexOf(group) < 0) targets = [group];
+				if (targets.indexOf(group) < 0) targets.unshift(group);
+				Undo.initEdit({ groups: targets });
 				const tintIndexOf = (g) => {
 					const raw = String(g.imm_tints || '').trim();
 					if (/^-?\d+$/.test(raw)) return Number(raw);
@@ -1149,8 +1535,7 @@ function editGroupProps() {
 					const index_text = String(g.imm_tint_index == null ? '' : g.imm_tint_index).trim();
 					return /^-?\d+$/.test(index_text) ? Number(index_text) : undefined;
 				};
-				const root_index = tintIndexOf(group);
-				let tinted = 0;
+				let tinted = 0, sortedCount = 0, relabeled = 0;
 				const walkTint = (node, inherited) => {
 					const own = tintIndexOf(node);
 					const effective = (own !== undefined) ? own : inherited;
@@ -1165,24 +1550,29 @@ function editGroupProps() {
 						tinted++;
 					}
 				};
-				walkTint(group, root_index);
-				// 既处理“本分组是分支容器”（改它的编号格式/子项），也处理“本分组自己是某个分支”（改它的编号）
-				const sortedSelf = sortBranchChildren(group);
-				const relabelSelf = syncBranchLabels(group);
-				const differentParent = parent && parent !== group;
-				const sortedParent = differentParent ? sortBranchChildren(parent) : 0;
-				const relabelParent = differentParent ? syncBranchLabels(parent) : 0;
-				const sortedCount = sortedSelf + sortedParent;
-				const relabeled = relabelSelf + relabelParent;
+				for (const target of targets) {
+					assignGroupMapProps(target, result);
+					walkTint(target, tintIndexOf(target));
+					const targetParent = target.parent || null;
+					const sortedSelf = sortBranchChildren(target);
+					const relabelSelf = syncBranchLabels(target);
+					sortedCount += sortedSelf;
+					relabeled += relabelSelf;
+					if (targetParent && targetParent !== target) {
+						sortedCount += sortBranchChildren(targetParent);
+						relabeled += syncBranchLabels(targetParent);
+					}
+				}
 				if (tinted) {
 					Project.saved = false;
 					try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 					try { if (typeof UVEditor !== 'undefined' && UVEditor.updateView) UVEditor.updateView(); } catch (e) { /* ignore */ }
 				}
-Undo.finishEdit('修改分组映射属性');
+				Undo.finishEdit('修改分组映射属性');
+				simInvalidate();
 				try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 				const modelRef = String(group.imm_model || '').trim();
-				if (modelRef) {
+				if (targets.length === 1 && modelRef) {
 					const existingCubes = (group.children || []).filter(isCube).length;
 					const runImport = () => { try { importModelReference(group); } catch (e) { console.error('[装配] 导入失败', e); } };
 					if (existingCubes > 0) {
@@ -1193,11 +1583,143 @@ Undo.finishEdit('修改分组映射属性');
 						}, (button) => { if (button === 1) runImport(); });
 					} else { runImport(); }
 				}
-				Blockbench.showQuickMessage('已更新 “' + labelOf(group) + '”' + (tinted ? ('，为 ' + tinted + ' 个方块自动勾选着色') : '') + (sortedCount ? ('，重排 ' + sortedCount + ' 个分支') : '') + (relabeled ? ('，更新 ' + relabeled + ' 个分支名') : ''), 2500);
+				Blockbench.showQuickMessage('已更新 ' + targets.length + ' 个分组' + (tinted ? ('，为 ' + tinted + ' 个方块自动勾选着色') : '') + (sortedCount ? ('，重排 ' + sortedCount + ' 个分支') : '') + (relabeled ? ('，更新 ' + relabeled + ' 个分支名') : ''), 2500);
 			} catch (error) {
 				console.error(error);
 				Blockbench.showMessageBox({ title: '修改失败', message: String((error && error.message) || error), icon: 'error' });
 			}
+		},
+	}).show();
+}
+
+/** 从分组创建模型：烘焙组内方块、写到资源包 models/item、分组改为引用并记录居中补偿 */
+function callSelectedGroup() {
+	if (typeof Locator === 'undefined') {
+		Blockbench.showMessageBox({ title: '不支持定位点', message: '当前 Blockbench 版本没有 Locator。', icon: 'warning' });
+		return;
+	}
+	const groups = selectedGroups();
+	if (!groups.length) {
+		Blockbench.showMessageBox({ title: '请先选中分组', message: '在 outliner 里选中至少一个分组，再执行复调用。', icon: 'info' });
+		return;
+	}
+	try { Undo.initEdit({ outliner: true, elements: [] }); } catch (e) { /* ignore */ }
+	let created = 0;
+	for (const group of groups) {
+		try {
+			const locator = new Locator({ name: '调用 ' + labelOf(group), position: (group.origin || [0, 0, 0]).slice(), rotation: (group.rotation || [0, 0, 0]).slice(), ignore_inherited_scale: true });
+			if (group.parent) locator.addTo(group.parent); else locator.addTo();
+			try { locator.init(); } catch (e) { /* ignore */ }
+			locator.imm_call_target = group.uuid;
+			created++;
+		} catch (error) { console.error('[装配] 创建复调用标签失败', error); }
+	}
+	try { Undo.finishEdit('复调用选中的分组'); } catch (e) { /* ignore */ }
+	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+	try { Project.saved = false; } catch (e) { /* ignore */ }
+	simInvalidate();
+	Blockbench.showQuickMessage('已创建 ' + created + ' 个复调用标签', 3000);
+}
+
+/** 编辑一个复调用 Locator 的目标（分组 UUID 或模型 id） */
+function editCallTag(locator) {
+	if (!locator) return;
+	const current = String(locator.imm_call_target || '').trim();
+	const groups = [];
+	const walk = (nodes) => {
+		for (const node of (nodes || [])) {
+			if (!isGroup(node)) continue;
+			groups.push(node);
+			walk(node.children);
+		}
+	};
+	walk((typeof Outliner !== 'undefined' && Outliner) ? Outliner.root : []);
+	const options = { '': '（未设置）' };
+	let matchedGroup = '';
+	for (const group of groups) {
+		options[group.uuid] = labelOf(group);
+		if (group.uuid === current) matchedGroup = group.uuid;
+	}
+	new Dialog({
+		id: 'imm_edit_call',
+		title: '编辑复调用标签 — ' + (locator.name || 'Locator'),
+		width: 560,
+		form: {
+			target: { label: '目标分组', type: 'select', value: matchedGroup, options, description: '导出时这个 Locator 会被替换成目标分组的映射节点（保留其 transformation）。' },
+			model: { label: '或模型 id（优先）', type: 'text', value: (matchedGroup || !current) ? '' : current, description: '例如 namespace:item/foo；填写后忽略上面的分组选择。' },
+		},
+		onConfirm(result) {
+			try {
+				const model = String(result.model || '').trim();
+				const target = model || String(result.target || '').trim();
+				try { Undo.initEdit({ elements: [locator] }); } catch (e) { /* ignore */ }
+				locator.imm_call_target = target;
+				try { Undo.finishEdit('编辑复调用标签'); } catch (e) { /* ignore */ }
+				simInvalidate();
+				try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+				try { Project.saved = false; } catch (e) { /* ignore */ }
+				Blockbench.showQuickMessage(target ? ('复调用标签已指向 ' + target) : '已清空复调用目标', 2500);
+			} catch (error) {
+				console.error(error);
+				Blockbench.showMessageBox({ title: '修改失败', message: String((error && error.message) || error), icon: 'error' });
+			}
+		},
+	}).show();
+}
+
+function createModelFromGroup(group) {
+	if (!group) return;
+	const root = String(projectValue('imm_pack_path', '') || '').trim();
+	if (!root) {
+		Blockbench.showMessageBox({ title: '需要资源包工程', message: '先通过 File → 选择资源包工程路径… 设置目标资源包，再创建模型。', icon: 'warning' });
+		return;
+	}
+	const cubes = (group.children || []).filter(isCube);
+	if (!cubes.length) {
+		Blockbench.showMessageBox({ title: '没有方块', message: '分组 “' + labelOf(group) + '” 里没有可直接烘焙的方块。', icon: 'info' });
+		return;
+	}
+	new Dialog({
+		id: 'imm_create_model',
+		title: '从分组创建模型',
+		width: 560,
+		form: {
+			name: { label: '模型名', type: 'text', value: sanitizePath(labelOf(group), 'group'), description: '写入 assets/<namespace>/models/item/<名字>.json；分组会改为引用该模型，并记录居中补偿以保持外观。' },
+		},
+		onConfirm(result) {
+			const hint = sanitizePath(result.name || labelOf(group), 'group');
+			const exporter = createExporter();
+			let built = null;
+			try { built = exporter.addModel(cubes, hint); } catch (e) { built = null; }
+			if (!built) {
+				Blockbench.showMessageBox({ title: '创建失败', message: '这些方块没有可导出的纹理面。', icon: 'error' });
+				return;
+			}
+			const model = exporter.models[exporter.models.length - 1];
+			const pathmod = getPath();
+			const fsmod = getScopedFs(root);
+			if (!pathmod || !fsmod || !model) {
+				Blockbench.showMessageBox({ title: '无法写入', message: '需要桌面版 Blockbench，并且资源包路径可用。', icon: 'warning' });
+				return;
+			}
+			const dir = pathmod.join(root, 'assets', exporter.namespace, 'models', 'item');
+			const file = pathmod.join(dir, model.name + '.json');
+			try {
+				fsmod.mkdirSync(dir, { recursive: true });
+				Blockbench.writeFile(file, { content: formatModel(model.data), savetype: 'text' });
+			} catch (error) {
+				Blockbench.showMessageBox({ title: '写入失败', message: String((error && error.message) || error), icon: 'error' });
+				return;
+			}
+			try { Undo.initEdit({ groups: [group] }); } catch (e) { /* ignore */ }
+			group.imm_type = 'model';
+			group.imm_model = built.reference;
+			group.imm_model_shift = JSON.stringify(built.shift);
+			try { Undo.finishEdit('从分组创建模型'); } catch (e) { /* ignore */ }
+			try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+			try { Project.saved = false; } catch (e) { /* ignore */ }
+			simInvalidate();
+			Blockbench.showQuickMessage('已创建 ' + built.reference + '（已居中，分组改为引用）', 4000);
 		},
 	}).show();
 }
@@ -1249,20 +1771,24 @@ function resolveJavaModel(pathmod, fsmod, root, reference) {
 	let current = String(reference || '').trim();
 	const seen = {};
 	let elements = null;
+	let groups = null;
 	const textureRefs = {};
 	for (let depth = 0; depth < 12 && current; depth++) {
 		if (seen[current]) break;
 		seen[current] = true;
 		const json = readJSONFile(pathmod, fsmod, modelPathOf(pathmod, root, current));
 		if (!json) return { error: '找不到模型文件：' + current + '\n完整路径：' + modelPathOf(pathmod, root, current) + '\n资源包工程：' + root };
-		if (!elements && Array.isArray(json.elements)) elements = json.elements;
+		if (!elements && Array.isArray(json.elements)) {
+			elements = json.elements;
+			groups = Array.isArray(json.groups) ? json.groups : null;
+		}
 		for (const key of Object.keys(json.textures || {})) {
 			if (!(key in textureRefs)) textureRefs[key] = json.textures[key];
 		}
 		current = typeof json.parent === 'string' ? json.parent : '';
 	}
 	if (!elements || !elements.length) return { error: '该模型没有 elements（可能是纯引用模型）' };
-	return { elements, textures: textureRefs };
+	return { elements, groups, textures: textureRefs };
 }
 
 /** 'sqsp:item/inker/jet_rifle/sac.full' -> Texture（找不到就按路径加载 PNG） */
@@ -1291,6 +1817,18 @@ function getOrCreateModelTexture(pathmod, fsmod, root, reference) {
 		console.warn('[装配] 纹理加载失败', png, error);
 		return null;
 	}
+}
+
+/** 模型文件里是否已有任意 tintindex（有则不整体补，保留原有分布） */
+function modelElementsHaveTintIndex(elements) {
+	for (const element of (elements || [])) {
+		for (const face of Object.values((element && element.faces) || {})) {
+			if (!face) continue;
+			const tint = (typeof face.tintindex === 'number') ? face.tintindex : ((typeof face.tint === 'number') ? face.tint : -1);
+			if (tint >= 0) return true;
+		}
+	}
+	return false;
 }
 
 /** 把 Java 模型转成方块并放进分组；成功后才清空原有子项 */
@@ -1337,6 +1875,44 @@ function importModelReference(group) {
 		}
 		const created = [];
 		const textureMap = {};
+		// 模型文件里的 groups → Blockbench 分组（内联模型）；children 可以是元素下标或子分组对象
+		const importedGroups = [];
+		// 目标分组的着色配置要下发给所有导入子分组
+		const sourceTintType = group.imm_tint_type;
+		const hasSourceTint = sourceTintType !== undefined && sourceTintType !== null && sourceTintType !== '' && sourceTintType !== 'none';
+		const sourceTintIndex = String(group.imm_tint_index == null ? '' : group.imm_tint_index).trim();
+		const elementGroup = {};
+		const buildImportGroups = (list, parentNode) => {
+			for (const src of (list || [])) {
+				if (!src || typeof src !== 'object') continue;
+				const origin = Array.isArray(src.origin)
+					? src.origin.map((v, a) => (Number(v) || 0) + (Number(import_base[a]) || 0))
+					: [Number(import_base[0]) || 0, Number(import_base[1]) || 0, Number(import_base[2]) || 0];
+				const rotation = Array.isArray(src.rotation) ? src.rotation.map(v => Number(v) || 0) : [0, 0, 0];
+				let node = null;
+				try {
+					node = new Group({ name: String(src.name || 'group'), origin, rotation }).addTo(parentNode);
+					try { if (typeof node.init === 'function') node.init(); } catch (e) { /* ignore */ }
+					try { if (typeof node.createUniqueName === 'function') node.createUniqueName(); } catch (e) { /* ignore */ }
+					node.imm_type = 'inline';
+					if (hasSourceTint) {
+						node.imm_tint_type = sourceTintType;
+						if (group.imm_tint_index !== undefined) node.imm_tint_index = group.imm_tint_index;
+						if (group.imm_tint_value !== undefined) node.imm_tint_value = group.imm_tint_value;
+						if (group.imm_tints !== undefined) node.imm_tints = group.imm_tints;
+					}
+					importedGroups.push(node);
+				} catch (error) { console.warn('[装配] 创建导入分组失败', error); continue; }
+				const nested = [];
+				for (const child of (src.children || [])) {
+					if (typeof child === 'number') elementGroup[child] = node;
+					else if (child && typeof child === 'object') nested.push(child);
+				}
+				if (nested.length) buildImportGroups(nested, node);
+			}
+		};
+		buildImportGroups(resolved.groups || [], import_holder);
+		console.log('[装配] 导入分组', importedGroups.length, '个（inline）');
 		for (const key of Object.keys(resolved.textures || {})) {
 			const value = String(resolved.textures[key] || '');
 			const id = value.charAt(0) === '#' ? (resolved.textures[value.slice(1)] || value) : value;
@@ -1357,7 +1933,7 @@ function importModelReference(group) {
 				(Number(el.to[1]) || 0) + (Number(import_base[1]) || 0),
 				(Number(el.to[2]) || 0) + (Number(import_base[2]) || 0),
 			],
-		}).addTo(group);
+		}).addTo(elementGroup[index] || import_holder);
 		try { if (typeof cube.init === 'function') cube.init(); } catch (e) { console.warn('[装配] cube.init 失败', e); }
 		if (typeof Cube !== 'undefined' && Array.isArray(Cube.all) && Cube.all.indexOf(cube) < 0) Cube.all.push(cube);
 		try { cube.visibility = true; } catch (e) { /* ignore */ }
@@ -1394,6 +1970,8 @@ function importModelReference(group) {
 			if (texture) cube.faces[dir].texture = texture.uuid;
 			if (src.rotation) cube.faces[dir].rotation = Number(src.rotation) || 0;
 			if (src.cullface) cube.faces[dir].cullface = String(src.cullface);
+			const srcTint = (typeof src.tintindex === 'number') ? src.tintindex : ((typeof src.tint === 'number') ? src.tint : null);
+			if (srcTint !== null && srcTint >= 0) cube.faces[dir].tint = srcTint;
 		}
 		if (created.length === 0) {
 			const keys = Object.keys(cube.faces || {});
@@ -1401,6 +1979,21 @@ function importModelReference(group) {
 		}
 		created.push(cube);
 	});
+		// 着色配置有效时，给所有导入方块补 tintindex（面原本没有 tint 的才补）
+		const importedHasTint = modelElementsHaveTintIndex(elements);
+		if (hasSourceTint && !importedHasTint && /^-?\d+$/.test(sourceTintIndex)) {
+			const tintValue = Number(sourceTintIndex);
+			const applyTint = (nodes) => {
+				for (const node of (nodes || [])) {
+					if (isCube(node)) {
+						for (const face of Object.values(node.faces || {})) {
+							if (typeof face.tint !== 'number' || face.tint < 0) face.tint = tintValue;
+						}
+					} else if (isGroup(node)) applyTint(node.children);
+				}
+			};
+			applyTint(group.children);
+		}
 		// 自动对齐：把模型包围盒中点移到 (8,8,8)，偏移写进本层 translation
 		if (group.imm_align_center === true && created.length) {
 			const min = [Infinity, Infinity, Infinity];
@@ -1435,147 +2028,958 @@ function importModelReference(group) {
 let sim_panel = null;
 let sim_ui = null;
 
+/* 模拟状态：0.30.1 重构面板时和 simEvaluate 一起被误删，0.39.0 恢复 */
+const SIM_COLOR_PRESETS = [
+	'0xFFF9FFFE', '0xFFF9801D', '0xFFC74EBD', '0xFF3AB3DA',
+	'0xFFFED83D', '0xFF80C71F', '0xFFF38BAA', '0xFF474F52',
+	'0xFF9D9D97', '0xFF169C9C', '0xFF8932B8', '0xFF3C44AA',
+	'0xFF835432', '0xFF5E7C16', '0xFF1D1D21', '0xFFB02E26',
+];
+const sim = {
+	timer: null,
+	dir: 1,
+	dirty: true,          // 结构/属性变了要重建映射
+	mapping: null,        // buildMapping() 缓存（输入变化时不重建）
+	usage: null,          // collectInputUsage() 缓存
+	tickTimer: null,      // 输入防抖
+	usageOpen: {},        // 「未活跃」展开状态，重渲染后保持
+	viewMode: 'off',      // 不活跃分支：off / ghost / hide
+	groupNodes: null,     // 映射节点 → 分组（随 mapping 一起缓存）
+	viewTouched: null,    // 被视图联动改过的分组集合
+	lastItems: null,      // 最近一次求值结果（周期重贴用）
+	viewTimer: null,      // Blockbench 会重置 mesh，需要定时重贴
+	inputs: { floats: [], colors: [], strings: [], flags: [], selected: false, using_item: false, damage: 0, count: 0, time: 0 },
+};
+
+/** 结构可能变了：下次 simTick 重建映射与关联表 */
+function simInvalidate() {
+	sim.dirty = true;
+	sim.usage = null;
+}
+
+function simGetMapping() {
+	if (!sim.mapping || sim.dirty) {
+		const exporter = createExporter();
+		sim.mapping = exporter.buildMapping();
+		sim.groupNodes = exporter.groupNodes || null;
+		sim.usage = null;
+		sim.dirty = false;
+	}
+	return sim.mapping;
+}
+
+function simGetUsage() {
+	if (!sim.usage) sim.usage = collectInputUsage();
+	return sim.usage;
+}
+
+/** 输入框逐字符触发：合并成一次重算，避免每个键都重建映射 */
+function simScheduleTick() {
+	if (sim.tickTimer) return;
+	sim.tickTimer = setTimeout(() => {
+		sim.tickTimer = null;
+		try { simTick(); } catch (error) { /* ignore */ }
+	}, 40);
+}
+
+function simBlankInputs() {
+	return { floats: [], colors: [], strings: [], flags: [], selected: false, using_item: false, damage: 0, count: 0, time: 0 };
+}
+
+/** 把一个槽的值写进 inputs（key = floats / colors / strings / flags / selected / …） */
+function simApplySlot(inputs, key, slot) {
+	const value = String(slot.value);
+	switch (key) {
+		case 'floats': inputs.floats[slot.index] = num(value); break;
+		case 'colors': inputs.colors[slot.index] = num(value) | 0; break;
+		case 'strings': inputs.strings[slot.index] = value; break;
+		case 'flags': inputs.flags[slot.index] = (value === 'true' || value === '1'); break;
+		case 'selected':
+		case 'using_item': inputs[key] = (value === 'true' || value === '1' || num(value) > 0); break;
+		default: inputs[key] = num(value);
+	}
+}
+
+/* ============================== 模拟视图联动 ============================== */
+/* 只改运行时材质/可见性：不碰纹理、UV、元素数据，也不写项目/撤销。 */
+
+/* 预览着色：按面的 tintindex 取 colors[tintindex]，只替换运行时材质，不改纹理/UV */
+function simTintColorOf(cube) {
+	const faces = cube && cube.faces;
+	if (!faces) return null;
+	// 分组明确“不生成 tints”时不着色
+	const group = cube.parent;
+	if (!group) return null;
+	if (group.imm_tint_type === '' || group.imm_tint_type === 'none') return null;
+	const type = String(group.imm_tint_type == null ? 'custom_model_data' : group.imm_tint_type).replace(/^minecraft:/, '').trim() || 'custom_model_data';
+	if (type !== 'custom_model_data') return null;
+	const indexText = String(group.imm_tint_index == null ? '' : group.imm_tint_index).trim();
+	if (!/^-?\d+$/.test(indexText)) return null;
+	let hasTintedFace = false;
+	for (const dir of FACE_KEYS) {
+		const face = faces[dir];
+		if (face && typeof face.tint === 'number' && face.tint >= 0) { hasTintedFace = true; break; }
+	}
+	if (!hasTintedFace) return null;
+	const index = Number(indexText);
+	const raw = (sim.inputs.colors || [])[index];
+	if (raw == null) return null;
+	const argb = raw >>> 0;
+	if (((argb >>> 24) & 0xff) === 0) return null;
+	return (((argb >> 16) & 0xff) << 16) | (((argb >> 8) & 0xff) << 8) | (argb & 0xff);
+}
+
+function simRestoreCubeTint(mesh) {
+	if (!mesh || !mesh.__immTint) return;
+	const saved = mesh.__immTint;
+	try { mesh.material = saved.original; } catch (e) { /* ignore */ }
+	const clones = Array.isArray(saved.cloned) ? saved.cloned : [saved.cloned];
+	for (const clone of clones) {
+		if (!clone || clone === saved.original) continue;
+		try { if (typeof clone.dispose === 'function') clone.dispose(); } catch (e) { /* ignore */ }
+	}
+	delete mesh.__immTint;
+}
+
+function simApplyCubeTint(cube, color) {
+	const mesh = cube && cube.mesh;
+	if (!mesh || !mesh.material) return;
+	// 幽灵优先：不活跃分支的半透明/隐藏态下不再叠着色
+	if (mesh.__immGhost) { simRestoreCubeTint(mesh); return; }
+	if (mesh.__immTint) {
+		if (mesh.__immTint.key === String(color)) return;
+		simRestoreCubeTint(mesh);
+	}
+	if (color == null) return;
+	try {
+		const original = mesh.material;
+		const make = (material) => {
+			const map = (material && material.uniforms && material.uniforms.map && material.uniforms.map.value) || (material && material.map) || null;
+			const options = { map, color, transparent: true, depthWrite: true };
+			if (material && typeof material.side === 'number') options.side = material.side;
+			const basic = new THREE.MeshBasicMaterial(options);
+			basic.alphaTest = 0.01;
+			return basic;
+		};
+		const cloned = Array.isArray(original) ? original.map(make) : make(original);
+		mesh.__immTint = { key: String(color), original, cloned };
+		mesh.material = cloned;
+	} catch (error) { /* ignore */ }
+}
+
+function simApplyTints() {
+	if (typeof Outliner === 'undefined' || !Outliner) return;
+	const walk = (nodes) => {
+		for (const node of nodes || []) {
+			if (!isGroup(node)) continue;
+			for (const child of (node.children || [])) if (isCube(child)) simApplyCubeTint(child, simTintColorOf(child));
+			walk(node.children);
+		}
+	};
+	walk(Outliner.root);
+}
+
+function simRestoreTints() {
+	if (typeof Outliner === 'undefined' || !Outliner) return;
+	const walk = (nodes) => {
+		for (const node of nodes || []) {
+			if (!isGroup(node)) continue;
+			for (const child of (node.children || [])) if (isCube(child)) simRestoreCubeTint(child.mesh);
+			walk(node.children);
+		}
+	};
+	walk(Outliner.root);
+}
+
+function simGhostCube(cube, on) {
+	const mesh = cube && cube.mesh;
+	if (!mesh || !mesh.material) return;
+	if (on) {
+		simRestoreCubeTint(mesh);
+		if (mesh.__immGhost) {
+			if (mesh.material === mesh.__immGhost.cloned) return;
+			// Blockbench 把材质换回去了：丢弃旧记录，按当前材质重新克隆
+			try {
+				const stale = Array.isArray(mesh.__immGhost.cloned) ? mesh.__immGhost.cloned : [mesh.__immGhost.cloned];
+				for (const item of stale) { if (item && item !== mesh.__immGhost.original && typeof item.dispose === 'function') item.dispose(); }
+			} catch (error) { /* ignore */ }
+			delete mesh.__immGhost;
+		}
+		const original = mesh.material;
+		// Blockbench 的贴图材质是自定义 ShaderMaterial（alpha 直接取纹理），material.opacity 不生效；
+		// 幽灵材质改用同贴图的 MeshBasicMaterial，opacity 才能真正半透明。
+		const tint = (material) => {
+			if (!material) return material;
+			const map = (material.uniforms && material.uniforms.map && material.uniforms.map.value) || material.map || null;
+			try {
+				if (typeof THREE !== 'undefined' && THREE && THREE.MeshBasicMaterial) {
+					const options = { map, transparent: true, opacity: 0.28, depthWrite: false };
+					if (typeof material.side === 'number') options.side = material.side;
+					const ghost = new THREE.MeshBasicMaterial(options);
+					ghost.alphaTest = 0;
+					ghost.toneMapped = false;
+					if (!map && ghost.color && ghost.color.set) ghost.color.set(0x9aa4ad);
+					return ghost;
+				}
+			} catch (e) { /* fall through */ }
+			try {
+				const clone = material.clone();
+				clone.transparent = true;
+				clone.opacity = 0.28;
+				clone.depthWrite = false;
+				clone.alphaTest = 0;
+				clone.needsUpdate = true;
+				return clone;
+			} catch (e) { return material; }
+		};
+		const cloned = Array.isArray(original) ? original.map(tint) : tint(original);
+		mesh.__immGhost = { original, cloned };
+		mesh.material = cloned;
+	} else if (mesh.__immGhost) {
+		const saved = mesh.__immGhost;
+		try { mesh.material = saved.original; } catch (e) { /* ignore */ }
+		const clones = Array.isArray(saved.cloned) ? saved.cloned : [saved.cloned];
+		for (const clone of clones) {
+			if (!clone || clone === saved.original) continue;
+			try { if (typeof clone.dispose === 'function') clone.dispose(); } catch (e) { /* ignore */ }
+		}
+		delete mesh.__immGhost;
+	}
+}
+
+function simHideGroup(group, on) {
+	const mesh = group && group.mesh;
+	if (!mesh) return;
+	if (on) {
+		if (mesh.__immHidden) {
+			if (mesh.visible === false) return;
+			delete mesh.__immHidden;
+		}
+		mesh.__immHidden = { visible: mesh.visible };
+		mesh.visible = false;
+	} else if (mesh.__immHidden) {
+		try { mesh.visible = mesh.__immHidden.visible; } catch (e) { /* ignore */ }
+		delete mesh.__immHidden;
+	}
+}
+
+let guardingLocked = false;
+/** 把已选中的锁定元素踢出选择（锁定分支不可选中） */
+function guardLockedSelection() {
+	if (guardingLocked) return;
+	if (typeof Outliner === 'undefined' || !Outliner || !Outliner.selected) return;
+	guardingLocked = true;
+	try {
+		for (const element of Outliner.selected.slice()) {
+			if (!element || !element.locked) continue;
+			try { if (typeof element.unselect === 'function') element.unselect(); } catch (e) { /* ignore */ }
+		}
+	} finally { guardingLocked = false; }
+}
+
+/** 运行时锁定/解锁分组及其所有子项（保存/恢复原有 lock 状态） */
+let guardingBox = false;
+let immBoxSetting = null;
+let immBoxFallback = false;
+function boxGroupsEnabled() {
+	// 装配格式内强制开启；其它格式按开关（默认关）
+	try { if (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID) return true; } catch (e) { /* ignore */ }
+	return immBoxSetting ? (immBoxSetting.value === true) : immBoxFallback;
+}
+function setBoxSelectGroups(value) {
+	immBoxFallback = !!value;
+	if (immBoxSetting) immBoxSetting.value = !!value;
+	return boxGroupsEnabled();
+}
+/** 内建模型：仅 inline（内联模型）分组；引用模型（model）不算例外 */
+function isBuiltInModelGroup(group) {
+	let node = group;
+	while (node && isGroup(node)) {
+		const type = String(node.imm_type || '').replace(/^minecraft:/, '');
+		if (type === 'inline') return true;
+		node = node.parent;
+	}
+	return false;
+}
+
+/** 一次选中多个方块时，改为选中它们各自的父分组 */
+function guardBoxSelection() {
+	// 用户点选的是分组（含父分组优先级）：不要重算选择，交给 Blockbench 原生 gizmo 逻辑
+	if (Array.isArray(Outliner.selected) && Outliner.selected.length && isGroup(Outliner.selected[0])) return;
+	if (typeof Group !== 'undefined' && Group && Array.isArray(Group.selected) && Group.selected.length) return;
+	if (guardingBox || !boxGroupsEnabled()) return;
+	if (typeof Outliner === 'undefined' || !Outliner || !Array.isArray(Outliner.selected)) return;
+	const selectedCubes = Outliner.selected.filter(isCube);
+	if (!selectedCubes.length) return;
+	const parents = [];
+	for (const cube of selectedCubes) {
+		const parent = cube && cube.parent;
+		if (isGroup(parent) && parents.indexOf(parent) < 0) parents.push(parent);
+	}
+	if (!parents.length) return;
+	// 只选了内建模型里的元素：保持原样，便于直接编辑引用模型内部
+	if (parents.every(isBuiltInModelGroup)) return;
+	const isSelected = (node) => !!(node && (node.selected || (Array.isArray(Outliner.selected) && Outliner.selected.indexOf(node) >= 0)));
+	guardingBox = true;
+	let changed = false;
+	try {
+		const pushSelected = (node) => {
+			try { if (typeof node.markAsSelected === 'function') node.markAsSelected(); else node.selected = true; } catch (e) { node.selected = true; }
+			if (Array.isArray(Outliner.selected) && Outliner.selected.indexOf(node) < 0) Outliner.selected.push(node);
+		};
+		// 像单击分组：选中分组自身 + 它的全部子项（同层/后代都选上）
+		const selectWholeGroup = (group) => {
+			if (!group.selected) { group.selected = true; changed = true; }
+			try { if (typeof group.multiSelect === 'function') group.multiSelect(); } catch (e) { /* ignore */ }
+			pushSelected(group);
+			for (const child of (group.children || [])) {
+				if (!isSelected(child)) changed = true;
+				pushSelected(child);
+			}
+		};
+		for (const parent of parents) {
+			if (parent.selected && isSelected(parent) && (parent.children || []).every(isSelected)) continue;
+			selectWholeGroup(parent);
+		}
+		// 继续向上：祖先的所有子项都选中时也选中它
+		let node = parents[0] ? parents[0].parent : null;
+		while (isGroup(node)) {
+			const children = (node.children || []);
+			if (children.length && children.every(isSelected)) selectWholeGroup(node);
+			node = node.parent;
+		}
+		if (changed) { try { if (typeof updateSelection === 'function') updateSelection(); } catch (e) { /* ignore */ } }
+	} finally { guardingBox = false; }
+}
+
+let guardingBatch = false;
+let immBatchSetting = null;
+let immBatchFallback = false;
+function batchGroupsOnlyEnabled() { return immBatchSetting ? (immBatchSetting.value === true) : immBatchFallback; }
+function setBatchGroupsOnly(value) {
+	immBatchFallback = !!value;
+	return batchGroupsOnlyEnabled();
+}
+/** 批量选中多个分组时，把同时选中的方块/定位点踢出选择 */
+function guardBatchSelection() {
+	if (guardingBatch || !batchGroupsOnlyEnabled()) return;
+	if (typeof Outliner === 'undefined' || !Outliner || !Outliner.selected) return;
+	const groups = selectedGroups();
+	if (groups.length < 2) return;
+	guardingBatch = true;
+	try {
+		for (const element of Outliner.selected.slice()) {
+			if (!element || isGroup(element)) continue;
+			if (!isCube(element) && !isLocator(element)) continue;
+			try { if (typeof element.unselect === 'function') element.unselect(); } catch (e) { /* ignore */ }
+		}
+	} finally { guardingBatch = false; }
+}
+
+function simLockGroup(group, on) {
+	if (!group) return;
+	if (on) {
+		if (group.__immLock) return;
+		let ancestor = group.parent;
+		while (ancestor) {
+			if (ancestor.__immLock) return;
+			ancestor = ancestor.parent;
+		}
+		const saved = [];
+		const walk = (node) => {
+			saved.push([node, !!node.locked]);
+			for (const child of (node.children || [])) {
+				if (isGroup(child) || isCube(child)) walk(child);
+			}
+		};
+		walk(group);
+		group.__immLock = saved;
+		for (const pair of saved) { try { pair[0].locked = true; } catch (e) { /* ignore */ } }
+		guardLockedSelection();
+	} else if (group.__immLock) {
+		for (const pair of group.__immLock) { try { pair[0].locked = pair[1]; } catch (e) { /* ignore */ } }
+		delete group.__immLock;
+	}
+}
+
+function simRestoreGroup(group) {
+	for (const child of (group.children || [])) if (isCube(child)) simGhostCube(child, false);
+	simHideGroup(group, false);
+	simLockGroup(group, false);
+}
+
+function simViewEntries(items) {
+	const map = sim.groupNodes;
+	if (!map) return [];
+	const hits = new Map();
+	for (const item of items || []) {
+		const group = map.get(item && item.node);
+		if (!group) continue;
+		hits.set(group, !!hits.get(group) || !!(item && item.hit));
+	}
+	const entries = [];
+	for (const [group, active] of hits) entries.push({ group, active });
+	return entries;
+}
+
+function simRestoreView() {
+	if (!sim.viewTouched) return;
+	for (const group of sim.viewTouched) simRestoreGroup(group);
+	sim.viewTouched.clear();
+}
+
+/** 对 [{group, active}] 应用不活跃样式；mode = off / ghost / hide */
+function simApplyGroupVisual(entries, mode) {
+	if (!sim.viewTouched) sim.viewTouched = new Set();
+	if (!mode || mode === 'off') { simRestoreView(); return; }
+	const lock = (mode === 'ghost_lock' || mode === 'hide_lock');
+	const baseMode = (mode === 'ghost_lock') ? 'ghost' : ((mode === 'hide_lock') ? 'hide' : mode);
+	const seen = new Set();
+	for (const entry of entries || []) {
+		const group = entry && entry.group;
+		if (!group) continue;
+		seen.add(group);
+		sim.viewTouched.add(group);
+		if (baseMode === 'ghost') {
+			simHideGroup(group, false);
+			for (const child of (group.children || [])) if (isCube(child)) simGhostCube(child, !entry.active);
+		} else if (baseMode === 'hide') {
+			for (const child of (group.children || [])) if (isCube(child)) simGhostCube(child, false);
+			simHideGroup(group, !entry.active);
+		}
+		// 锁定时只锁未活跃分支；切回普通模式会恢复原有锁定状态
+		if (lock && !entry.active) simLockGroup(group, true);
+		else simLockGroup(group, false);
+	}
+	// 已经不在映射里的分组要恢复，避免退出/改结构后残留幽灵
+	for (const group of Array.from(sim.viewTouched)) {
+		if (seen.has(group)) continue;
+		simRestoreGroup(group);
+		sim.viewTouched.delete(group);
+	}
+}
+
+function simApplyView(items) { simApplyGroupVisual(simViewEntries(items), sim.viewMode || 'off'); }
+
+function simStopViewLoop() {
+	if (sim.viewTimer) { clearInterval(sim.viewTimer); sim.viewTimer = null; }
+}
+
+function simStartViewLoop() {
+	if (sim.viewTimer) return;
+	sim.viewTimer = setInterval(() => {
+		try { if (sim.lastItems) simApplyView(sim.lastItems); } catch (error) { /* ignore */ }
+		try { simApplyTints(); } catch (error) { /* ignore */ }
+	}, 250);
+}
+
+/** 切换不活跃分支的显示方式；off 时立刻恢复 */
+function simSetViewMode(mode) {
+	sim.viewMode = mode || 'off';
+	if (sim.viewMode === 'off') {
+		simStopViewLoop();
+		simRestoreView();
+		simRestoreTints();
+		return;
+	}
+	simStartViewLoop();
+	simApplyView(sim.lastItems || []);
+	try { simApplyTints(); } catch (error) { /* ignore */ }
+}
+
+
+function simSlotLabel(key, slot) {
+	if (key === 'floats' || key === 'colors') return key + '[' + slot.index + '] = ' + slot.value;
+	if (key === 'strings') return 'strings[' + slot.index + '] = "' + slot.value + '"';
+	if (key === 'flags') return 'flags[' + slot.index + '] = ' + slot.value;
+	return key + ' = ' + slot.value;
+}
+
+
 function buildSimPanel(show_panel) {
+	if (!sim_panel) { try { if (typeof Panels !== 'undefined' && Panels['imm_sim_panel']) sim_panel = Panels['imm_sim_panel']; } catch (e) { /* ignore */ } }
 	if (sim_panel) { if (show_panel !== false) sim_panel.show(); return sim_panel; }
-	if (typeof Panel === 'undefined') return null;
-	if (typeof document === 'undefined') return null;
-	sim_panel = new Panel('imm_sim_panel', {
-		name: '模拟输入',
-		icon: 'play_circle',
-		condition: { formats: [FORMAT_ID] },
-		default_position: { slot: 'right_bar', float: false },
-		resizable: true,
-		growable: true,
-	});
+	if (typeof Panel === 'undefined' || typeof document === 'undefined') return null;
+	sim_panel = new Panel('imm_sim_panel', { name: '模拟输入', icon: 'play_circle', condition: { formats: [FORMAT_ID] }, default_position: { slot: 'right_bar', float: false }, resizable: true, growable: true });
 	const root = document.createElement('div');
-	root.style.cssText = 'padding:8px;display:flex;flex-direction:column;gap:6px;font-size:12px;overflow:auto;height:100%';
+	root.style.cssText = 'padding:8px;display:flex;flex-direction:column;gap:4px;font-size:12px;overflow:auto;height:100%';
 	const mk = (tag, props, style) => { const el = document.createElement(tag); Object.assign(el, props || {}); if (style) el.style.cssText = style; return el; };
-	const row = (label, control) => { const wrap = mk('div', {}, 'display:flex;align-items:center;gap:6px'); wrap.appendChild(mk('span', { textContent: label }, 'width:96px;flex:0 0 auto')); wrap.appendChild(control); return wrap; };
-	const propSel = mk('select', {}); ['custom_model_data', 'selected'].forEach(v => propSel.appendChild(mk('option', { value: v, textContent: v })));
-	const indexInp = mk('input', { type: 'number', value: '0' }, 'width:70px');
-	const valueInp = mk('input', { type: 'number', value: '0', step: '0.5' }, 'width:80px');
-	const autoChk = mk('input', { type: 'checkbox' });
-	const periodInp = mk('input', { type: 'number', value: '800' }, 'width:70px');
-	const stepInp = mk('input', { type: 'number', value: '0.5', step: '0.1' }, 'width:70px');
-	const ruleSel = mk('select', {}); [['pingpong', '往复'], ['wrap', '循环']].forEach(([v, t]) => ruleSel.appendChild(mk('option', { value: v, textContent: t })));
-	const minInp = mk('input', { type: 'number', value: '0' }, 'width:70px');
-	const maxInp = mk('input', { type: 'number', value: '4' }, 'width:70px');
-	const runBtn = mk('button', { textContent: '运行 / 停止' }, 'padding:4px 8px');
-	const out = mk('div', {}, 'white-space:pre-wrap;font-family:monospace;font-size:11px;opacity:.85;flex:1 1 auto;overflow:auto;border-top:1px solid rgba(128,128,128,.3);padding-top:6px');
-	root.appendChild(row('取值来源', propSel));
-	root.appendChild(row('下标 index', indexInp));
-	root.appendChild(row('数值', valueInp));
-	root.appendChild(row('自动变化', autoChk));
-	root.appendChild(row('周期(ms)', periodInp));
-	root.appendChild(row('步长', stepInp));
-	root.appendChild(row('规则', ruleSel));
-	root.appendChild(row('下限', minInp));
-	root.appendChild(row('上限', maxInp));
-	root.appendChild(runBtn);
-	root.appendChild(out);
-	sim_ui = { propSel, indexInp, valueInp, autoChk, periodInp, stepInp, ruleSel, minInp, maxInp, out };
+	const cell = (labelText, inputEl, width) => { const wrap = mk('label', {}, 'display:flex;flex-direction:column;gap:2px;font-size:10px;opacity:.75;white-space:nowrap;min-width:0;flex:1 1 0' + (width ? (';flex:0 0 ' + width) : '') + ';overflow:hidden'); wrap.appendChild(mk('span', { textContent: labelText })); wrap.appendChild(inputEl); return wrap; };
+	const SPECS = [
+		['floats', 'cmdata.floats', 'number', 'range_dispatch 数值'],
+		['colors', 'cmdata.colors', 'number', '染色'],
+		['strings', 'cmdata.strings', 'text', 'select 文本'],
+		['flags', 'cmdata.flags', 'bool', 'condition 布尔'],
+		['selected', 'selected', 'bool', ''],
+		['damage', 'damage', 'number', ''],
+		['count', 'count', 'number', ''],
+		['time', 'time', 'number', ''],
+		['using_item', 'using_item', 'bool', ''],
+	];
+	simInvalidate();
+	sim_ui = { rows: {}, out: null, runBtn: null, status: null };
+	for (const spec of SPECS) {
+		const key = spec[0], label = spec[1], kind = spec[2], hint = spec[3] || '';
+		const multi = (key === 'floats' || key === 'colors');
+		const row = { key, label, kind, hint, enabled: false, open: true, slots: [] };
+		const box = mk('div', {}, 'border-top:1px solid rgba(128,128,128,.25);padding:4px 0');
+		const header = mk('div', {}, 'display:flex;align-items:center;gap:6px;flex-wrap:wrap');
+		const rowToggle = mk('button', { textContent: '▾', title: '折叠 / 展开' }, 'border:none;background:transparent;cursor:pointer;padding:0;font-size:11px;line-height:1;width:12px;opacity:.7');
+		const enable = mk('input', { type: 'checkbox' });
+		const enableWrap = mk('label', {}, 'display:flex;align-items:center;gap:4px;cursor:pointer');
+		enableWrap.appendChild(enable);
+		enableWrap.appendChild(mk('span', { textContent: label }, 'font-weight:600;font-size:11px'));
+		if (hint) enableWrap.appendChild(mk('span', { textContent: hint }, 'font-size:10px;opacity:.55'));
+		const stateEl = mk('span', { textContent: '自动' }, 'font-size:10px;color:#7fd0ff');
+		stateEl.title = '勾选后参与自动变化（点上方「运行」生效）；不勾选仍会用手动值参与求值';
+		header.appendChild(rowToggle);
+		header.appendChild(enableWrap);
+		header.appendChild(stateEl);
+		const body = mk('div', {}, 'display:flex;flex-direction:column;gap:4px;padding:4px 0 0 16px');
+		const refreshRowState = () => {
+			box.style.opacity = '1';
+			stateEl.style.display = row.enabled ? 'inline' : 'none';
+		};
+		const setRowOpen = (open) => {
+			row.open = open;
+			body.style.display = open ? 'flex' : 'none';
+			rowToggle.textContent = open ? '▾' : '▸';
+		};
+		rowToggle.addEventListener('click', (event) => { if (event && event.preventDefault) event.preventDefault(); setRowOpen(!row.open); });
+		const slotCount = multi ? 3 : 1;
+		for (let slotIndex = 0; slotIndex < slotCount; slotIndex++) {
+			const slot = { index: slotIndex, enabled: true, value: kind === 'bool' ? 'false' : (kind === 'text' ? '' : '0'), period: (key === 'colors' ? 1000 : 200), step: 0.5, rule: 'pingpong', min: 0, max: 4, dir: 1, lastTick: 0, open: false, presetIndex: 0, presets: key === 'colors' ? SIM_COLOR_PRESETS.map(v => Number(v)) : [] };
+			const slotBox = mk('div', {}, 'border:1px solid rgba(128,128,128,.18);border-radius:3px;padding:3px 5px;display:flex;flex-direction:column;gap:3px');
+			const slotHead = mk('div', {}, 'display:flex;align-items:center;gap:6px;flex-wrap:wrap');
+			const slotToggle = mk('button', { textContent: '▸', title: '展开自动变化 / 关联分组' }, 'border:none;background:transparent;cursor:pointer;padding:0;font-size:11px;line-height:1;width:12px;opacity:.7');
+			const slotEnable = mk('input', { type: 'checkbox' });
+			slotEnable.checked = true;
+			const slotName = mk('span', { textContent: multi ? ('槽 ' + (slotIndex + 1)) : '取值' }, 'font-size:10px;opacity:.65;min-width:26px');
+			const idx = mk('input', { type: 'number', value: String(slotIndex) }, 'width:44px');
+			const val = mk('input', { type: (kind === 'text' || kind === 'bool') ? 'text' : 'number', value: slot.value }, 'width:72px');
+			const badge = mk('span', { textContent: '' }, 'font-size:10px;color:#7fd0ff');
+			slotHead.appendChild(slotToggle);
+			const slotEnableWrap = mk('label', {}, 'display:flex;align-items:center;gap:4px;cursor:pointer');
+			slotEnableWrap.appendChild(slotEnable);
+			slotEnableWrap.appendChild(slotName);
+			slotHead.appendChild(slotEnableWrap);
+			slotHead.appendChild(cell('索引', idx, '52px'));
+			slotHead.appendChild(cell('值', val, '78px'));
+			slotHead.appendChild(badge);
+			const slotBody = mk('div', {}, 'display:none;flex-direction:column;gap:4px;padding:3px 0 2px 16px');
+			const period = mk('input', { type: 'number', value: (key === 'colors' ? '1' : '0.2'), step: '0.1' }, 'width:100%;min-width:0');
+			const step = mk('input', { type: 'number', value: '0.5', step: '0.1' }, 'width:100%;min-width:0');
+			const rule = mk('select', {}, 'width:100%;min-width:0');
+			[['pingpong', '往复'], ['wrap', '循环']].forEach(([v, t]) => rule.appendChild(mk('option', { value: v, textContent: t })));
+			const minI = mk('input', { type: 'number', value: '0' }, 'width:100%;min-width:0');
+			const maxI = mk('input', { type: 'number', value: '4' }, 'width:100%;min-width:0');
+			const presets = mk('input', { type: 'text', value: SIM_COLOR_PRESETS.join(', ') }, 'width:100%;min-width:0');
+			const usageEl = mk('div', {}, 'font-size:10px;line-height:1.45;white-space:pre-wrap');
+			usageEl.addEventListener('click', (event) => {
+				const target = event && event.target;
+				const btn = (target && target.closest) ? target.closest('[data-usage-toggle]') : null;
+				if (!btn) return;
+				const uid = btn.getAttribute('data-usage-toggle');
+				let body = null;
+				try { body = usageEl.querySelector('[data-usage-body="' + uid + '"]'); } catch (e) { /* ignore */ }
+				if (!body) return;
+				const open = body.style.display === 'none';
+				sim.usageOpen[uid] = open;
+				body.style.display = open ? 'block' : 'none';
+				btn.textContent = (open ? '▾ ' : '▸ ') + '未活跃 ' + btn.getAttribute('data-count') + ' 项';
+			});
+			if (key === 'colors') {
+				const colorRow = mk('div', {}, 'display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap');
+				colorRow.appendChild(cell('周期（秒）', period, '62px'));
+				colorRow.appendChild(cell('预设颜色（逗号分隔，运行时轮换）', presets));
+				slotBody.appendChild(colorRow);
+			} else if (kind === 'number') {
+				const autoRow = mk('div', {}, 'display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap');
+				autoRow.appendChild(cell('周期（秒）', period, '62px'));
+				autoRow.appendChild(cell('步长', step, '56px'));
+				autoRow.appendChild(cell('规则', rule, '72px'));
+				autoRow.appendChild(cell('下限', minI, '56px'));
+				autoRow.appendChild(cell('上限', maxI, '56px'));
+				slotBody.appendChild(autoRow);
+			} else {
+				slotBody.appendChild(mk('div', { textContent: '（文本 / 布尔输入不支持自动变化）' }, 'font-size:10px;opacity:.5'));
+			}
+			slotBody.appendChild(usageEl);
+			slotBox.appendChild(slotHead);
+			slotBox.appendChild(slotBody);
+			body.appendChild(slotBox);
+			const readSlot = () => {
+				slot.enabled = slotEnable.checked;
+				slot.index = Number(idx.value) || 0;
+				slot.value = val.value;
+				slot.period = Math.max(50, (Number(period.value) || 0.2) * 1000);
+				if (slot.key === 'colors' || key === 'colors') {
+					const list = String(presets.value || '').split(/[,\s;]+/).map(t => t.trim()).filter(Boolean).map(t => Number(t)).filter(v => isFinite(v));
+					slot.presets = list.length ? list : [Number(val.value) || 0];
+				}
+				slot.step = Number(step.value) || 0.5;
+				slot.rule = rule.value;
+				slot.min = Number(minI.value) || 0;
+				slot.max = Number(maxI.value) || 4;
+			};
+			const refreshSlotState = () => { slotBox.style.opacity = slot.enabled ? '1' : '.5'; };
+			const setSlotOpen = (open) => {
+				slot.open = open;
+				slotBody.style.display = open ? 'flex' : 'none';
+				slotToggle.textContent = open ? '▾' : '▸';
+			};
+			slotToggle.addEventListener('click', (event) => { if (event && event.preventDefault) event.preventDefault(); setSlotOpen(!slot.open); });
+			// 改值（或索引）说明就是想用这个槽：自动勾上槽和大类，避免“改了没反应”
+			const ensureEnabled = () => {
+				if (slotEnable.checked) return;
+				slotEnable.checked = true;
+				readSlot();
+				refreshSlotState();
+			};
+			val.addEventListener('input', () => { ensureEnabled(); readSlot(); simScheduleTick(); });
+			val.addEventListener('change', () => { ensureEnabled(); readSlot(); simScheduleTick(); });
+			idx.addEventListener('input', () => { ensureEnabled(); readSlot(); simScheduleTick(); });
+			[slotEnable, period, step, rule, minI, maxI, presets].forEach(el => el.addEventListener('change', () => { readSlot(); refreshSlotState(); simUpdateRunUi(); simTick(); }));
+			slot.els = { toggle: slotToggle, body: slotBody, enable: slotEnable, idx, val, badge, usage: usageEl, period, step, rule, min: minI, max: maxI, presets };
+			refreshSlotState();
+			setSlotOpen(false);
+			row.slots.push(slot);
+		}
+		box.appendChild(header);
+		box.appendChild(body);
+		root.appendChild(box);
+		row.els = { enable, state: stateEl, toggle: rowToggle, body };
+		enable.addEventListener('change', () => { row.enabled = enable.checked; refreshRowState(); simUpdateRunUi(); simTick(); });
+		refreshRowState();
+		setRowOpen(true);
+		sim_ui.rows[key] = row;
+	}
+	const controlRow = mk('div', {}, 'display:flex;align-items:center;gap:8px;margin-top:4px');
+	const runBtn = mk('button', { textContent: '▶ 运行' }, 'padding:4px 10px;');
+	const statusEl = mk('span', { textContent: '已停止' }, 'font-size:10px;opacity:.75');
+	controlRow.appendChild(runBtn);
+	const refreshBtn = mk('button', { textContent: '⟳ 刷新', title: '结构/属性改动没生效时点这里重建映射' }, 'padding:4px 8px;');
+	controlRow.appendChild(refreshBtn);
+	const viewSel = mk('select', {}, 'font-size:10px;margin-left:auto');
+	[['off', '不活跃分支：不处理'], ['ghost', '不活跃分支：半透明'], ['ghost_lock', '不活跃分支：半透明并锁定'], ['hide', '不活跃分支：完全隐藏'], ['hide_lock', '不活跃分支：完全隐藏并锁定']].forEach(([value, text]) => viewSel.appendChild(mk('option', { value, textContent: text })));
+	viewSel.value = sim.viewMode || 'off';
+	viewSel.addEventListener('change', () => { simSetViewMode(viewSel.value); simTick(); });
+	controlRow.appendChild(statusEl);
+	controlRow.appendChild(viewSel);
+	const out = mk('div', {}, 'white-space:pre-wrap;font-family:monospace;font-size:11px;opacity:.85;flex:1 1 auto;overflow:auto;border-top:1px solid rgba(128,128,128,.3);padding-top:6px;margin-top:4px');
+	sim_ui.out = out;
+	sim_ui.runBtn = runBtn;
+	sim_ui.status = statusEl;
 	runBtn.addEventListener('click', () => toggleSim());
-	// Panel 的内容容器是 panel.node（DOM），不是 nodes 数组
+	refreshBtn.addEventListener('click', () => { simInvalidate(); simTick(); });
+	root.appendChild(controlRow); root.appendChild(out);
+	simUpdateRunUi();
 	sim_panel.node.innerHTML = '';
 	sim_panel.node.appendChild(root);
 	try { if (typeof Panels !== 'undefined' && Panels) Panels[sim_panel.id] = sim_panel; } catch (e) { /* ignore */ }
 	if (show_panel !== false) sim_panel.show();
+	try { simTick(); } catch (e) { /* ignore */ }
+	try { refreshUsage(); } catch (e) { /* ignore */ }
 	return sim_panel;
 }
 
-function simTick() {
-	if (!sim_ui) return;
-	let mapping = null;
-	try { mapping = createExporter().buildMapping(); } catch (error) { sim_ui.out.textContent = '无法生成映射：' + ((error && error.message) || error); return; }
-	const index = Math.max(0, num(sim_ui.indexInp.value));
-	const prop = sim_ui.propSel.value;
-	sim.inputs.floats = sim.inputs.floats || [];
-	if (prop === 'selected') sim.inputs.selected = num(sim_ui.valueInp.value) > 0;
-	else sim.inputs.floats[index] = num(sim_ui.valueInp.value);
-	const items = simEvaluate(mapping.model, sim.inputs);
-	const hits = items.filter(item => item.hit).map(item => item.node.model).filter(Boolean);
-	const lines = [];
-	lines.push(prop === 'selected' ? ('selected = ' + sim.inputs.selected) : ('floats[' + index + '] = ' + sim.inputs.floats[index]));
-	lines.push('命中 ' + hits.length + ' 个模型，总共 ' + items.length + ' 个分支');
-	lines.push('');
-	for (const item of items) {
-		const name = item.node.model || item.node.type;
-		lines.push((item.hit ? '  ✔ ' : '  ✘ ') + name);
-	}
-	sim_ui.out.textContent = lines.join('\n');
+/* 遍历分组，得到 输入键+下标 -> [分组名] */
+function collectInputUsage() {
+	const map = {};
+	const add = (key, index, parent, children) => {
+		const k = key + '#' + (index || 0);
+		map[k] = map[k] || [];
+		const exist = map[k].find(entry => entry.parent === parent);
+		if (exist) { for (const c of children) if (exist.children.indexOf(c) < 0) exist.children.push(c); }
+		else map[k].push({ parent, children: children.slice() });
+	};
+	const walk = (nodes) => {
+		for (const node of nodes || []) {
+			if (!node || !isGroup(node)) continue;
+			const type = String(node.imm_type || '').replace(/^minecraft:/, '');
+			const propRaw = String(node.imm_property || '').replace(/^minecraft:/, '').trim();
+			const prop = propRaw || ((type === 'range_dispatch' || type === 'select' || type === 'condition') ? 'custom_model_data' : '');
+			const index = Number(node.imm_index) || 0;
+			const name = labelOf(node);
+			const branchChildren = (node.children || []).filter(isGroup).map(c => labelOf(c));
+			// colors：按分组 tints 配置（custom_model_data + index）关联；明确“不生成”则不关联
+			const tintIndices = new Set();
+			if (node.imm_tint_type !== '' && node.imm_tint_type !== 'none') {
+				const tintType = String(node.imm_tint_type == null ? 'custom_model_data' : node.imm_tint_type).replace(/^minecraft:/, '').trim() || 'custom_model_data';
+				const rawTintIndex = String(node.imm_tint_index == null ? '' : node.imm_tint_index).trim();
+				if (tintType === 'custom_model_data' && /^-?\d+$/.test(rawTintIndex)) tintIndices.add(Number(rawTintIndex));
+			}
+			for (const tintIndex of tintIndices) add('colors', tintIndex, name, []);
+			if (type === 'range_dispatch' && prop === 'custom_model_data') add('floats', index, name, branchChildren);
+			else if (type === 'select' && prop === 'custom_model_data') add('strings', index, name, branchChildren);
+			else if (type === 'condition' && prop === 'custom_model_data') add('flags', index, name, branchChildren);
+			else if (prop && prop !== 'custom_model_data') add(prop, 0, name, []);
+			else if (prop === 'selected') add('selected', 0, name, []);
+			walk(node.children || []);
+		}
+	};
+	walk((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []);
+	return map;
 }
-
-function toggleSim() {
-	if (sim.timer) { clearInterval(sim.timer); sim.timer = null; sim_ui.out.textContent += '\n(已停止自动变化)'; return; }
-	simTick();
-	if (!sim_ui.autoChk.checked) return;
-	const period = Math.max(80, num(sim_ui.periodInp.value) || 800);
-	const stepValue = num(sim_ui.stepInp.value) || 0.5;
-	const min = num(sim_ui.minInp.value);
-	const max = num(sim_ui.maxInp.value);
-	let dir = 1;
-	sim.timer = setInterval(() => {
-		try {
-			let value = num(sim_ui.valueInp.value) + stepValue * dir;
-			if (sim_ui.ruleSel.value === 'wrap') { if (value > max) value = min; }
-			else { if (value > max) { value = max; dir = -1; } if (value < min) { value = min; dir = 1; } }
-			sim_ui.valueInp.value = String(value);
-			simTick();
-		} catch (error) { /* ignore */ }
-	}, period);
+function refreshUsage() {
+	if (!sim_ui || !sim_ui.rows) return;
+	try {
+		const usageMap = simGetUsage();
+		const prefixOf = (name) => { const m = String(name || '').match(/^\[(-?\d+(?:\.\d+)?)\]/); return m ? Number(m[1]) : null; };
+		const groupsHtml = (groups, value, uidPrefix) => {
+			const html = [];
+			groups.forEach((g, gi) => {
+				if (gi > 0) html.push('<hr style="border:none;border-top:1px solid rgba(128,128,128,.25);margin:4px 0">');
+				// 按“阈值 <= 当前值”里最大的那个，判定活跃子分支
+				let activeIndex = null;
+				for (const child of g.children) {
+					const k = prefixOf(child);
+					if (k === null) continue;
+					if (k <= value && (activeIndex === null || k > activeIndex)) activeIndex = k;
+				}
+				const isActiveChild = (child) => { const k = prefixOf(child); return k !== null && k === activeIndex; };
+				html.push('<div style="opacity:.8">· ' + g.parent + '</div>');
+				for (const c of g.children.filter(isActiveChild)) html.push('<div style="font-weight:700;color:#7fd0ff">' + c + '</div>');
+				const inact = g.children.filter(c => !isActiveChild(c));
+				if (inact.length) {
+					const uid = uidPrefix + ':' + gi;
+					const open = !!sim.usageOpen[uid];
+					html.push('<div style="margin-top:2px">');
+					html.push('<button data-usage-toggle="' + uid + '" data-count="' + inact.length + '" style="border:none;background:transparent;color:inherit;padding:0;cursor:pointer;font-size:10px;opacity:.6">' + (open ? '▾ ' : '▸ ') + '未活跃 ' + inact.length + ' 项</button>');
+					html.push('<div data-usage-body="' + uid + '" style="display:' + (open ? 'block' : 'none') + ';padding-left:10px">');
+					for (const c of inact) html.push('<div style="opacity:.45">· ' + c + '</div>');
+					html.push('</div></div>');
+				}
+			});
+			return html;
+		};
+		for (const key of Object.keys(sim_ui.rows)) {
+			const row = sim_ui.rows[key];
+			for (const slot of row.slots) {
+				const usageEl = slot.els && slot.els.usage;
+				if (!usageEl) continue;
+				const groups = usageMap[key + '#' + slot.index] || [];
+				if (!groups.length) { usageEl.innerHTML = '<div style="opacity:.45">关联分组：（无）</div>'; continue; }
+				usageEl.innerHTML = groupsHtml(groups, num(slot.value), key + '#' + slot.index).join('');
+			}
+		}
+	} catch (error) { console.error('[装配] refreshUsage error', error); }
 }
+/* ============================== 模拟求值/* ============================== 模拟求值/* ============================== 模拟求值 ============================== */
 
-
-/* ============================== 模拟输入 ============================== */
-
-const sim = { timer: null, value: 0, dir: 1, inputs: { floats: [0, 0, 0, 0, 0, 0, 0, 0], colors: [0, 0, 0, 0], strings: ['', '', '', ''], flags: [false, false, false, false], selected: false, damage: 0 } };
-
+/** range_dispatch 的数值来源：custom_model_data → floats[index]；其余走物品属性 */
 function simValue(node, inputs) {
-	const type = String((node && node.type) || '').replace(/^minecraft:/, '');
 	const prop = String((node && node.property) || '').replace(/^minecraft:/, '');
 	const index = Number(node && node.index) || 0;
 	let value = 0;
 	if (prop === 'custom_model_data') value = Number((inputs.floats || [])[index] || 0);
-	else if (prop === 'custom_model_data_string') value = String((inputs.strings || [])[index] || '');
 	else if (prop === 'selected') value = inputs.selected ? 1 : 0;
+	else if (prop === 'using_item') value = inputs.using_item ? 1 : 0;
+	else if (prop === 'damage') value = Number(inputs.damage || 0);
+	else if (prop === 'count') value = Number(inputs.count || 0);
+	else if (prop === 'time') value = Number(inputs.time || 0);
 	else value = Number(inputs[prop] || 0);
+	if (!isFinite(value)) value = 0;
 	if (node && node.scale) value *= Number(node.scale);
 	return value;
 }
 
-/** 按输入求值整棵映射树，返回 [{ node, hit }]（hit=false 表示该分支被条件挡掉） */
-function simEvaluate(node, inputs, allowOutside) {
+/** select 的取值：custom_model_data → strings[index]；其余走同名输入 */
+function simSelectValue(node, inputs) {
+	const prop = String((node && node.property) || '').replace(/^minecraft:/, '');
+	const index = Number(node && node.index) || 0;
+	if (prop === 'custom_model_data') {
+		const list = inputs.strings || [];
+		return String(list[index] == null ? '' : list[index]);
+	}
+	const raw = inputs[prop];
+	return raw == null ? '' : String(raw);
+}
+
+/** select 的 when：数组里任意一项等于当前值即命中（数字/布尔按字符串比较） */
+function simWhenMatches(when, value) {
+	const list = Array.isArray(when) ? when : [when];
+	if (!list.length) return false;
+	return list.some(entry => String(entry) === String(value));
+}
+
+/** condition 的布尔判定：custom_model_data → flags[index]；selected / using_item / damaged 走对应输入 */
+function simConditionValue(node, inputs) {
+	const prop = String((node && node.property) || 'minecraft:selected').replace(/^minecraft:/, '');
+	const index = Number(node && node.index) || 0;
+	if (prop === 'custom_model_data') return !!(inputs.flags || [])[index];
+	if (prop === 'selected') return !!inputs.selected;
+	if (prop === 'using_item') return !!inputs.using_item;
+	if (prop === 'damaged') return Number(inputs.damage || 0) > 0;
+	return !!inputs[prop];
+}
+
+/** 按输入求值整棵映射树，返回 [{ node, hit }]；hit=false 表示该分支没有被选中 */
+function simEvaluate(node, inputs) {
 	const result = [];
 	if (!node) return result;
 	const type = String(node.type || '').replace(/^minecraft:/, '');
 	if (type === 'composite') {
-		for (const child of node.models || []) result.push(...simEvaluate(child, inputs, allowOutside));
+		for (const child of node.models || []) result.push(...simEvaluate(child, inputs));
 		return result;
 	}
 	if (type === 'range_dispatch') {
 		const value = simValue(node, inputs);
 		let best = null;
 		for (const entry of node.entries || []) {
-			const threshold = Number(entry.threshold);
-			if (threshold <= value && (!best || threshold >= Number(best.threshold))) best = entry;
+			const threshold = Number(entry && entry.threshold);
+			if (!isFinite(threshold) || threshold > value) continue;
+			if (!best || threshold >= Number(best.threshold)) best = entry;
 		}
 		for (const entry of node.entries || []) {
 			const isBest = best === entry;
-			for (const item of simEvaluate(entry.model, inputs, allowOutside)) result.push({ node: item.node, hit: item.hit && isBest });
+			for (const item of simEvaluate(entry.model, inputs)) result.push({ node: item.node, hit: item.hit && isBest });
 		}
-		if (best && node.fallback) for (const item of simEvaluate(node.fallback, inputs, allowOutside)) result.push({ node: item.node, hit: item.hit });
+		// 没有命中的阈值时才用 fallback（原实现条件写反了）
+		if (!best && node.fallback) for (const item of simEvaluate(node.fallback, inputs)) result.push(item);
+		return result;
+	}
+	if (type === 'select') {
+		const value = simSelectValue(node, inputs);
+		let matched = null;
+		for (const item of node.cases || []) {
+			const isMatch = !matched && simWhenMatches(item && item.when, value);
+			if (isMatch) matched = item;
+			for (const model of simEvaluate(item.model, inputs)) result.push({ node: model.node, hit: model.hit && isMatch });
+		}
+		if (!matched && node.fallback) for (const item of simEvaluate(node.fallback, inputs)) result.push(item);
 		return result;
 	}
 	if (type === 'condition') {
-		const prop = String(node.property || 'minecraft:selected').replace(/^minecraft:/, '');
-		const ok = prop === 'selected' ? !!inputs.selected : !!inputs[prop];
-		for (const item of simEvaluate(ok ? node.on_true : node.on_false, inputs, allowOutside)) result.push({ node: item.node, hit: item.hit && ok });
+		// 被选中的那一支算命中；另一支也求值但标 hit=false（结果区与视图联动都要知道它没生效）
+		const ok = simConditionValue(node, inputs);
+		for (const item of simEvaluate(ok ? node.on_true : node.on_false, inputs)) result.push(item);
+		for (const item of simEvaluate(ok ? node.on_false : node.on_true, inputs)) result.push({ node: item.node, hit: false });
 		return result;
 	}
 	if (type === 'model') { result.push({ node, hit: true }); return result; }
 	return result;
 }
 
+function simTick() {
+	if (!sim_ui || !sim_ui.rows) return;
+	let mapping = null;
+	try { mapping = simGetMapping(); } catch (error) {
+		try { simRestoreView(); } catch (restoreError) { /* ignore */ }
+		if (sim_ui.out) sim_ui.out.textContent = '无法生成映射：' + ((error && error.message) || error);
+		return;
+	}
+	// 清空后再按启用的行/槽写入（禁用 = 不参与求值）
+	const inputs = sim.inputs;
+	inputs.floats.length = 0;
+	inputs.colors.length = 0;
+	inputs.strings.length = 0;
+	inputs.flags.length = 0;
+	inputs.selected = false;
+	inputs.using_item = false;
+	inputs.damage = 0;
+	inputs.count = 0;
+	inputs.time = 0;
+	const lines = [];
+	for (const key of Object.keys(sim_ui.rows)) {
+		const row = sim_ui.rows[key];
+		// 行复选框只管“自动变化”，手动值始终参与求值
+		for (const slot of row.slots) {
+			if (!slot.enabled) continue;
+			simApplySlot(inputs, key, slot);
+			lines.push(simSlotLabel(key, slot));
+		}
+	}
+	const items = simEvaluate(mapping.model, inputs);
+	const hits = items.filter(item => item.hit && item.node.model).map(item => item.node.model);
+	sim.lastItems = items;
+	try { simApplyView(items); } catch (error) { /* ignore */ }
+	try { simApplyTints(); } catch (error) { /* ignore */ }
+	// 每个槽单独求值一次，得到它自己的命中数（角标）
+	for (const key of Object.keys(sim_ui.rows)) {
+		const row = sim_ui.rows[key];
+		for (const slot of row.slots) {
+			if (!slot.enabled) { if (slot.els) slot.els.badge.textContent = ''; continue; }
+			if (key === 'colors') {
+				const groups = simGetUsage()['colors#' + slot.index] || [];
+				if (slot.els) slot.els.badge.textContent = groups.length ? (groups.length + ' 组') : '';
+				continue;
+			}
+			const solo = simBlankInputs();
+			simApplySlot(solo, key, slot);
+			const count = simEvaluate(mapping.model, solo).filter(item => item.hit && item.node.model).length;
+			if (slot.els) slot.els.badge.textContent = count ? ('命中 ' + count) : '';
+		}
+	}
+	lines.push('');
+	lines.push('命中 ' + hits.length + ' / 分支 ' + items.length);
+	lines.push('');
+	for (const item of items) lines.push((item.hit ? '  ✔ ' : '  ✘ ') + (item.node.model || item.node.type));
+	if (sim_ui.out) sim_ui.out.textContent = lines.join('\n');
+	try { refreshUsage(); } catch (e) { /* ignore */ }
+}
+function simAutoSlots() {
+	const list = [];
+	if (!sim_ui || !sim_ui.rows) return list;
+	for (const key of Object.keys(sim_ui.rows)) {
+		const row = sim_ui.rows[key];
+		// 行复选框 = 自动变化开关；槽复选框 = 是否参与（求值与自动都看它）
+		if (!row.enabled || row.kind !== 'number') continue;
+		for (const slot of row.slots) if (slot.enabled) list.push({ key, slot });
+	}
+	return list;
+}
+
+function simUpdateRunUi() {
+	if (!sim_ui || !sim_ui.runBtn) return;
+	const running = !!sim.timer;
+	sim_ui.runBtn.textContent = running ? '■ 停止' : '▶ 运行';
+	sim_ui.runBtn.style.background = running ? 'rgba(127,208,255,.25)' : '';
+	sim_ui.runBtn.style.borderColor = running ? 'rgba(127,208,255,.8)' : '';
+	if (sim_ui.status) {
+		const count = simAutoSlots().length;
+		sim_ui.status.textContent = running ? ('运行中 · ' + count + ' 个自动槽') : '已停止';
+		sim_ui.status.style.color = running ? '#7fd0ff' : '';
+	}
+}
+
+function toggleSim() {
+	if (sim.timer) { clearInterval(sim.timer); sim.timer = null; simUpdateRunUi(); simTick(); return; }
+	const autos = simAutoSlots();
+	if (!autos.length) {
+		Blockbench.showQuickMessage('没有勾选要自动变化的大类：在数值输入（如 cmdata.floats / colors）前面打勾，再点运行', 3500);
+		simUpdateRunUi();
+		return;
+	}
+	const period = Math.min.apply(null, autos.map(item => item.slot.period));
+	sim.timer = setInterval(() => {
+		try {
+			// 每拍重算：中途勾选/取消大类时自动跟随，全部关掉就停下
+			const current = simAutoSlots();
+			if (!current.length) { clearInterval(sim.timer); sim.timer = null; simUpdateRunUi(); return; }
+			const now = Date.now();
+			for (const item of current) {
+				const slot = item.slot;
+				if (!slot.lastTick) slot.lastTick = now;
+				if (now - slot.lastTick < slot.period) continue;
+				slot.lastTick = now;
+				if (item.key === 'colors') {
+					const list = (slot.presets && slot.presets.length) ? slot.presets : [Number(slot.value) || 0];
+					slot.presetIndex = ((slot.presetIndex || 0) + 1) % list.length;
+					slot.value = String(list[slot.presetIndex]);
+				} else {
+					let value = num(slot.value) + slot.step * slot.dir;
+					if (slot.rule === 'wrap') { if (value > slot.max) value = slot.min; }
+					else { if (value > slot.max) { value = slot.max; slot.dir = -1; } if (value < slot.min) { value = slot.min; slot.dir = 1; } }
+					slot.value = String(value);
+				}
+				if (slot.els && slot.els.val) slot.els.val.value = slot.value;
+			}
+			simTick();
+		} catch (error) { /* ignore */ }
+	}, period);
+	simUpdateRunUi();
+}
 function openSimulator() {
 	if (typeof Project === 'undefined' || !Project) return;
 	const inputs = sim.inputs;
@@ -1651,12 +3055,28 @@ function registerProperties() {
 	P(ModelProject, 'boolean', 'imm_block_display', { label: '模型附带手持 display 变换（与引用模型一致）', default: true });
 	P(ModelProject, 'boolean', 'imm_hide_unavailable', { label: '隐藏当前条件下不可用的分组', default: true });
 	P(ModelProject, 'string', 'imm_pack_path', { label: '资源包工程路径（pack.mcmeta 所在目录）', default: '' });
+	P(ModelProject, 'string', 'imm_pack_version', {
+		label: '目标 Minecraft 版本（pack.mcmeta 格式）',
+		default: DEFAULT_PACK_VERSION,
+		options: () => {
+			const list = {};
+			for (const version of PACK_VERSIONS) {
+				list[version.id] = version.id + '（资源包格式 ' + packFormatLabel(version)
+					+ (version.major >= PACK_MODERN_MIN_MAJOR ? '，min/max_format' : '，pack_format') + '）';
+			}
+			return list;
+		},
+	});
 
 	// 面着色：Blockbench 的 UV 编辑器“着色”开关绑定 Face.properties.tint（默认 -1 表示未着色）
 	P(Face, 'number', 'tint', { label: '着色 index', default: -1 });
 
-	P(Group, 'string', 'imm_type', { label: '映射类型（type）', description: '语法：{"type": "minecraft:<类型>"}\n作用：决定本节点是哪一种物品模型映射。\n可选：composite / model / range_dispatch / condition / empty', default: 'composite', enum_values: MAPPING_TYPES });
+	P(Group, 'string', 'imm_type', { label: '映射类型（type）', description: '语法：{"type": "minecraft:<类型>"}\n作用：决定本节点是哪一种物品模型映射。\ncomposite=结构分组；inline=内联模型（本组方块烘焙成模型）；model=引用模型；还有 range_dispatch / condition / select / empty', default: 'composite', enum_values: MAPPING_TYPES });
 	P(Group, 'string', 'imm_model', { label: '引用模型（imm_model）', default: '' });
+	try { new Property(Group, 'string', 'imm_model_shift', { default: '', exposed: false, condition: cond }); } catch (e) { /* ignore */ }
+	if (typeof Locator !== 'undefined') {
+		try { new Property(Locator, 'string', 'imm_call_target', { label: '复调用目标（分组 UUID 或模型 id）', default: '', exposed: false }); } catch (e) { /* ignore */ }
+	}
 	P(Group, 'string', 'imm_property', { label: '取值来源 / 条件（property / when）', default: '' });
 	P(Group, 'number', 'imm_index', { label: 'index（仅 range_dispatch：custom_model_data 下标）', default: 0 });
 	P(Group, 'string', 'imm_range_target', { label: 'compass target', default: '' });
@@ -1675,20 +3095,36 @@ function registerProperties() {
 	P(Group, 'string', 'imm_threshold_format', { label: '分支编号格式', description: 'i / i*2 / 10+i*5 / 0,1,3', default: '' });
 	P(Group, 'number', 'imm_threshold', { label: '分支编号 / 阈值（entries[].threshold）', default: 0 });
 	P(Group, 'number', 'imm_scale', { label: '数值缩放（scale）', default: 1 });
-	P(Group, 'string', 'imm_tint_type', { label: 'tints 来源类型', default: '', enum_values: ['', 'custom_model_data', 'constant', 'dye', 'potion', 'grass', 'team'] });
+	P(Group, 'string', 'imm_tint_type', { label: 'tints 来源类型', default: '', enum_values: ['', 'none', 'custom_model_data', 'constant', 'dye', 'potion', 'grass', 'team'] });
 	P(Group, 'number', 'imm_tint_index', { label: 'tints 来源 index（custom_model_data）', default: 0 });
 	P(Group, 'string', 'imm_tint_value', { label: 'tints 来源值（constant 的 ARGB / 其它 default）', default: '' });
 	P(Group, 'string', 'imm_tints', { label: 'tints（JSON，仅 model / composite 自带模型）', default: '' });
 }
 
 let menuAttached = false;
+let locatorMenuAttached = false;
 function attachGroupMenu() {
-	if (menuAttached || !actions.props) return;
+	const addSeparator = (menu) => {
+		try { if (typeof MenuSeparator !== 'undefined') menu.addAction(new MenuSeparator('imm_menu_sep')); } catch (e) { /* ignore */ }
+	};
 	try {
-		if (typeof Group !== 'undefined' && Group.prototype && Group.prototype.menu && typeof Group.prototype.menu.addAction === 'function') {
-			Group.prototype.menu.addAction(actions.props);
+		if (!menuAttached && actions.props && typeof Group !== 'undefined' && Group.prototype && Group.prototype.menu && typeof Group.prototype.menu.addAction === 'function') {
+			const menu = Group.prototype.menu;
+			addSeparator(menu);
+			if (actions.createModel) menu.addAction(actions.createModel);
+			if (actions.call) menu.addAction(actions.call);
+			menu.addAction(actions.props);
 			menuAttached = true;
 			console.log('[装配] 已加入分组右键菜单');
+		}
+	} catch (error) { /* ignore */ }
+	try {
+		if (!locatorMenuAttached && actions.editCall && typeof Locator !== 'undefined' && Locator.prototype && Locator.prototype.menu && typeof Locator.prototype.menu.addAction === 'function') {
+			const menu = Locator.prototype.menu;
+			addSeparator(menu);
+			menu.addAction(actions.editCall);
+			locatorMenuAttached = true;
+			console.log('[装配] 已加入复调用标签右键菜单');
 		}
 	} catch (error) { /* ignore */ }
 }
@@ -1706,11 +3142,30 @@ Plugin.register('item_model_definition_assembly', {
 	onload() {
 		console.log('[装配] onload 开始，版本 ' + VERSION);
 		try {
+		try {
+			if (typeof Setting !== 'undefined') {
+				immBoxSetting = new Setting('imm_box_select_groups', {
+					name: '框选/多选方块时自动改选所属分组',
+					description: '一次选中两个及以上方块时，自动取消方块、改为选中它们各自的父分组；单选一个方块不处理。',
+					category: 'edit',
+					type: 'checkbox',
+					value: false,
+				});
+				immBatchSetting = new Setting('imm_batch_groups_only', {
+					name: '批量选择分组时自动取消单个元素',
+					description: '同时选中两个及以上分组时，自动取消被一起选中的方块/定位点，避免批量操作误改单个元素。',
+					category: 'edit',
+					type: 'checkbox',
+					value: false,
+				});
+			}
+		} catch (e) { /* ignore */ }
 		const addMenu = (action, path) => {
 			try { if (action) MenuBar.addAction(action, path); }
 			catch (error) { console.warn('[装配] 菜单挂载失败：' + path, error); }
 		};
 		try { registerProperties(); } catch (error) { console.error('[装配] 属性注册失败', error); }
+		ensurePackVersion();
 
 		format_object = new ModelFormat(FORMAT_ID, {
 			id: FORMAT_ID,
@@ -1727,6 +3182,7 @@ Plugin.register('item_model_definition_assembly', {
 			single_texture: false,
 			per_texture_uv_size: true,
 			bone_rig: true,
+			locators: true,
 			centered_grid: false,
 			rotate_cubes: true,
 			rotation_limit: false,
@@ -1744,45 +3200,6 @@ Plugin.register('item_model_definition_assembly', {
 			uv_rotation: true,
 			java_cube_shading_properties: true,
 			vertex_color_ambient_occlusion: true,
-			cube_size_limiter: {
-				coordinate_limits: [-16, 32],
-				test(cube, options) {
-					const opt = options || {};
-					const from = opt.from || cube.from;
-					const to = opt.to || cube.to;
-					const inflate = opt.inflate == null ? cube.inflate : opt.inflate;
-					return from.find((value, axis) => to[axis] + inflate > 32 || to[axis] + inflate < -16 || from[axis] - inflate > 32 || from[axis] - inflate < -16) !== undefined;
-				},
-				move(cube, options) {
-					const opt = options || {};
-					const from = opt.from || cube.from;
-					const to = opt.to || cube.to;
-					const inflate = opt.inflate == null ? cube.inflate : opt.inflate;
-					[0, 1, 2].forEach(axis => {
-						const over = to[axis] + inflate - 32;
-						if (over > 0) {
-							from[axis] -= over; to[axis] -= over;
-							if (16 + from[axis] - inflate < 0) from[axis] = -16 + inflate;
-						} else {
-							const under = from[axis] - inflate + 16;
-							if (under < 0) {
-								from[axis] -= under; to[axis] -= under;
-								if (to[axis] + inflate > 32) to[axis] = 32 - inflate;
-							}
-						}
-					});
-				},
-				clamp(cube, options) {
-					const opt = options || {};
-					const from = opt.from || cube.from;
-					const to = opt.to || cube.to;
-					const inflate = opt.inflate == null ? cube.inflate : opt.inflate;
-					[0, 1, 2].forEach(axis => {
-						from[axis] = Math.min(32 - inflate, Math.max(-16 + inflate, from[axis]));
-						to[axis] = Math.min(32 - inflate, Math.max(-16 + inflate, to[axis]));
-					});
-				},
-			},
 			block_size: 16,
 			forward_direction: '-z',
 		});
@@ -1801,32 +3218,64 @@ Plugin.register('item_model_definition_assembly', {
 		actions.zip = new Action('imm_export_zip', { name: '导出装配资源包 (zip)', description: 'items + models + textures', icon: 'archive', category: 'file', condition, click: exportZip });
 		actions.merge = new Action('imm_merge_pack', { name: '合并到资源包…', description: '直接写入资源包并覆盖旧文件', icon: 'folder_open', category: 'file', condition, click: mergeToPack });
 		actions.import = new Action('imm_import_model', { name: '导入引用模型（当前分组）', description: '按 imm_model 从资源包工程导入 Java 模型为方块', icon: 'file_download', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const g = pickTargetGroup(); if (!g) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } if (!String(g.imm_model || '').trim()) { Blockbench.showMessageBox({ title: '没有引用模型', message: '该分组没有填写 imm_model（引用模型）。', icon: 'info' }); return; } importModelReference(g); } });
+		actions.call = new Action('imm_call_group', { name: '复调用选中的分组', description: '在分组枢轴处创建复调用标签（Locator），导出时替换为目标分组', icon: 'content_copy', category: 'tools', condition, click: callSelectedGroup });
+		actions.createModel = new Action('imm_create_model', { name: '从分组创建模型…', description: '把选中分组的方块烘焙成 models/item 模型，并改为引用（自动居中）', icon: 'file_upload', category: 'tools', condition, click: () => { const group = pickTargetGroup(); if (!group) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } createModelFromGroup(group); } });
 		actions.check = new Action('imm_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
 		actions.pack = new Action('imm_pick_pack', { name: '选择资源包工程路径…', description: '打开系统文件夹选择框，设为资源包工程目录', icon: 'folder_open', category: 'file', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: pickPackPath });
 		actions.sim = new Action('imm_simulate', { name: '模拟输入…', description: '按 custom_model_data / selected 预览分支命中', icon: 'play_circle', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const panel = buildSimPanel(false); if (panel) { panel.show(); return; } openSimulator(); } });
+		actions.viewDiag = new Action('imm_view_diag', { name: '诊断：模拟视图联动', description: '打印匹配到的分组/方块/材质数量', icon: 'bug_report', category: 'tools', condition, click: diagnoseSimView });
+		actions.pivot = new Action('imm_fix_pivot', { name: '枢轴归位（对齐几何中心）…', description: '把分组 origin 移到几何中心，补偿方块坐标，外观不变', icon: 'center_focus_strong', category: 'tools', condition, click: openPivotFix });
 		actions.props = new Action('imm_group_props', { name: '编辑分组映射属性…', description: '映射类型 / 引用模型 / property 等', icon: 'tune', category: 'tools', condition, click: editGroupProps });
+		actions.boxToggle = new Action('imm_box_toggle', { name: '开关：框选方块时改选所属分组', description: '切换“一次选中多个方块时自动改为选中其父分组”', icon: 'select_all', category: 'tools', click: () => { if (!immBoxSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !boxGroupsEnabled(); setBoxSelectGroups(next); try { if (typeof immBoxSetting.save === 'function') immBoxSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('框选方块改选所属分组：' + (next ? '开' : '关') + (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID ? '（装配格式内强制开启）' : ''), 2600); } });
+		actions.batchToggle = new Action('imm_batch_toggle', { name: '开关：批量选择时取消单个元素', description: '切换“同时选中多个分组时自动取消方块/定位点选择”', icon: 'select_all', category: 'tools', click: () => { if (!immBatchSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !batchGroupsOnlyEnabled(); setBatchGroupsOnly(next); try { if (typeof immBatchSetting.save === 'function') immBatchSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('批量选择时取消单个元素：' + (next ? '开' : '关'), 2200); } });
+		actions.editCall = new Action('imm_edit_call', { name: '编辑复调用标签…', description: '修改选中的复调用 Locator 指向的分组或模型 id', icon: 'edit', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && Locator.selected && Locator.selected.length > 0), click: () => { const locator = (Locator.selected && Locator.selected[0]) || null; if (!locator) { Blockbench.showMessageBox({ title: '请先选中复调用标签', message: '在 outliner 里选中一个 Locator（复调用标签）。', icon: 'info' }); return; } editCallTag(locator); } });
 
 		addMenu(actions.zip, 'file.export');
 		addMenu(actions.merge, 'file.export');
 		placeInFileMenu(actions.pack, ['save_model', 'export', 'import']);
 		
 		addMenu(actions.check, 'tools');
+		addMenu(actions.createModel, 'tools');
+		addMenu(actions.call, 'tools');
 		addMenu(actions.import, 'tools');
 		addMenu(actions.props, 'tools');
+		addMenu(actions.editCall, 'tools');
+		addMenu(actions.batchToggle, 'tools');
+		addMenu(actions.boxToggle, 'tools');
+		addMenu(actions.pivot, 'tools');
+		addMenu(actions.viewDiag, 'tools');
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
 		// 面板会自动出现在「视图 → 面板」里，不再占用 Tools 菜单
 		attachGroupMenu();
+		bindOutlinerHook();
+		try { Blockbench.on('update_selection', () => { try { guardLockedSelection(); } catch (e) { /* ignore */ } try { guardBatchSelection(); } catch (e) { /* ignore */ } try { guardBoxSelection(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
 		for (const event of ['add_group', 'remove_group', 'update_selection']) {
-			try { Blockbench.on(event, (data) => scheduleBranchSync(data && data.object)); } catch (e) { /* ignore */ }
+			try { Blockbench.on(event, (data) => { simInvalidate(); scheduleBranchSync(data && data.object); }); } catch (e) { /* ignore */ }
 		}
 		for (const event of ['select_project', 'finished_loading_project', 'update_selection']) {
-			try { Blockbench.on(event, attachGroupMenu); } catch (e) { /* ignore */ }
+			try { Blockbench.on(event, () => { try { simRestoreView(); simRestoreTints(); } catch (viewError) { /* ignore */ } simInvalidate(); attachGroupMenu(); }); } catch (e) { /* ignore */ }
 		}
+		for (const event of ['select_project', 'finished_loading_project']) {
+			try { Blockbench.on(event, ensurePackVersion); } catch (e) { /* ignore */ }
+		}
+		try {
+			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+			}
+		} catch (hookError) { /* ignore */ }
 			} catch (error) {
 			console.error('[装配] onload 失败：', error);
 		}
 	},
 	onunload() {
+		try { if (sim.timer) { clearInterval(sim.timer); sim.timer = null; } } catch (e) { /* ignore */ }
+		try { if (sim.tickTimer) { clearTimeout(sim.tickTimer); sim.tickTimer = null; } } catch (e) { /* ignore */ }
+		try { simStopViewLoop(); } catch (e) { /* ignore */ }
+		try { simRestoreView(); } catch (e) { /* ignore */ }
+		try { simRestoreTints(); } catch (e) { /* ignore */ }
+		try { if (sim_panel && typeof sim_panel.delete === 'function') sim_panel.delete(); } catch (e) { /* ignore */ }
+		sim_panel = null;
+		sim_ui = null;
 		menuAttached = false;
 		for (const key of Object.keys(actions)) {
 			try { if (actions[key]) actions[key].delete(); } catch (e) { /* ignore */ }
