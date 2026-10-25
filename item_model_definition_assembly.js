@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.20';
+const VERSION = '0.68.21';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -202,6 +202,20 @@ function quatMatrix(q) {
 		2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x),
 		2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y),
 	];
+}
+
+function quatMul(a, b) {
+	return {
+		x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+		y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+		z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+		w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+	};
+}
+function quatConj(q) { return { x: -q.x, y: -q.y, z: -q.z, w: q.w }; }
+function quatRotateVec(q, v) {
+	const p = quatMul(quatMul(q, { x: v[0], y: v[1], z: v[2], w: 0 }), quatConj(q));
+	return [p.x, p.y, p.z];
 }
 
 const rotVec = (m, v) => [
@@ -948,25 +962,53 @@ class Exporter {
 		let group = null;
 		try { if (typeof Group !== 'undefined' && Array.isArray(Group.all)) group = Group.all.find(g => g && g.uuid === target) || null; } catch (e) { /* ignore */ }
 		if (!group) { this.warn('复调用标签 “' + labelOf(locator) + '” 找不到目标分组：' + target); return null; }
-		return { type: 'minecraft:empty', __imm_call_group: group };
+		return { type: 'minecraft:empty', __imm_call_group: group, __imm_call_pose: { position: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() } };
 	}
 
 	/** 把占位替换为目标分组的映射节点（深拷贝，保留 transformation） */
+	resolveCallTarget(placeholder) {
+		const group = placeholder && placeholder.__imm_call_group;
+		if (!group) return null;
+		let target = this.groupNodeCache ? this.groupNodeCache.get(group) : null;
+		if (!target) {
+			try { target = this.buildNode(group, sanitizePath(labelOf(group), 'group'), [0, 0, 0]); } catch (e) { target = null; }
+			if (target) this.groupNodeCache.set(group, target);
+		}
+		if (!target) { this.warn('复调用目标没有可导出的映射节点，已跳过。'); return null; }
+		const clone = JSON.parse(JSON.stringify(target));
+		this.stripCallPlaceholders(clone);
+		return this.wrapCallPose(clone, group, placeholder.__imm_call_pose);
+	}
+
+	/** 把 Locator 的绝对位置/旋转转换为相对目标分组的补偿 transformation */
+	wrapCallPose(clone, group, pose) {
+		if (!pose || !Array.isArray(pose.position) || !Array.isArray(pose.rotation)) return clone;
+		const O = Array.isArray(group.origin) ? group.origin : [0, 0, 0];
+		const identity = { x: 0, y: 0, z: 0, w: 1 };
+		const qg = readQuaternion(group) || identity;
+		const ql = readQuaternion({ rotation: pose.rotation }) || identity;
+		let qd = quatMul(ql, quatConj(qg));
+		const len = Math.hypot(qd.x, qd.y, qd.z, qd.w) || 1;
+		qd = { x: qd.x / len, y: qd.y / len, z: qd.z / len, w: qd.w / len };
+		const rotatedO = quatRotateVec(qd, [num(O[0]), num(O[1]), num(O[2])]);
+		const t = [0, 1, 2].map(a => clean((num(pose.position[a]) - rotatedO[a]) / UNIT));
+		const sameRot = Math.abs(qd.w) > 1 - 1e-6 && Math.abs(qd.x) + Math.abs(qd.y) + Math.abs(qd.z) < 1e-6;
+		if (sameRot && Math.abs(t[0]) + Math.abs(t[1]) + Math.abs(t[2]) < 1e-6) return clone;
+		return {
+			type: 'minecraft:composite',
+			transformation: { translation: t, left_rotation: [clean(qd.x), clean(qd.y), clean(qd.z), clean(qd.w)], scale: [1, 1, 1], right_rotation: [0, 0, 0, 1] },
+			models: [clone],
+		};
+	}
+
 	resolveCallPlaceholders(node) {
 		if (!node || typeof node !== 'object') return;
 		if (Array.isArray(node)) {
 			for (let i = node.length - 1; i >= 0; i--) {
 				const item = node[i];
 				if (item && typeof item === 'object' && item.__imm_call_group) {
-				let target = this.groupNodeCache ? this.groupNodeCache.get(item.__imm_call_group) : null;
-				if (!target) {
-					try { target = this.buildNode(item.__imm_call_group, sanitizePath(labelOf(item.__imm_call_group), 'group'), [0, 0, 0]); } catch (e) { target = null; }
-					if (target) this.groupNodeCache.set(item.__imm_call_group, target);
-				}
-					if (!target) { this.warn('复调用目标没有可导出的映射节点，已跳过。'); node.splice(i, 1); continue; }
-					const clone = JSON.parse(JSON.stringify(target));
-					this.stripCallPlaceholders(clone);
-					node[i] = clone;
+					const clone = this.resolveCallTarget(item);
+					if (clone) node[i] = clone; else node.splice(i, 1);
 				} else this.resolveCallPlaceholders(item);
 			}
 			return;
@@ -974,19 +1016,11 @@ class Exporter {
 		for (const key of Object.keys(node)) {
 			const value = node[key];
 			if (value && typeof value === 'object' && value.__imm_call_group) {
-				let target = this.groupNodeCache ? this.groupNodeCache.get(value.__imm_call_group) : null;
-				if (!target) {
-					try { target = this.buildNode(value.__imm_call_group, sanitizePath(labelOf(value.__imm_call_group), 'group'), [0, 0, 0]); } catch (e) { target = null; }
-					if (target) this.groupNodeCache.set(value.__imm_call_group, target);
-				}
-				if (!target) { delete node[key]; continue; }
-				const clone = JSON.parse(JSON.stringify(target));
-				this.stripCallPlaceholders(clone);
-				node[key] = clone;
+				const clone = this.resolveCallTarget(value);
+				if (clone) node[key] = clone; else delete node[key];
 			} else if (value && typeof value === 'object') this.resolveCallPlaceholders(value);
 		}
 	}
-
 	/** 克隆体内残留的复调用占位改成 empty，避免自引用无限展开 */
 	stripCallPlaceholders(node) {
 		if (!node || typeof node !== 'object') return;
