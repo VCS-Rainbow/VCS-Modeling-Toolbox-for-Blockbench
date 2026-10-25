@@ -2,6 +2,11 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.49
+- 修引用模型双重变换：导入时不再把目标分组 origin 加到方块坐标（`import_base = [0,0,0]`），否则导出时分组 transformation 会再次应用 origin，产生约一格偏移。
+- 需要重新导入引用模型以重建内部方块坐标。
+- 单测 192 项。
+
 ## 0.68.48
 - 修整组选中后 gizmo 枢轴：设置 `Group.first_selected = model 分组`，Blockbench 用 `first_selected.origin` 作为枢轴，和直接点模型分组一致。
 - 单测 192 项。
