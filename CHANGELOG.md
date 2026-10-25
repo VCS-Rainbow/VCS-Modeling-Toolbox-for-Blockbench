@@ -2,6 +2,12 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.66.9
+- 时间轴改为**递归到真正有姿态的节点**，在它原来的层级位置替换成 `range_dispatch`；静态祖先（bone5/bone7/sacpack）保持原 composite 层级，不再把整个 bone7 子树搬进每一帧。
+- 纯容器分组即使自身没有模型，也保留 transformation + node_name 的 shell，避免丢父级变换。
+- 嵌套 range 使用时间轴分组/项目的时间轴 property 与 index。
+- 单测 170 项。
+
 ## 0.66.8
 - 修时间线 range_dispatch 节点缺少 node_name：内层帧 range 使用来源根分组名，自动总时间轴使用 `[动画时间轴]`，手动时间轴使用分组名。
 - 单测 170 项。

@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.66.8';
+const VERSION = '0.66.9';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -912,6 +912,8 @@ class Exporter {
 			for (const uuid of Object.keys(pose || {})) if (pose[uuid] && typeof pose[uuid] === 'object') map.set(uuid, pose[uuid]);
 			frames.set(frame, map);
 		}
+		this.timelineProperty = group.imm_property || 'custom_model_data';
+		this.timelineIndex = (group.imm_index != null) ? num(group.imm_index) : num(projectValue('imm_anim_index', 0));
 		if (!frames.size) return this.buildAutoTimeline(group, hint, parent_shift);
 		return this.buildFrameEntries(group, Array.from(frames.keys()).sort((a, b) => a - b), frames, hint, parent_shift);
 	}
@@ -933,21 +935,25 @@ class Exporter {
 			for (const uuid of Object.keys(sampled.poses[frame])) map.set(uuid, sampled.poses[frame][uuid]);
 			frames.set(frame, map);
 		}
+		this.timelineProperty = group.imm_property || 'custom_model_data';
+		this.timelineIndex = (group.imm_index != null) ? num(group.imm_index) : num(projectValue('imm_anim_index', 0));
 		return this.buildFrameEntries(group, Array.from(frames.keys()), frames, hint, parent_shift);
 	}
 
-	buildFrameEntries(group, sorted, frames, hint, parent_shift) {
-		const roots = ((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []).filter(n => isGroup(n) && n !== group && this.normalizeType(n.imm_type) !== 'range_dispatch_timeline' && n.export !== false);
-		const keyOf = (g) => g.uuid || g.name;
-		const hasPoseInFrame = (g, map) => {
-			if (!g || !map) return false;
-			if (map.has(keyOf(g))) return true;
-			for (const child of (g.children || [])) if (isGroup(child) && hasPoseInFrame(child, map)) return true;
-			return false;
-		};
-		const hasAnyPose = (g) => sorted.some(frame => hasPoseInFrame(g, frames.get(frame)));
-		const prop = String(group.imm_property || 'custom_model_data').replace(/^minecraft:/, '').trim() || 'custom_model_data';
-		const index = (group.imm_index != null) ? num(group.imm_index) : num(projectValue('imm_anim_index', 0));
+	poseInFrame(group, map) {
+		if (!group || !map) return false;
+		if (map.has(group.uuid || group.name)) return true;
+		for (const child of (group.children || [])) if (isGroup(child) && this.poseInFrame(child, map)) return true;
+		return false;
+	}
+
+	/** 在姿态节点原位置替换为 range_dispatch；静态祖先保持原层级 */
+	buildTimelineTree(group, sorted, frames, hint, parent_shift) {
+		const anyPose = sorted.some(frame => this.poseInFrame(group, frames.get(frame)));
+		if (!anyPose) { this.timelinePoses = null; this.timelineSkip = null; return this.buildNode(group, hint, parent_shift); }
+		const ownPose = sorted.some(frame => { const map = frames.get(frame); return map && map.has(group.uuid || group.name); });
+		const prop = String(projectValue('imm_anim_property', 'custom_model_data') || 'custom_model_data').replace(/^minecraft:/, '').trim() || 'custom_model_data';
+		const index = num(projectValue('imm_anim_index', 0));
 		const makeRange = (entries, name) => {
 			const node = { type: 'minecraft:range_dispatch', property: 'minecraft:' + prop };
 			if (name) node.node_name = name;
@@ -955,58 +961,51 @@ class Exporter {
 			node.entries = entries;
 			return node;
 		};
-		const staticNodes = [];
-		const wholeAnimated = [];
-		for (const rootGroup of roots) {
-			if (!hasAnyPose(rootGroup)) {
-				this.timelinePoses = null; this.timelineSkip = null;
-				const node = this.buildNode(rootGroup, hint, parent_shift);
-				if (node && !this.nodeIsEmpty(node)) staticNodes.push(node);
-				continue;
-			}
-			const ownPose = sorted.some(frame => { const map = frames.get(frame); return map && map.has(keyOf(rootGroup)); });
-			if (ownPose) { wholeAnimated.push(rootGroup); continue; }
-			const animatedChildren = (rootGroup.children || []).filter(c => isGroup(c) && hasAnyPose(c));
-			const skip = new Set(animatedChildren);
-			this.timelinePoses = null; this.timelineSkip = skip;
-			const shell = this.buildNode(rootGroup, hint, parent_shift);
-			this.timelineSkip = null;
-			const parentShift = this.groupShifts.get(rootGroup) || [0, 0, 0];
+		if (ownPose) {
 			const entries = [];
 			for (const frame of sorted) {
 				this.timelinePoses = frames.get(frame);
-				const nodes = [];
-				for (const child of animatedChildren) {
-					const node = this.buildNode(child, hint, parentShift);
-					if (node && !this.nodeIsEmpty(node)) nodes.push(node);
-				}
+				const node = this.buildNode(group, hint, parent_shift);
 				this.timelinePoses = null;
-				if (nodes.length) entries.push({ threshold: frame, model: nodes.length === 1 ? nodes[0] : { type: 'minecraft:composite', models: nodes } });
+				if (node && !this.nodeIsEmpty(node)) entries.push({ threshold: frame, model: node });
 			}
-			if (!entries.length) continue;
-			const range = makeRange(entries, labelOf(rootGroup) + ' 动画');
-			if (shell && !this.nodeIsEmpty(shell)) {
-				if (shell.type === 'minecraft:composite') { shell.models = (shell.models || []).concat([range]); staticNodes.push(shell); }
-				else staticNodes.push({ type: 'minecraft:composite', models: [shell, range] });
-			} else staticNodes.push(range);
+			return entries.length ? makeRange(entries, group.uuid === '__imm_auto_timeline' ? '[动画时间轴]' : labelOf(group) + ' 动画') : null;
 		}
-		if (wholeAnimated.length) {
-			const entries = [];
-			for (const frame of sorted) {
-				this.timelinePoses = frames.get(frame);
-				const nodes = [];
-				for (const rootGroup of wholeAnimated) {
-					const node = this.buildNode(rootGroup, hint, parent_shift);
-					if (node && !this.nodeIsEmpty(node)) nodes.push(node);
-				}
-				this.timelinePoses = null;
-				if (nodes.length) entries.push({ threshold: frame, model: nodes.length === 1 ? nodes[0] : { type: 'minecraft:composite', models: nodes } });
-			}
-			if (entries.length) staticNodes.push(makeRange(entries, group.uuid === '__imm_auto_timeline' ? '[动画时间轴]' : labelOf(group)));
+		const childGroups = (group.children || []).filter(c => c && c.export !== false && isGroup(c));
+		this.timelineSkip = new Set(childGroups); this.timelinePoses = null;
+		const shell = this.buildNode(group, hint, parent_shift);
+		this.timelineSkip = null;
+		let shellNode = shell;
+		if (!shellNode && childGroups.length) {
+			const ownShift = this.groupShifts.get(group) || [0, 0, 0];
+			const tr = this.buildTransformation(group, ownShift, parent_shift);
+			shellNode = { type: 'minecraft:composite', models: [] };
+			if (tr) shellNode.transformation = tr;
+			this.applyNodeName(shellNode, group);
+		}
+		const parentShift = this.groupShifts.get(group) || [0, 0, 0];
+		const childNodes = [];
+		for (const child of childGroups) {
+			const node = this.buildTimelineTree(child, sorted, frames, hint, parentShift);
+			if (node && !this.nodeIsEmpty(node)) childNodes.push(node);
+		}
+		if (!shellNode || this.nodeIsEmpty(shellNode)) return childNodes.length ? (childNodes.length === 1 ? childNodes[0] : { type: 'minecraft:composite', models: childNodes }) : null;
+		if (shellNode.type === 'minecraft:composite') { shellNode.models = (shellNode.models || []).concat(childNodes); return shellNode; }
+		return childNodes.length ? { type: 'minecraft:composite', models: [shellNode].concat(childNodes) } : shellNode;
+	}
+
+	buildFrameEntries(group, sorted, frames, hint, parent_shift) {
+		const roots = ((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []).filter(n => isGroup(n) && n !== group && this.normalizeType(n.imm_type) !== 'range_dispatch_timeline' && n.export !== false);
+		const animated = roots.some(root => sorted.some(frame => this.poseInFrame(root, frames.get(frame))));
+		if (!animated) return null;
+		const nodes = [];
+		for (const root of roots) {
+			const node = this.buildTimelineTree(root, sorted, frames, hint, parent_shift);
+			if (node && !this.nodeIsEmpty(node)) nodes.push(node);
 		}
 		this.timelinePoses = null; this.timelineSkip = null;
-		if (!staticNodes.length) return null;
-		return staticNodes.length === 1 ? staticNodes[0] : { type: 'minecraft:composite', models: staticNodes };
+		if (!nodes.length) return null;
+		return nodes.length === 1 ? nodes[0] : { type: 'minecraft:composite', models: nodes };
 	}
 
 	buildMapping() {
