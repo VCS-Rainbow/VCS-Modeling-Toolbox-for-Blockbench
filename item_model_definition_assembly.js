@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.67.3';
+const VERSION = '0.67.4';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -3754,7 +3754,9 @@ Plugin.register('item_model_definition_assembly', {
 		try { adoptImdaAll(); } catch (e) { /* ignore */ }
 		try { installAnimationPropertiesPatch(); } catch (e) { /* ignore */ }
 		try { attachAnimationTimelineMenu(); } catch (e) { /* ignore */ }
-		setTimeout(() => { try { installAnimationPropertiesPatch(); attachAnimationTimelineMenu(); } catch (e) { /* ignore */ } }, 800);
+		let __imdaMenuTry = 0;
+		const __imdaMenuTick = () => { try { installAnimationPropertiesPatch(); if (!attachAnimationTimelineMenu() && __imdaMenuTry++ < 20) setTimeout(__imdaMenuTick, 1000); } catch (e) { /* ignore */ } };
+		setTimeout(__imdaMenuTick, 800);
 		try { if (typeof Blockbench !== 'undefined' && Blockbench.on) Blockbench.on('load_project', () => { try { adoptImdaAll(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
 		console.log('[装配] onload 开始，版本 ' + VERSION);
 		try {
@@ -3869,6 +3871,7 @@ Plugin.register('item_model_definition_assembly', {
 		addMenu(actions.removeTimeline, 'tools');
 		addMenu(actions.instantiateCalls, 'tools');
 		addMenu(actions.migratePrefix, 'tools');
+		addMenu(actions.animationTimeline, 'tools');
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
 		// 面板会自动出现在「视图 → 面板」里，不再占用 Tools 菜单
 		attachGroupMenu();
