@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.66.2';
+const VERSION = '0.66.3';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -250,7 +250,7 @@ function copyImmToImda(node, removeLegacy) {
 }
 function migratePropPrefixes(removeLegacy) {
 	const nodes = [];
-	if (typeof Project !== 'undefined' && Project) nodes.push(Project);
+	// Project 级设置（资源包路径等）不做迁移：设置页仍读 imm_*，避免设置被清空
 	for (const group of ((typeof Group !== 'undefined' && Group.all) ? Group.all : [])) nodes.push(group);
 	for (const locator of ((typeof Locator !== 'undefined' && Locator.all) ? Locator.all : [])) nodes.push(locator);
 	for (const cube of ((typeof Cube !== 'undefined' && Cube.all) ? Cube.all : [])) nodes.push(cube);
@@ -3550,6 +3550,8 @@ Plugin.register('item_model_definition_assembly', {
 	tags: ['Minecraft: Java Edition'],
 	contributes: { formats: [FORMAT_ID] },
 	onload() {
+		try { adoptImdaAll(); } catch (e) { /* ignore */ }
+		try { if (typeof Blockbench !== 'undefined' && Blockbench.on) Blockbench.on('load_project', () => { try { adoptImdaAll(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
 		console.log('[装配] onload 开始，版本 ' + VERSION);
 		try {
 		try {

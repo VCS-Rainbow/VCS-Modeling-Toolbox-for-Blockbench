@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.66.2', api.VERSION, '0.66.2');
+eq('版本是 0.66.3', api.VERSION, '0.66.3');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -687,6 +687,11 @@ const prefixGroup2 = new global.Group({ name: 'prefixGroup2', imm_type: 'model',
 api.copyImmToImda(prefixGroup2, true);
 eq('重命名写入 imda_type', prefixGroup2.imda_type, 'model');
 eq('重命名删除旧键', Object.prototype.hasOwnProperty.call(prefixGroup2, 'imm_type'), false);
+global.Project.imm_pack_path = 'C:/pack';
+api.migratePropPrefixes(true);
+eq('迁移不动 Project 资源包路径', global.Project.imm_pack_path, 'C:/pack');
+eq('迁移不生成 Project imda_pack_path', global.Project.imda_pack_path, undefined);
+delete global.Project.imm_pack_path;
 
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
