@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.81';
+const VERSION = '0.68.82';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2803,6 +2803,7 @@ function instantiateCallTags(targets) {
 		for (const node of targets) if (isLocator(node) && String(node.imda_call_target || '').trim() && locators.indexOf(node) < 0) locators.push(node);
 	} else {
 		const walk = (nodes) => { for (const node of (nodes || [])) { if (isLocator(node) && String(node.imda_call_target || '').trim()) locators.push(node); else if (isGroup(node)) walk(node.children); } };
+		walk((typeof Outliner !== 'undefined' && Outliner) ? Outliner.root : []);
 	}
 	if (!locators.length) { Blockbench.showQuickMessage('没有复调用标签。', 2500); return; }
 	Blockbench.showMessageBox({
