@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.65';
+const VERSION = '0.68.66';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2726,7 +2726,12 @@ function instantiateCallTags() {
 				let created = null;
 				if (targetGroup) {
 					created = (typeof targetGroup.duplicate === 'function') ? targetGroup.duplicate() : ((typeof targetGroup.clone === 'function') ? targetGroup.clone() : null);
-					if (created) { created.name = labelOf(targetGroup) + ' 实例'; created.selected = false; }
+					if (created) {
+				created.name = locator.name || (labelOf(targetGroup) + ' 实例');
+				created.origin = Array.isArray(locator.position) ? locator.position.slice() : (created.origin || [0, 0, 0]);
+				created.rotation = Array.isArray(locator.rotation) ? locator.rotation.slice() : (created.rotation || [0, 0, 0]);
+				created.selected = false;
+			}
 				} else if (target) {
 					created = new Group({ name: '实例 ' + target.split(':').pop(), imda_type: 'model', imda_model: target, origin: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() });
 				}
@@ -2737,7 +2742,7 @@ function instantiateCallTags() {
 				done++;
 			} catch (error) { console.warn('[装配] 实例化复调用失败', error); }
 		}
-		try { Undo.finishEdit('实例化所有复调用标签'); } catch (e) { /* ignore */ }
+		try { Undo.finishEdit('实例化所有复调用标签', { outliner: true, groups: createdGroups, elements: locators }); } catch (e) { /* ignore */ }
 		try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 		try { Project.saved = false; } catch (e) { /* ignore */ }
 		Blockbench.showQuickMessage('已实例化 ' + done + ' 个复调用标签', 3000);
