@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.75';
+const VERSION = '0.68.76';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2444,6 +2444,12 @@ function editGroupProps() {
 			imda_tint_value: { label: '纹理着色值（tints[].value / .default）', description: '语法：{"type": "constant", "value": -1} 或 {"type": "dye", "default": -1}\n作用：constant 填 ARGB 整数；\ndye / potion / team 可填默认颜色。', type: 'text', value: String(group.imda_tint_value == null ? '' : group.imda_tint_value), condition: (r) => (r.imda_type === 'model' || r.imda_type === 'composite') && ['constant', 'dye', 'potion', 'team'].indexOf(r.imda_tint_type) >= 0 },
 		},
 		onConfirm(result) {
+			const selectedNow = selectedGroups();
+			let targetsNow = selectedNow.length ? selectedNow.slice() : [group];
+			if (selectedNow.length && selectedNow.indexOf(group) < 0) targetsNow = [group];
+			if (targetsNow.indexOf(group) < 0) targetsNow.unshift(group);
+			const warnGroups = String(result.imda_type || 'composite') !== 'model' ? targetsNow.filter(g => String(g.imda_type || '').replace(/^minecraft:/, '') === 'model' && (g.children || []).length > 0) : [];
+			const applyChanges = () => {
 			try {
 				const selected = selectedGroups();
 				let targets = selected.length ? selected.slice() : [group];
@@ -2522,6 +2528,24 @@ function editGroupProps() {
 				console.error(error);
 				Blockbench.showMessageBox({ title: '修改失败', message: String((error && error.message) || error), icon: 'error' });
 			}
+			};
+			if (warnGroups.length) {
+				Blockbench.showMessageBox({
+					title: '引用模型将转换为其他类型',
+					message: '以下引用模型分组将改为 ' + result.imda_type + '，其下属的 internal 分组与元素会被删除：\n' + warnGroups.map(g => labelOf(g)).join('、') + '\n\n继续？',
+					buttons: ['取消', '继续并删除'], confirm: 1, cancel: 0,
+				}, (button) => {
+					if (button !== 1) return;
+					try { Undo.initEdit({ outliner: true, groups: warnGroups, elements: [] }); } catch (e) { /* ignore */ }
+					for (const g of warnGroups) for (const child of (g.children || []).slice()) {
+						try { if (typeof child.remove === 'function') child.remove(); } catch (e) { /* ignore */ }
+					}
+					try { Undo.finishEdit('删除引用模型下属元素', { outliner: true, groups: warnGroups, elements: [] }); } catch (e) { /* ignore */ }
+					applyChanges();
+				});
+				return;
+			}
+			applyChanges();
 		},
 	}).show();
 }
