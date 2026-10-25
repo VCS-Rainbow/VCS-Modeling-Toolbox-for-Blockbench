@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.49';
+const VERSION = '0.68.50';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2807,6 +2807,11 @@ function importModelReference(group) {
 	// 引用模型的几何坐标已经是 Java 模型坐标，不能再叠加目标分组 origin，否则导出时分组变换会二次应用
 	const import_base = [0, 0, 0];
 	try {
+		const sourceRoot = (resolved.groups || [])[0];
+		if (sourceRoot) {
+			try { group.origin = Array.isArray(sourceRoot.origin) ? sourceRoot.origin.slice() : [0, 0, 0]; } catch (e) { /* ignore */ }
+			try { group.rotation = Array.isArray(sourceRoot.rotation) ? sourceRoot.rotation.slice() : [0, 0, 0]; } catch (e) { /* ignore */ }
+		}
 		try { if (typeof unselectAll === 'function') unselectAll(); } catch (e) { /* ignore */ }
 		Undo.initEdit({ groups: [group], elements: (group.children || []).filter(isCube) });
 		// 清空原有子项与方块
