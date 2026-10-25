@@ -2,6 +2,12 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.2
+- **修时间轴丢失静态祖先 transformation**：祖先 shell 用空 composite 暂存，`nodeIsEmpty()` 在子节点拼入前判空，把整个 shell（含 group3/group 的变换和 node_name）丢掉。现在先拼子节点，再判断是否为空。
+- 移除无效的 display carrier（composite 子项是平行关系）。
+- 新增回归测试：静态容器 + 子节点动画时，容器的 transformation/node_name/静态兄弟必须保留。
+- 单测 176 项。
+
 ## 0.68.1
 - 时间轴根第一个子项改为真实模型 carrier（复用已有模型，`transformation.scale = [0,0,0]` 隐藏几何），用于让游戏从第一个模型解析 display。
 - 3 层额外空 composite 正常，已排除嵌套深度。

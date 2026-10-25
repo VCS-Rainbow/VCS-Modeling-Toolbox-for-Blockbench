@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.1', api.VERSION, '0.68.1');
+eq('版本是 0.68.2', api.VERSION, '0.68.2');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -686,6 +686,28 @@ eq('逐帧 transformation 不同', JSON.stringify(autoRange.entries[0].model) !=
 delete global.Animation;
 global.Group.all = savedGroupAllAuto;
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRootAuto);
+/* ---------- 时间轴保留静态祖先变换 ---------- */
+console.log('\n[时间轴静态祖先]');
+const tlParent = new global.Group({ name: 'tlParent', imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 45] });
+const tlBone = new global.Group({ name: 'tlBone', imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
+const tlStatic = new global.Group({ name: 'tlStatic', imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
+const tlBoneCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
+tlBoneCube.faces = { north: { texture: 'tex-disp', uv: [0, 0, 16, 16] } }; tlBoneCube.parent = tlBone; tlBone.children.push(tlBoneCube);
+const tlStaticCube = new global.Cube({ from: [2, 0, 0], to: [4, 2, 2], origin: [3, 1, 1], rotation: [0, 0, 0] });
+tlStaticCube.faces = { north: { texture: 'tex-disp', uv: [0, 0, 16, 16] } }; tlStaticCube.parent = tlStatic; tlStatic.children.push(tlStaticCube);
+const tlParentCube = new global.Cube({ from: [0, 2, 0], to: [2, 4, 2], origin: [1, 3, 1], rotation: [0, 0, 0] });
+tlParentCube.faces = { north: { texture: 'tex-disp', uv: [0, 0, 16, 16] } }; tlParentCube.parent = tlParent; tlParent.children.push(tlParentCube);
+tlBone.parent = tlParent; tlParent.children.push(tlBone); tlStatic.parent = tlParent; tlParent.children.push(tlStatic);
+const savedTlRoot = global.Outliner.root.splice(0, global.Outliner.root.length, tlParent);
+const savedTlAll = global.Group.all; global.Group.all = [tlParent, tlBone, tlStatic];
+const tlAnimator = { keyframes: [{}], channels: { rotation: [{}] }, interpolate(ch) { return ch === 'rotation' ? [0, 0, 30] : [0, 0, 0]; } };
+global.Animation = { selected: { length: 0.05, time: 0, getBoneAnimator(group) { return group === tlBone ? tlAnimator : null; } }, all: [] };
+const tlMapping = api.createExporter().buildMapping();
+const tlParentNode = tlMapping.model.models.find(n => n.node_name === 'tlParent');
+eq('时间轴保留静态祖先 transformation', !!tlParentNode && !!tlParentNode.transformation, true);
+eq('时间轴保留静态祖先 node_name', !!tlParentNode, true);
+eq('静态兄弟仍在时间轴外', !!tlParentNode && tlParentNode.models.some(n => n.node_name === 'tlStatic'), true);
+delete global.Animation; global.Group.all = savedTlAll; global.Outliner.root.splice(0, global.Outliner.root.length, ...savedTlRoot);
 /* ---------- 属性前缀迁移 ---------- */
 console.log('\n[属性前缀迁移]');
 const prefixGroup = new global.Group({ name: 'prefixGroup', imm_type: 'composite', imm_index: 3 });
