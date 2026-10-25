@@ -2,6 +2,11 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.3
+- 新增 `Tools → 生成递减复调用序列…`：按大纲顺序选 a1…aN，生成 N 个节点；节点 1 放本体，后续依次用 a1…a(N-step)、a1…a(N-2step) … 的复调用，最后只引用 a1。
+- 可配置容器名与递减数量；容器插入第一个分组的父级下。
+- 单测 177 项（大纲顺序）。
+
 ## 0.68.2
 - **修时间轴丢失静态祖先 transformation**：祖先 shell 用空 composite 暂存，`nodeIsEmpty()` 在子节点拼入前判空，把整个 shell（含 group3/group 的变换和 node_name）丢掉。现在先拼子节点，再判断是否为空。
 - 移除无效的 display carrier（composite 子项是平行关系）。

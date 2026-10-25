@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.2', api.VERSION, '0.68.2');
+eq('版本是 0.68.3', api.VERSION, '0.68.3');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -708,6 +708,16 @@ eq('时间轴保留静态祖先 transformation', !!tlParentNode && !!tlParentNod
 eq('时间轴保留静态祖先 node_name', !!tlParentNode, true);
 eq('静态兄弟仍在时间轴外', !!tlParentNode && tlParentNode.models.some(n => n.node_name === 'tlStatic'), true);
 delete global.Animation; global.Group.all = savedTlAll; global.Outliner.root.splice(0, global.Outliner.root.length, ...savedTlRoot);
+/* ---------- 递减序列顺序 ---------- */
+console.log('\n[递减序列]');
+const seq1 = new global.Group({ name: 'a1', imm_type: 'composite' });
+const seq2 = new global.Group({ name: 'a2', imm_type: 'composite' });
+const seq3 = new global.Group({ name: 'a3', imm_type: 'composite' });
+const savedSeqRoot = global.Outliner.root.splice(0, global.Outliner.root.length, seq1, seq2, seq3);
+seq1.selected = true; seq3.selected = true; seq2.selected = true; global.Outliner.selected = [seq3, seq1, seq2];
+eq('按大纲顺序排列 a1..aN', api.orderedSelectedGroups().map(g => g.name), ['a1', 'a2', 'a3']);
+global.Outliner.selected = [];
+global.Outliner.root.splice(0, global.Outliner.root.length, ...savedSeqRoot);
 /* ---------- 属性前缀迁移 ---------- */
 console.log('\n[属性前缀迁移]');
 const prefixGroup = new global.Group({ name: 'prefixGroup', imm_type: 'composite', imm_index: 3 });

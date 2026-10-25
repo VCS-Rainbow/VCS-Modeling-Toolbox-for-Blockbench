@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.2';
+const VERSION = '0.68.3';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2189,6 +2189,75 @@ function migratePrefixDialog() {
 	}).show();
 }
 
+/** 按大纲顺序排列选中分组 */
+function orderedSelectedGroups() {
+	const selected = new Set(selectedGroups());
+	const ordered = [];
+	const walk = (nodes) => {
+		for (const node of (nodes || [])) {
+			if (!isGroup(node) || node.export === false) continue;
+			if (selected.has(node)) ordered.push(node);
+			walk(node.children);
+		}
+	};
+	walk((typeof Outliner !== 'undefined' && Outliner) ? Outliner.root : []);
+	return ordered;
+}
+
+/** 生成递减复调用序列：a1..aN 本体 → a1..a(N-1) 复调用 → … → a1 */
+function generateDecreasingCallSequence(name, step) {
+	const groups = orderedSelectedGroups();
+	if (groups.length < 2) { Blockbench.showMessageBox({ title: '分组不足', message: '请先选中至少 2 个分组（按大纲顺序作为 a1…aN）。', icon: 'info' }); return; }
+	if (typeof Locator === 'undefined') { Blockbench.showMessageBox({ title: '不支持定位点', message: '当前 Blockbench 没有 Locator。', icon: 'warning' }); return; }
+	step = Math.max(1, Math.floor(num(step) || 1));
+	const parent = groups[0].parent || null;
+	const allSameParent = groups.every(g => (g.parent || null) === parent);
+	const sequenceName = String(name || '').trim() || '[sequence]';
+	try { Undo.initEdit({ outliner: true, groups, elements: [] }); } catch (e) { /* ignore */ }
+	const container = new Group({ name: sequenceName, imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
+	try { if (parent) container.addTo(parent); else container.addTo(); } catch (e) { container.addTo(); }
+	try { container.init(); } catch (e) { /* ignore */ }
+	const first = new Group({ name: '[' + groups.length + '] 本体', imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
+	try { first.addTo(container); } catch (e) { /* ignore */ }
+	try { first.init(); } catch (e) { /* ignore */ }
+	for (const group of groups) { try { group.addTo(first); } catch (e) { /* ignore */ } }
+	let created = 0;
+	for (let count = groups.length - step; count >= 1; count -= step) {
+		const node = new Group({ name: '[' + count + '] 复调用', imm_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
+		try { node.addTo(container); } catch (e) { /* ignore */ }
+		try { node.init(); } catch (e) { /* ignore */ }
+		for (const group of groups.slice(0, count)) {
+			try {
+				const locator = new Locator({ name: '调用 ' + labelOf(group), position: (group.origin || [0, 0, 0]).slice(), rotation: (group.rotation || [0, 0, 0]).slice(), ignore_inherited_scale: true });
+				try { locator.addTo(node); } catch (e) { locator.addTo(); }
+				try { locator.init(); } catch (e) { /* ignore */ }
+				locator.imm_call_target = group.uuid;
+				created++;
+			} catch (error) { console.warn('[装配] 创建序列复调用失败', error); }
+		}
+	}
+	try { Undo.finishEdit('生成递减复调用序列'); } catch (e) { /* ignore */ }
+	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+	try { Project.saved = false; } catch (e) { /* ignore */ }
+	try { simInvalidate(); } catch (e) { /* ignore */ }
+	if (!allSameParent) console.warn('[装配] 选中的分组父级不同，序列容器放在第一个分组的父级下。');
+	Blockbench.showQuickMessage('已生成 ' + sequenceName + '：' + (1 + Math.ceil((groups.length - 1) / step)) + ' 个节点，' + created + ' 个复调用', 4000);
+}
+
+function openSequenceDialog() {
+	new Dialog({
+		id: 'imda_sequence',
+		title: '生成递减复调用序列',
+		width: 520,
+		form: {
+			name: { label: '容器名称', type: 'text', value: '[sequence]' },
+			step: { label: '每次递减数量', type: 'number', value: 1, step: 1, min: 1, max: 64 },
+			info: { type: 'info', text: '节点 1 放入选中分组本体；后续节点依次引用 a1…a(N-step)、a1…，最后一个节点只引用 a1。' },
+		},
+		onConfirm(result) { generateDecreasingCallSequence(result.name, result.step); },
+	}).show();
+}
+
 /** 移除项目里所有 range_dispatch(timeline) 分组及其帧标签 */
 function removeTimelineTags() {
 	const groups = ((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []).filter(node => isGroup(node) && String(node.imm_type || '') === 'range_dispatch_timeline');
@@ -3871,7 +3940,8 @@ Plugin.register('item_model_definition_assembly', {
 	actions.removeTimeline = new Action('imm_remove_timeline', { name: '移除动画时间线复调用标签', description: '删除项目里所有 range_dispatch(timeline) 分组及其 Locator 帧标签', icon: 'delete', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner && Outliner.root.some(n => isGroup(n) && String(n.imm_type || '') === 'range_dispatch_timeline')), click: () => removeTimelineTags() });
 	actions.instantiateCalls = new Action('imm_instantiate_calls', { name: '实例化所有复调用标签', description: '把复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner), click: () => instantiateCallTags() });
 	actions.animationTimeline = new Action('imda_animation_timeline', { name: '时间轴属性…', description: '设置该动画导出时间轴使用的 range_dispatch property 与 index', icon: 'timeline', category: 'animation', condition: () => typeof Animation !== 'undefined' && !!Animation.selected, click: () => showAnimationTimelineDialog() });
-	actions.migratePrefix = new Action('imm_migrate_prefix', { name: '迁移属性前缀（imm_ → imda_）…', description: '把项目里所有 imm_* 属性迁移到 imda_*：可复制（保留旧键）或重命名（删除旧键）', icon: 'swap_horiz', category: 'tools', click: () => migratePrefixDialog() });
+	actions.migratePrefix = new Action('imm_migrate_prefix', { name: '迁移属性前缀（imm_ → imda_）…', description: '把项目里所有 imm_* 属性迁移到 imda_*：可复制（保留旧键）或重命名（删除旧键）', icon: 'swap_horiz', category: 'tools', click: () => migratePrefixDialog() });
+	actions.sequence = new Action('imda_sequence', { name: '生成递减复调用序列…', description: '按大纲顺序把选中分组生成 a1…aN 本体 → 递减复调用序列', icon: 'format_list_numbered', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID), click: () => openSequenceDialog() });
 		actions.createModel = new Action('imm_create_model', { name: '从分组创建模型…', description: '把选中分组的方块烘焙成 models/item 模型，并改为引用（自动居中）', icon: 'file_upload', category: 'tools', condition, click: () => { const group = pickTargetGroup(); if (!group) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } createModelFromGroup(group); } });
 		actions.check = new Action('imm_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
 		actions.pack = new Action('imm_pick_pack', { name: '选择资源包工程路径…', description: '打开系统文件夹选择框，设为资源包工程目录', icon: 'folder_open', category: 'file', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: pickPackPath });
@@ -3902,6 +3972,7 @@ Plugin.register('item_model_definition_assembly', {
 		addMenu(actions.instantiateCalls, 'tools');
 		addMenu(actions.migratePrefix, 'tools');
 		addMenu(actions.animationTimeline, 'tools');
+		addMenu(actions.sequence, 'tools');
 		try { attachAnimationTimelineMenu(); } catch (e) { /* ignore */ }
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
 		// 面板会自动出现在「视图 → 面板」里，不再占用 Tools 菜单
@@ -3919,7 +3990,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, copyImmToImda, migratePropPrefixes, formatMapping, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, copyImmToImda, migratePropPrefixes, formatMapping, orderedSelectedGroups, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
