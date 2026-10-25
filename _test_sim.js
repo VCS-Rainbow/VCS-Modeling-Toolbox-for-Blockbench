@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.45', api.VERSION, '0.68.45');
+eq('版本是 0.68.46', api.VERSION, '0.68.46');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -774,12 +774,6 @@ internalInnerGroup.parent = internalRefGroup; internalRefGroup.children.push(int
 const internalInnerCube = new global.Cube({ from: [0,0,0], to: [1,1,1], origin: [0,0,0], rotation: [0,0,0] });
 internalInnerCube.parent = internalInnerGroup; internalInnerGroup.children.push(internalInnerCube);
 eq('内部结构向上选中引用模型组', api.selectionGroupForCube(internalInnerCube.parent) === internalRefGroup, true);
-global.Outliner.selected.length = 0; internalInnerCube.selected = true; global.Outliner.selected.push(internalInnerCube);
-api.guardBoxSelection();
-eq('点击内部元素选中整个引用模型', global.Outliner.selected.indexOf(internalRefGroup) >= 0, true);
-global.Outliner.selected.length = 0; internalInnerGroup.selected = true; global.Outliner.selected.push(internalInnerGroup);
-api.guardBoxSelection();
-eq('选中 internal 分组时整组选中引用模型', global.Outliner.selected.indexOf(internalRefGroup) >= 0, true);
 eq('内部结构继承引用模型 tint 链', internalInnerGroup.parent === internalRefGroup, true);
 /* ---------- 复调用模型 id 预填 ---------- */
 console.log('\n[复调用预填]');
@@ -787,6 +781,19 @@ eq('失效 UUID 不预填模型 id', api.callModelPrefill('6d52650e-a35b-ca94-5c
 eq('匹配分组时不预填模型 id', api.callModelPrefill('some-uuid', 'some-uuid'), '');
 eq('模型 id 正常预填', api.callModelPrefill('ns:item/foo', ''), 'ns:item/foo');
 
+/* ---------- 内部结构选择 ---------- */
+console.log('\n[内部结构选择]');
+const selModel = new global.Group({ name: 'selModel', imda_type: 'model', imda_model: 'ns:item/ref' });
+const selInternal = new global.Group({ name: 'selInternal', imda_type: 'internal' });
+selInternal.parent = selModel; selModel.children.push(selInternal);
+const selCube = new global.Cube({ from: [0,0,0], to: [1,1,1], origin: [0,0,0], rotation: [0,0,0] });
+selCube.parent = selInternal; selInternal.children.push(selCube);
+global.Outliner.selected.length = 0; selCube.selected = true; global.Outliner.selected.push(selCube);
+api.guardBoxSelection();
+eq('internal 子项直接上溯到 model', global.Outliner.selected.indexOf(selModel) >= 0, true);
+global.Outliner.selected.length = 0; selInternal.selected = true; global.Outliner.selected.push(selInternal);
+api.guardBoxSelection();
+eq('只选 internal 分组也上溯到 model', global.Outliner.selected.indexOf(selModel) >= 0, true);
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);

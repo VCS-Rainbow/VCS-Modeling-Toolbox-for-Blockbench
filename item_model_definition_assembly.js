@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.45';
+const VERSION = '0.68.46';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -3246,16 +3246,6 @@ function setBoxSelectGroups(value) {
 	return boxGroupsEnabled();
 }
 /** 内建模型：仅 inline（内联模型）分组；引用模型（model）不算例外 */
-function isReferenceModelGroup(group) {
-	let node = group;
-	while (isGroup(node)) {
-		const type = String(node.imda_type || '').replace(/^minecraft:/, '');
-		if (type === 'model' || String(node.imda_model || '').trim()) return true;
-		node = node.parent;
-	}
-	return false;
-}
-
 function isBuiltInModelGroup(group) {
 	let node = group;
 	while (node && isGroup(node)) {
@@ -3282,49 +3272,21 @@ function selectionGroupForCube(parent) {
 function guardBoxSelection() {
 	if (guardingBox || !boxGroupsEnabled()) return;
 	if (typeof Outliner === 'undefined' || !Outliner || !Array.isArray(Outliner.selected)) return;
-	const selectedGroups = Outliner.selected.filter(isGroup);
-	const internalGroup = selectedGroups.find(g => String(g.imda_type || '').replace(/^minecraft:/, '') === 'internal');
-	let anchorGroup = internalGroup || null;
-	if (!anchorGroup) {
-		const oneCubes = Outliner.selected.filter(isCube);
-		if (oneCubes.length === 1) anchorGroup = oneCubes[0].parent;
-	}
-	if (anchorGroup) {
-		const target = selectionGroupForCube(anchorGroup);
-		if (isGroup(target) && String(target.imda_type || '').replace(/^minecraft:/, '') === 'model') {
-			guardingBox = true;
-			try {
-				const mark = (node) => {
-					try { if (typeof node.markAsSelected === 'function') node.markAsSelected(); else node.selected = true; } catch (e) { node.selected = true; }
-					if (Array.isArray(Outliner.selected) && Outliner.selected.indexOf(node) < 0) Outliner.selected.push(node);
-					if (Array.isArray(node.children)) for (const child of node.children) mark(child);
-				};
-				mark(target);
-				try { if (typeof updateSelection === 'function') updateSelection(); } catch (e) { /* ignore */ }
-				setTimeout(() => {
-					guardingBox = true;
-					try { mark(target); try { if (typeof updateSelection === 'function') updateSelection(); } catch (e) { /* ignore */ } } finally { guardingBox = false; }
-				}, 0);
-			} finally { guardingBox = false; }
-			return;
-		}
-	}
-
-	// 用户点选的是分组（含父分组优先级）：不要重算选择，交给 Blockbench 原生 gizmo 逻辑
-	if (Array.isArray(Outliner.selected) && Outliner.selected.length && isGroup(Outliner.selected[0])) return;
-	if (typeof Group !== 'undefined' && Group && Array.isArray(Group.selected) && Group.selected.length) return;
-	if (guardingBox || !boxGroupsEnabled()) return;
-	if (typeof Outliner === 'undefined' || !Outliner || !Array.isArray(Outliner.selected)) return;
+	const typeOf = (g) => String(g && g.imda_type || '').replace(/^minecraft:/, '');
+	const selectedInternalGroups = Outliner.selected.filter(g => isGroup(g) && typeOf(g) === 'internal');
+	if (Array.isArray(Outliner.selected) && Outliner.selected.length && isGroup(Outliner.selected[0]) && typeOf(Outliner.selected[0]) !== 'internal') return;
+	if (typeof Group !== 'undefined' && Group && Array.isArray(Group.selected) && Group.selected.length && !Group.selected.some(g => typeOf(g) === 'internal')) return;
 	const selectedCubes = Outliner.selected.filter(isCube);
-	if (!selectedCubes.length) return;
+	if (!selectedCubes.length && !selectedInternalGroups.length) return;
 	const parents = [];
 	for (const cube of selectedCubes) {
 		const parent = cube && cube.parent;
 		if (isGroup(parent) && parents.indexOf(parent) < 0) parents.push(parent);
 	}
+	for (const group of selectedInternalGroups) if (parents.indexOf(group) < 0) parents.push(group);
 	if (!parents.length) return;
 	// 只选了内建模型里的元素：保持原样，便于直接编辑引用模型内部
-	if (parents.every(isBuiltInModelGroup) && !parents.some(isReferenceModelGroup)) return;
+	if (!selectedInternalGroups.length && parents.every(isBuiltInModelGroup)) return;
 	const isSelected = (node) => !!(node && (node.selected || (Array.isArray(Outliner.selected) && Outliner.selected.indexOf(node) >= 0)));
 	guardingBox = true;
 	let changed = false;
@@ -3347,11 +3309,13 @@ function guardBoxSelection() {
 			if (parent.selected && isSelected(parent) && (parent.children || []).every(isSelected)) continue;
 			selectWholeGroup(parent);
 		}
-		// 继续向上：祖先的所有子项都选中时也选中它
-		let node = parents[0] ? parents[0].parent : null;
+		// internal 直接上溯，直到引用模型（model）后停止
+		let node = parents[0] || null;
 		while (isGroup(node)) {
+			const type = typeOf(node);
 			const children = (node.children || []);
-			if (children.length && children.every(isSelected)) selectWholeGroup(node);
+			if (type === 'internal' || type === 'model' || (children.length && children.every(isSelected))) selectWholeGroup(node);
+			if (type === 'model') break;
 			node = node.parent;
 		}
 		if (changed) { try { if (typeof updateSelection === 'function') updateSelection(); } catch (e) { /* ignore */ } }
