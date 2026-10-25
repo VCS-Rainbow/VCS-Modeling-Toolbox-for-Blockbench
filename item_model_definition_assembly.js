@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.66.1';
+const VERSION = '0.66.2';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -214,6 +214,49 @@ function projectValue(name, fallback) {
 	if (typeof Project === 'undefined' || !Project) return fallback;
 	const v = Project[name];
 	return (v === undefined || v === null || v === '') ? fallback : v;
+}
+
+/* ---------- 属性前缀兼容：imm_*（旧） / imda_*（新） ---------- */
+function adoptImdaProps(node) {
+	if (!node) return node;
+	try {
+		for (const key of Object.keys(node)) {
+			if (!key.startsWith('imda_')) continue;
+			const legacy = 'imm_' + key.slice(5);
+			node[legacy] = node[key];
+		}
+	} catch (e) { /* ignore */ }
+	return node;
+}
+function adoptImdaAll() {
+	if (typeof Project !== 'undefined' && Project) adoptImdaProps(Project);
+	for (const group of ((typeof Group !== 'undefined' && Group.all) ? Group.all : [])) adoptImdaProps(group);
+	for (const locator of ((typeof Locator !== 'undefined' && Locator.all) ? Locator.all : [])) adoptImdaProps(locator);
+	for (const cube of ((typeof Cube !== 'undefined' && Cube.all) ? Cube.all : [])) adoptImdaProps(cube);
+}
+function copyImmToImda(node, removeLegacy) {
+	if (!node) return 0;
+	let count = 0;
+	try {
+		for (const key of Object.keys(node)) {
+			if (!key.startsWith('imm_')) continue;
+			const next = 'imda_' + key.slice(4);
+			node[next] = node[key];
+			count++;
+			if (removeLegacy) { try { delete node[key]; } catch (e) { /* ignore */ } }
+		}
+	} catch (e) { /* ignore */ }
+	return count;
+}
+function migratePropPrefixes(removeLegacy) {
+	const nodes = [];
+	if (typeof Project !== 'undefined' && Project) nodes.push(Project);
+	for (const group of ((typeof Group !== 'undefined' && Group.all) ? Group.all : [])) nodes.push(group);
+	for (const locator of ((typeof Locator !== 'undefined' && Locator.all) ? Locator.all : [])) nodes.push(locator);
+	for (const cube of ((typeof Cube !== 'undefined' && Cube.all) ? Cube.all : [])) nodes.push(cube);
+	let total = 0;
+	for (const node of nodes) total += copyImmToImda(node, removeLegacy);
+	return total;
 }
 
 /* ============================== 导出器 ============================== */
@@ -1053,6 +1096,7 @@ function bakeTimelineToCallTags() {
 }
 
 function createExporter() {
+	adoptImdaAll();
 	return new Exporter({
 		...(function(){ const parsed = parseNamespaceSetting(projectValue('imm_namespace', 'custom')); return { namespace: parsed.namespace, subpath: parsed.subpath }; })(),
 		item_id: sanitizePath(String(projectValue('model_identifier', '') || (Project && Project.name) || 'item'), 'item'),
@@ -1749,9 +1793,11 @@ function assignGroupMapProps(group, result) {
 	if (result.imm_tint_type !== undefined) group.imm_tint_type = (result.imm_tint_type === '' ? 'none' : result.imm_tint_type);
 	if (result.imm_tint_index !== undefined) group.imm_tint_index = num(result.imm_tint_index);
 	if (result.imm_tint_value !== undefined) group.imm_tint_value = result.imm_tint_value;
+	copyImmToImda(group, false);
 }
 
 function editGroupProps() {
+	adoptImdaAll();
 	const group = pickTargetGroup();
 	const parent = (group && group.parent) || null;
 	const parent_type = String((parent && parent.imm_type) || '').replace(/^minecraft:/, '');
@@ -1892,6 +1938,31 @@ function callSelectedGroup() {
 	try { Project.saved = false; } catch (e) { /* ignore */ }
 	simInvalidate();
 	Blockbench.showQuickMessage('已创建 ' + created + ' 个复调用标签', 3000);
+}
+
+/** 属性前缀迁移：imm_* → imda_*（默认复制，可选删除旧键） */
+function migratePrefixDialog() {
+	new Dialog({
+		id: 'imm_migrate_prefix',
+		title: '迁移属性前缀（imm_ → imda_）',
+		width: 460,
+		form: {
+			mode: { label: '迁移方式', type: 'select', value: 'copy', options: { copy: '复制到 imda_（保留旧键）', rename: '重命名（删除旧键）' }, description: '复制：旧插件仍可读；重命名：数据改用 imda_*，插件会在导出/编辑时自动同步。' },
+		},
+		onConfirm(result) {
+			try {
+				try { Undo.initEdit({ outliner: true, elements: [] }); } catch (e) { /* ignore */ }
+				const remove = String(result.mode || 'copy') === 'rename';
+				const count = migratePropPrefixes(remove);
+				try { Undo.finishEdit('迁移属性前缀'); } catch (e) { /* ignore */ }
+				try { Project.saved = false; } catch (e) { /* ignore */ }
+				try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+				Blockbench.showQuickMessage('已迁移 ' + count + ' 个 imm_* 属性到 imda_*' + (remove ? '（删除旧键）' : '（保留旧键）'), 4000);
+			} catch (error) {
+				Blockbench.showMessageBox({ title: '迁移失败', message: String((error && error.message) || error), icon: 'error' });
+			}
+		},
+	}).show();
 }
 
 /** 移除项目里所有 range_dispatch(timeline) 分组及其帧标签 */
@@ -3374,7 +3445,13 @@ function openSimulator() {
 
 function registerProperties() {
 	const cond = { formats: [FORMAT_ID] };
-	const P = (target, type, name, options) => new Property(target, type, name, Object.assign({ condition: cond, exposed: true }, options));
+	const P = (target, type, name, options) => {
+		const prop = new Property(target, type, name, Object.assign({ condition: cond, exposed: true }, options));
+		if (String(name).startsWith('imm_')) {
+			try { new Property(target, type, String(name).replace(/^imm_/, 'imda_'), Object.assign({ condition: cond, exposed: false }, options)); } catch (e) { /* ignore */ }
+		}
+		return prop;
+	};
 
 	P(ModelProject, 'string', 'imm_namespace', { label: '命名空间（可带子空间，如 sqsptst:weapon/shotgun）', default: 'custom' });
 	P(ModelProject, 'boolean', 'imm_center_pivot', { label: '旋转枢轴用 (0.5,0.5,0.5)（= 像素 8,8,8）', default: false });
@@ -3555,6 +3632,7 @@ Plugin.register('item_model_definition_assembly', {
 	actions.bakeTimeline = new Action('imm_bake_timeline', { name: '解析动画时间轴（写入帧标签，旧流程）', description: '按项目 FPS 采样当前动画，生成 range_dispatch(timeline) 分组与逐帧 Locator；导出时也会自动采样，一般不需要手动执行', icon: 'timeline', category: 'tools', condition: () => typeof Animation !== 'undefined' && Animation && (Animation.selected || (Array.isArray(Animation.all) && Animation.all.length)), click: () => bakeTimelineToCallTags() });
 	actions.removeTimeline = new Action('imm_remove_timeline', { name: '移除动画时间线复调用标签', description: '删除项目里所有 range_dispatch(timeline) 分组及其 Locator 帧标签', icon: 'delete', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner && Outliner.root.some(n => isGroup(n) && String(n.imm_type || '') === 'range_dispatch_timeline')), click: () => removeTimelineTags() });
 	actions.instantiateCalls = new Action('imm_instantiate_calls', { name: '实例化所有复调用标签', description: '把复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner), click: () => instantiateCallTags() });
+	actions.migratePrefix = new Action('imm_migrate_prefix', { name: '迁移属性前缀（imm_ → imda_）…', description: '把项目里所有 imm_* 属性迁移到 imda_*：可复制（保留旧键）或重命名（删除旧键）', icon: 'swap_horiz', category: 'tools', click: () => migratePrefixDialog() });
 		actions.createModel = new Action('imm_create_model', { name: '从分组创建模型…', description: '把选中分组的方块烘焙成 models/item 模型，并改为引用（自动居中）', icon: 'file_upload', category: 'tools', condition, click: () => { const group = pickTargetGroup(); if (!group) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } createModelFromGroup(group); } });
 		actions.check = new Action('imm_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
 		actions.pack = new Action('imm_pick_pack', { name: '选择资源包工程路径…', description: '打开系统文件夹选择框，设为资源包工程目录', icon: 'folder_open', category: 'file', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: pickPackPath });
@@ -3596,7 +3674,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, copyImmToImda, migratePropPrefixes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

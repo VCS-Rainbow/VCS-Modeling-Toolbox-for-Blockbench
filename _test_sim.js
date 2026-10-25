@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.66.1', api.VERSION, '0.66.1');
+eq('版本是 0.66.2', api.VERSION, '0.66.2');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -676,6 +676,18 @@ eq('逐帧 transformation 不同', JSON.stringify(autoMapping.model.entries[0].m
 delete global.Animation;
 global.Group.all = savedGroupAllAuto;
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedRootAuto);
+/* ---------- 属性前缀迁移 ---------- */
+console.log('\n[属性前缀迁移]');
+const prefixGroup = new global.Group({ name: 'prefixGroup', imm_type: 'composite', imm_index: 3 });
+const prefixCopied = api.copyImmToImda(prefixGroup, false);
+eq('迁移复制 imm_type', prefixGroup.imda_type, 'composite');
+eq('迁移复制 imm_index', prefixGroup.imda_index, 3);
+eq('保留旧键', prefixGroup.imm_type, 'composite');
+const prefixGroup2 = new global.Group({ name: 'prefixGroup2', imm_type: 'model', imm_model: 'ns:item/a' });
+api.copyImmToImda(prefixGroup2, true);
+eq('重命名写入 imda_type', prefixGroup2.imda_type, 'model');
+eq('重命名删除旧键', Object.prototype.hasOwnProperty.call(prefixGroup2, 'imm_type'), false);
+
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);

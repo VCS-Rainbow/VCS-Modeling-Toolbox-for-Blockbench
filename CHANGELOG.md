@@ -2,6 +2,11 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.66.2
+- 新增 `Tools → 迁移属性前缀（imm_ → imda_）…`：默认复制（保留旧键），可选重命名（删除旧键）。
+- 插件同时注册 `imm_*` 与 `imda_*` 两套属性；导出/编辑前把 `imda_*` 同步到运行时，迁移后旧代码路径仍可用。
+- 单测 165 项（迁移复制/重命名）。
+
 ## 0.66.1
 - 命名统一：插件名 **VCS' Modeling Toolbox（VMT）**；装配模块 **Item Model Definition Assembly（IMDA）**；中文“物品模型定义装配”。
 - 格式 id `item_model_definition_assembly` 与 `imm_*` 属性前缀保持不变（兼容旧项目）；`imm` 不再解释为 Item Model Mapping。
