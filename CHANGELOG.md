@@ -2,6 +2,9 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.105
+- 修复只选中分组、没有 Locator 时“生成复调用序列”误报选中数量不足：`orderedSequenceItems()` 现在读取 `Group.multi_selected` / `Group.selected` / `Group.first_selected`，不再只看 `Outliner.selected`。
+- 单测 229 项。
 ## 0.68.104
 - `syncBranchLabels()` 在格式生效时把计算出的 threshold 写回子节点，属性面板不再全部显示 0；分支名和数值保持一致。
 - 单测 227 项。

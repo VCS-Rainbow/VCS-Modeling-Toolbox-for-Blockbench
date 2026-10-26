@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.104', api.VERSION, '0.68.104');
+eq('版本是 0.68.105', api.VERSION, '0.68.105');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -933,6 +933,17 @@ eq('range 1 格式 i+1', (fmtByName.fmt1 || []).join(','), '1,2');
 eq('range 2 格式 i+2', (fmtByName.fmt2 || []).join(','), '2,3');
 eq('range 3 格式 i+3', (fmtByName.fmt3 || []).join(','), '3,4');
 eq('range 4 格式 i+4', (fmtByName.fmt4 || []).join(','), '4,5');
+/* ---------- 只选分组也能生成序列 ---------- */
+console.log('\n[只选分组序列]');
+const onlyGroupA = new global.Group({ name: 'onlyGroupA', imda_type: 'composite' });
+const onlyGroupB = new global.Group({ name: 'onlyGroupB', imda_type: 'composite' });
+global.Outliner.root.length = 0; global.Outliner.root.push(onlyGroupA, onlyGroupB);
+global.Outliner.selected.length = 0;
+global.Group.selected = [onlyGroupA, onlyGroupB];
+const onlyGroupItems = api.orderedSequenceItems();
+eq('只选分组时序列项数量', onlyGroupItems.length, 2);
+eq('只选分组时按大纲顺序', onlyGroupItems[0] === onlyGroupA && onlyGroupItems[1] === onlyGroupB, true);
+global.Group.selected = [];
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);

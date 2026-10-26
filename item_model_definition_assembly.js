@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.104';
+const VERSION = '0.68.105';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2693,6 +2693,10 @@ function orderedSelectedGroups() {
 /** 序列节点覆盖的分组数量：递减 N…1，递增 1…N */
 function orderedSequenceItems() {
 	const selected = new Set();
+	// Blockbench 的分组选中在 Group.multi_selected / Group.selected，不在 Outliner.selected；
+	// 只选分组时原来会得到 0 项，误报“选中数量不够”。
+	try { for (const node of selectedGroups()) selected.add(node); } catch (e) { /* ignore */ }
+	try { if (typeof Group !== 'undefined' && Group.first_selected && isGroup(Group.first_selected)) selected.add(Group.first_selected); } catch (e) { /* ignore */ }
 	try { for (const node of (Outliner.selected || [])) { if (node && (isGroup(node) || (isLocator(node) && String(node.imda_call_target || '').trim()))) selected.add(node); } } catch (e) { /* ignore */ }
 	const ordered = [];
 	const walk = (nodes) => {
