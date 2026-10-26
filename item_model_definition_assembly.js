@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.109';
+const VERSION = '0.68.110';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1839,8 +1839,10 @@ function scheduleBranchSync(target) {
 			const group = target || pickTargetGroup();
 			if (group) {
 				const parent = group.parent || null;
-				changed += sortBranchChildren(group) + syncBranchLabels(group);
-				if (parent) changed += sortBranchChildren(parent) + syncBranchLabels(parent);
+				// 分支顺序以 outliner 中的实际顺序为准，不在同步时自动排序；
+				// 递减格式（5-i）下排序和编号会互相反转。
+				changed += syncBranchLabels(group);
+				if (parent) changed += syncBranchLabels(parent);
 			}
 			if (changed) { simInvalidate(); try { Project.saved = false; Canvas.updateAll(); } catch (e) { /* ignore */ } }
 		} catch (error) { /* ignore */ }
