@@ -2,6 +2,8 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.100
+- 右键“实例化选中的复调用标签”不再只取第一个；多选 3/4/5 时会一起实例化各自的覆盖。
 ## 0.68.99
 - 基于 `v0.68.85` 的最终尝试：实例化 Undo 的 init/finish aspects 分离（删除 Locator 只进 init，新建分组/方块只进 finish），并收集嵌套分组。
 - 修复 `duplicate()` 后重复 `created.init()` 造成同一 Group 两次进入 `Project.groups`。
