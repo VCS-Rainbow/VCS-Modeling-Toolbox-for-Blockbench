@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.105';
+const VERSION = '0.68.106';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1948,7 +1948,7 @@ function bindOutlinerHook() {
 		simInvalidate();
 		scheduleBranchSync(pickTargetGroup());
 	};
-	try { document.addEventListener('mouseup', onMaybeReparent, true); } catch (e) { /* ignore */ }
+	// 只处理真正的拖拽结束；普通点击选中不应触发分支重排。
 	try { document.addEventListener('dragend', onMaybeReparent, true); } catch (e) { /* ignore */ }
 }
 
@@ -4826,7 +4826,7 @@ Plugin.register('item_model_definition_assembly', {
 		attachGroupMenu();
 		bindOutlinerHook();
 		try { Blockbench.on('update_selection', () => { try { guardLockedSelection(); } catch (e) { /* ignore */ } try { guardBatchSelection(); } catch (e) { /* ignore */ } try { guardBoxSelection(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
-		for (const event of ['add_group', 'remove_group', 'update_selection']) {
+		for (const event of ['add_group', 'remove_group']) {
 			try { Blockbench.on(event, (data) => { simInvalidate(); scheduleBranchSync(data && data.object); }); } catch (e) { /* ignore */ }
 		}
 		for (const event of ['select_project', 'finished_loading_project', 'update_selection']) {
