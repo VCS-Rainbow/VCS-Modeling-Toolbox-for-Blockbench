@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.100';
+const VERSION = '0.68.101';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2238,6 +2238,22 @@ function selectedCallTags() {
 		walk((typeof Outliner !== 'undefined' && Outliner) ? Outliner.root : []);
 	} catch (e) { /* ignore */ }
 	return found;
+}
+
+/** 右键实例化时把同一父组里的兄弟复调用标签一起收进来；无覆盖的继承第一个标签的覆盖。 */
+function expandCallTagSiblings(list) {
+	const out = Array.isArray(list) ? list.slice() : [];
+	const source = out[0];
+	const sourceOverrides = source ? String(source.imda_call_overrides || '').trim() : '';
+	const parent = source && source.parent;
+	if (!parent || !Array.isArray(parent.children)) return out;
+	for (const node of parent.children) {
+		if (!isLocator(node) || out.indexOf(node) >= 0) continue;
+		if (!String(node.imda_call_target || '').trim()) continue;
+		if (sourceOverrides && !String(node.imda_call_overrides || '').trim()) node.imda_call_overrides = sourceOverrides;
+		out.push(node);
+	}
+	return out;
 }
 
 function rebuildPivotFromSourceDialog() {
@@ -4731,7 +4747,14 @@ Plugin.register('item_model_definition_assembly', {
 	actions.removeTimeline = new Action('imda_remove_timeline', { name: '移除动画时间线复调用标签', description: '删除项目里所有 range_dispatch(timeline) 分组及其 Locator 帧标签', icon: 'delete', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner && Outliner.root.some(n => isGroup(n) && String(n.imda_type || '') === 'range_dispatch_timeline')), click: () => removeTimelineTags() });
 	actions.instantiateCalls = new Action('imda_instantiate_calls', { name: '实例化所有复调用标签', description: '把复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner), click: () => instantiateCallTags() });
 		actions.instantiateSelected = new Action('imda_instantiate_selected_calls', { name: '实例化选中的复调用标签', description: '把当前选中的复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && Locator.selected && Locator.selected.some(l => String(l.imda_call_target || '').trim())), click: () => instantiateCallTags(selectedCallTags()) });
-		actions.instantiateThis = new Action('imda_instantiate_this_call', { name: '实例化选中的复调用标签', description: '把当前选中的所有复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && selectedCallTags().length > 0), click: () => instantiateCallTags(selectedCallTags()) });
+		actions.instantiateThis = new Action('imda_instantiate_this_call', {
+			name: '实例化同组复调用标签',
+			description: '把当前选中的复调用 Locator，以及同一父分组下的其他复调用 Locator 一起替换为真实分组（可撤销）',
+			icon: 'content_copy',
+			category: 'tools',
+			condition: () => (typeof Locator !== 'undefined' && Locator && selectedCallTags().length > 0),
+			click: () => instantiateCallTags(expandCallTagSiblings(selectedCallTags())),
+		});
 	actions.animationTimeline = new Action('imda_animation_timeline', { name: '时间轴属性…', description: '设置该动画导出时间轴使用的 range_dispatch property 与 index', icon: 'timeline', category: 'animation', condition: () => typeof Animation !== 'undefined' && !!Animation.selected, click: () => showAnimationTimelineDialog() });
 	actions.sequence = new Action('imda_sequence', { name: '生成复调用序列…', description: '按大纲顺序生成递增/递减复调用序列，节点类型可选 range_dispatch / composite', icon: 'format_list_numbered', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => openSequenceDialog() });
 	actions.convertCall = new Action('imda_convert_call', { name: '将分组转化为复调用标签', description: '在同位置创建 Locator 调用该分组，并让原分组停止直接导出', icon: 'content_copy', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID) && selectedGroups().length > 0, click: () => convertSelectedGroupsToCallTags() });
@@ -4803,7 +4826,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
