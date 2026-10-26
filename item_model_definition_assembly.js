@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.96';
+const VERSION = '0.68.97';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2823,6 +2823,8 @@ function applyCallOverridesToGroup(group, locator) {
 	if (!group || !locator) return;
 	try {
 		const ov = callOverridesOf(locator);
+		// 副本会继承目标分组的旧标记，先清掉再由本次覆盖决定。
+		group.imda_threshold_force = false;
 		if (ov.property) group.imda_property = String(ov.property).replace(/^minecraft:/, '');
 		for (const key of ['index', 'scale', 'threshold', 'threshold_format', 'component', 'predicate', 'value', 'keybind', 'target', 'source', 'wobble', 'normalize', 'period', 'remaining', 'condition']) {
 			// property 已在上面去掉 minecraft: 前缀，不能再被通用循环覆盖回原值。
