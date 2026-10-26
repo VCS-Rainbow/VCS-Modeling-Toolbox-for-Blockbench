@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.101';
+const VERSION = '0.68.102';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2244,13 +2244,16 @@ function selectedCallTags() {
 function expandCallTagSiblings(list) {
 	const out = Array.isArray(list) ? list.slice() : [];
 	const source = out[0];
-	const sourceOverrides = source ? String(source.imda_call_overrides || '').trim() : '';
+	const sourceOverrides = source ? callOverridesOf(source) : {};
 	const parent = source && source.parent;
 	if (!parent || !Array.isArray(parent.children)) return out;
 	for (const node of parent.children) {
 		if (!isLocator(node) || out.indexOf(node) >= 0) continue;
 		if (!String(node.imda_call_target || '').trim()) continue;
-		if (sourceOverrides && !String(node.imda_call_overrides || '').trim()) node.imda_call_overrides = sourceOverrides;
+		// "{}" 也是非空字符串，必须按解析后的字段数判断，否则空覆盖会阻止继承。
+		if (Object.keys(sourceOverrides).length && Object.keys(callOverridesOf(node)).length === 0) {
+			node.imda_call_overrides = JSON.stringify(sourceOverrides);
+		}
 		out.push(node);
 	}
 	return out;
@@ -2892,6 +2895,7 @@ function instantiateCallTags(targets) {
 				if (!targetGroup) { try { created.init(); } catch (e) { /* ignore */ } }
 				try { if (created.preview_controller && created.preview_controller.updateTransform) created.preview_controller.updateTransform(created); } catch (e) { /* ignore */ }
 				applyCallOverridesToGroup(created, locator);
+				try { console.log('[装配] 实例化覆盖', locator.name || 'Locator', JSON.stringify(callOverridesOf(locator)), '→ fmt=' + String(created.imda_threshold_format || '') + ' th=' + String(created.imda_threshold)); } catch (e) { /* ignore */ }
 				if (index >= 0) { const at = siblings.indexOf(created); if (at >= 0) siblings.splice(at, 1); siblings.splice(Math.min(index, siblings.length), 0, created); }
 				createdGroups.push(created);
 				collectGroups(created);

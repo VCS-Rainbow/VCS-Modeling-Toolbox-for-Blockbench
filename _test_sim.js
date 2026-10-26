@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.101', api.VERSION, '0.68.101');
+eq('版本是 0.68.102', api.VERSION, '0.68.102');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -898,7 +898,7 @@ eq('实例化后副本 UUID 不同', !!(instCreated && instCreated.uuid !== 'ins
 console.log('\n[同组标签扩展]');
 const sibParent = new global.Group({ name: 'sibParent', imda_type: 'composite' });
 const sibA = new global.Locator({ name: '调用 3', position: [0,0,0], rotation: [0,0,0] }); sibA.imda_call_target = 'sib-target'; sibA.imda_call_overrides = JSON.stringify({ threshold_format: '2i' }); sibA.parent = sibParent; sibParent.children.push(sibA);
-const sibB = new global.Locator({ name: '调用 4', position: [0,0,0], rotation: [0,0,0] }); sibB.imda_call_target = 'sib-target'; sibB.parent = sibParent; sibParent.children.push(sibB);
+const sibB = new global.Locator({ name: '调用 4', position: [0,0,0], rotation: [0,0,0] }); sibB.imda_call_target = 'sib-target'; sibB.imda_call_overrides = '{}'; sibB.parent = sibParent; sibParent.children.push(sibB);
 const sibC = new global.Locator({ name: '调用 5', position: [0,0,0], rotation: [0,0,0] }); sibC.imda_call_target = 'sib-target'; sibC.parent = sibParent; sibParent.children.push(sibC);
 const sibList = api.expandCallTagSiblings([sibA]);
 eq('同组标签一起收集', sibList.length, 3);
