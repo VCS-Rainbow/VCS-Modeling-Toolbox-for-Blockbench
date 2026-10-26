@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.91';
+const VERSION = '0.68.92';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2830,6 +2830,8 @@ function applyCallOverridesToGroup(group, locator) {
 	} catch (e) { /* ignore */ }
 }
 
+const imdaInstantiateBatches = [];
+
 function instantiateCallTags(targets) {
 	const locators = [];
 	if (Array.isArray(targets)) {
@@ -2886,6 +2888,7 @@ function instantiateCallTags(targets) {
 			} catch (error) { console.warn('[装配] 实例化复调用失败', error); }
 		}
 		try { Undo.finishEdit('实例化复调用标签', { outliner: true, groups: parentGroups.concat(createdGroups), elements: createdCubes.concat(locators) }); } catch (e) { /* ignore */ }
+		if (createdGroups.length) imdaInstantiateBatches.push(createdGroups.slice());
 		try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 		try { Project.saved = false; } catch (e) { /* ignore */ }
 		Blockbench.showQuickMessage('已实例化 ' + done + ' 个复调用标签', 3000);
@@ -4646,6 +4649,7 @@ Plugin.register('item_model_definition_assembly', {
 		try { attachAnimationTimelineMenu(); } catch (e) { /* ignore */ }
 		
 		try { if (typeof Blockbench !== 'undefined' && Blockbench.on) Blockbench.on('load_project', () => { try { migrateLegacyAll(); } catch (e) { /* ignore */ } try { attachAnimationTimelineMenu(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
+	try { if (typeof Blockbench !== 'undefined' && Blockbench.on) Blockbench.on('undo', (data) => { const action = String((data && data.entry && data.entry.action) || ''); if (action.indexOf('实例化') < 0) return; const batch = imdaInstantiateBatches.pop(); if (!batch) return; for (const group of batch) { try { if (typeof Group !== 'undefined' && Array.isArray(Group.all) && Group.all.indexOf(group) >= 0) group.remove(); } catch (e) { /* ignore */ } } try { Canvas.updateAll(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
 		console.log('[装配] onload 开始，版本 ' + VERSION);
 		try {
 		try {
