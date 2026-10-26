@@ -2,6 +2,12 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.95
+- 修正实例化撤销：不再只依赖 outliner 快照，`initEdit` 同时登记父分组和待删除 Locator，`finishEdit` 登记新建分组/方块。撤销时才能重建 Locator、真正删除新增分组，而不是被 Blockbench 的未处理节点兜底重新挂到 root。
+- 显式从 `Blockbench.Project.undo` 取撤销栈，避免插件作用域里全局 `Undo` 不可用；兜底补写仍保留。
+- 覆盖的 `threshold` 加 `imda_threshold_force` 标记；导出父级 `range_dispatch` 时优先使用该阈值，解决父级 `threshold_format` 总是覆盖子分支阈值（含阈值 0）的问题。
+- 把 imda_call_* 字段登记为 Locator 的 Property，确保 Blockbench getUndoCopy() 重建 Locator 时保留复调用目标/覆盖，而不是变成空标签。
+- 单测 220 项。
 ## 0.68.94
 - 实例化撤销改为 outliner 全量快照；若 `finishEdit` 没有把这一步写进历史，就用前后快照补写一条，避免 current_save 丢失导致 Ctrl+Z 完全无反应。
 - 实例化覆盖逐个 Locator 应用并统计；快捷消息显示带覆盖的数量，Console 输出每个标签的覆盖前后值。

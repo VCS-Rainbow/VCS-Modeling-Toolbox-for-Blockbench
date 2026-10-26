@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.94';
+const VERSION = '0.68.95';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -863,9 +863,12 @@ class Exporter {
 			for (const child of childGroups) {
 				const childNode = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'), own_shift);
 				if (!childNode) continue;
+				const manualText = String(child.imda_threshold == null ? '' : child.imda_threshold).trim();
 				const manual = num(child.imda_threshold);
 				const formatted = this.evalThreshold(group.imda_threshold_format, branch_index);
-				node.entries.push({ threshold: clean(formatted !== null ? formatted : (manual !== 0 ? manual : branch_index)), model: childNode });
+				// 复调用覆盖的阈值必须优先于父级 threshold_format；0 也是合法值。
+				const threshold = (child.imda_threshold_force && manualText !== '') ? manual : (formatted !== null ? formatted : (manual !== 0 ? manual : branch_index));
+				node.entries.push({ threshold: clean(threshold), model: childNode });
 				branch_index++;
 			}
 			for (const locator of callLocators) {
@@ -2827,6 +2830,9 @@ function applyCallOverridesToGroup(group, locator) {
 			if (['wobble', 'normalize', 'remaining'].includes(key)) group[prop] = ov[key] === 'true';
 			else group[prop] = ov[key];
 		}
+		// 阈值 0 也是合法覆盖；父级 range_dispatch 的 threshold_format 默认会覆盖子分组阈值，
+		// 所以给实例化分组加显式标记，导出时优先使用这个值。
+		if (ov.threshold !== undefined && ov.threshold !== '') group.imda_threshold_force = true;
 	} catch (e) { /* ignore */ }
 }
 
@@ -2845,15 +2851,36 @@ function instantiateCallTags(targets) {
 		buttons: ['实例化', '取消'], confirm: 0, cancel: 1,
 	}, (button) => {
 		if (button !== 0) return;
-		// 只记录 outliner 快照：实例化同时会删除 Locator、新增分组和方块，逐项 aspects 很容易漏。
+		// 获取当前项目的撤销栈。插件作用域里不保证有全局 Undo，优先用 Project.undo。
+		let undo = null;
+		try { undo = (Blockbench.Project && Blockbench.Project.undo) || (typeof Undo !== 'undefined' ? Undo : null); } catch (e) { undo = null; }
+		let SaveClass = null;
+		try { if (typeof UndoSystem !== 'undefined' && UndoSystem.save) SaveClass = UndoSystem; } catch (e) { /* ignore */ }
+		if (!SaveClass) { try { SaveClass = (undo && undo.constructor && undo.constructor.save) ? undo.constructor : null; } catch (e) { /* ignore */ } }
+
+		// 撤销必须同时记录 outliner、groups、elements：
+		// - outliner 快照不能真正删除新增分组（loadJSON 会把未出现的节点放回 root）
+		// - Locator 被删除后只能靠 elements 快照重建，只存 UUID 的 outliner 快照找不到它
+		const undoGroups = [];
+		for (const locator of locators) {
+			const parent = locator.parent;
+			if (isGroup(parent) && undoGroups.indexOf(parent) < 0) undoGroups.push(parent);
+		}
+		const undoElements = locators.slice();
+		const initAspects = { outliner: true, groups: undoGroups.slice(), elements: undoElements.slice() };
 		let undoBefore = null;
-		try { if (typeof UndoSystem !== 'undefined') undoBefore = new UndoSystem.save({ outliner: true }); } catch (e) { console.warn('[装配] 实例化 撤销前快照失败', e); }
-		try { Undo.initEdit({ outliner: true }); } catch (e) { console.warn('[装配] 实例化 initEdit 失败', e); }
+		try { if (SaveClass) undoBefore = new SaveClass.save(initAspects); } catch (e) { console.warn('[装配] 实例化 撤销前快照失败', e); }
+		try { if (undo) undo.initEdit(initAspects); } catch (e) { console.warn('[装配] 实例化 initEdit 失败', e); }
 		let done = 0;
 		let overridden = 0;
 		const createdGroups = [];
 		const createdCubes = [];
-		const collectCubes = (node) => { for (const child of (node.children || [])) { if (isCube(child)) createdCubes.push(child); else if (isGroup(child)) collectCubes(child); } };
+		const collectCreated = (node) => {
+			for (const child of (node.children || [])) {
+				if (isCube(child)) createdCubes.push(child);
+				else if (isGroup(child)) { createdGroups.push(child); collectCreated(child); }
+			}
+		};
 		for (const locator of locators) {
 			try {
 				const target = String(locator.imda_call_target || '').trim();
@@ -2898,25 +2925,28 @@ function instantiateCallTags(targets) {
 				} catch (e) { /* ignore */ }
 				if (index >= 0) { const at = siblings.indexOf(created); if (at >= 0) siblings.splice(at, 1); siblings.splice(Math.min(index, siblings.length), 0, created); }
 				createdGroups.push(created);
-				collectCubes(created);
+				collectCreated(created);
 				try { locator.remove(); } catch (e) { /* ignore */ }
 				done++;
 			} catch (error) { console.warn('[装配] 实例化复调用失败', error); }
 		}
-		try { Undo.finishEdit('实例化复调用标签', { outliner: true }); } catch (e) { console.warn('[装配] 实例化 finishEdit 失败', e); }
+		const finishAspects = { outliner: true, groups: undoGroups.concat(createdGroups), elements: createdCubes.slice() };
+		try { if (undo) undo.finishEdit('实例化复调用标签', finishAspects); } catch (e) { console.warn('[装配] 实例化 finishEdit 失败', e); }
 		// 某些插件状态会让 finishEdit 的 current_save 丢失，导致历史里没有这一步。这里用前后快照兜底。
 		try {
-			const last = Undo.history[Undo.history.length - 1];
-			if (!last || last.action !== '实例化复调用标签' || Undo.index < Undo.history.length) {
-				if (undoBefore && typeof UndoSystem !== 'undefined') {
-					Undo.history.length = Undo.index;
-					Undo.history.push({ before: undoBefore, post: new UndoSystem.save({ outliner: true }), action: '实例化复调用标签', type: 'edit', time: Date.now() });
-					Undo.index = Undo.history.length;
+			const history = undo ? undo.history : [];
+			const last = history[history.length - 1];
+			if (!last || last.action !== '实例化复调用标签' || (undo && undo.index < history.length)) {
+				if (undoBefore && SaveClass && undo) {
+					try { delete undo.current_save; } catch (e) { /* ignore */ }
+					history.length = undo.index;
+					history.push({ before: undoBefore, post: new SaveClass.save(finishAspects), action: '实例化复调用标签', type: 'edit', time: Date.now() });
+					undo.index = history.length;
 					console.log('[装配] 实例化撤销记录由兜底补写');
 				}
 			}
 		} catch (e) { console.warn('[装配] 实例化 撤销兜底失败', e); }
-		try { console.log('[装配] 实例化撤销记录', Undo.history.length, Undo.index, (Undo.history[Undo.history.length - 1] || {}).action); } catch (e) { /* ignore */ }
+		try { console.log('[装配] 实例化撤销记录', undo.history.length, undo.index, (undo.history[undo.history.length - 1] || {}).action); } catch (e) { /* ignore */ }
 		try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 		try { Project.saved = false; } catch (e) { /* ignore */ }
 		Blockbench.showQuickMessage('已实例化 ' + done + ' 个复调用标签' + (overridden ? ('，其中 ' + overridden + ' 个带覆盖') : ''), 3000);
@@ -4541,6 +4571,15 @@ function registerProperties() {
 	new Property(Animation, 'boolean', 'imda_timeline_remaining', { default: false, label: '时间轴 use_duration remaining' });
 		} } catch (e) { /* ignore */ }
 	const cond = { formats: [FORMAT_ID] };
+	// 登记到 Locator.properties，Blockbench 的 getUndoCopy()/getSaveCopy() 才会复制这些字段；
+	// 否则实例化撤销重建 Locator 时会丢失复调用目标和覆盖设置。
+	try {
+		if (typeof Locator !== 'undefined' && Locator.properties) {
+			for (const key of ['imda_call_target','imda_call_overrides','imda_call_threshold','imda_call_property','imda_call_index','imda_call_scale']) {
+				if (!Locator.properties[key]) new Property(Locator, 'string', key, { default: '', exposed: false, condition: { formats: [FORMAT_ID] } });
+			}
+		}
+	} catch (e) { console.warn('[装配] 登记 Locator 复调用字段失败', e); }
 	const P = (target, type, name, options) => new Property(target, type, name, Object.assign({ condition: cond, exposed: true }, options));
 P(ModelProject, 'string', 'imda_namespace', { label: '命名空间（可带子空间，如 sqsptst:weapon/shotgun）', default: 'custom' });
 	P(ModelProject, 'boolean', 'imda_center_pivot', { label: '旋转枢轴用 (0.5,0.5,0.5)（= 像素 8,8,8）', default: false });

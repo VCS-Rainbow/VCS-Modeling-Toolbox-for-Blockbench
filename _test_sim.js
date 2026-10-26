@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.94', api.VERSION, '0.68.94');
+eq('版本是 0.68.95', api.VERSION, '0.68.95');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -900,11 +900,15 @@ global.Blockbench.showMessageBox = (opts, cb) => { if (typeof cb === 'function')
 api.instantiateCallTags([instLoc]);
 global.Blockbench.showMessageBox = oldMessageBox;
 eq('实例化 init 记录 outliner', !!(instInitAspects && instInitAspects.outliner), true);
+eq('实例化 init 记录父分组', !!(instInitAspects && instInitAspects.groups && instInitAspects.groups.indexOf(instParent) >= 0), true);
+eq('实例化 init 记录待删除标签', !!(instInitAspects && instInitAspects.elements && instInitAspects.elements.indexOf(instLoc) >= 0), true);
 eq('实例化 finish 记录 outliner', !!(instFinishAspects && instFinishAspects.outliner), true);
 const instCreated = instParent.children.find(n => n && n.name === '调用 instTarget');
+eq('实例化 finish 记录新分组', !!(instFinishAspects && instFinishAspects.groups && instFinishAspects.groups.indexOf(instCreated) >= 0), true);
 eq('实例化节点已加入父分组', !!instCreated, true);
 eq('实例化覆盖 threshold_format', instCreated && instCreated.imda_threshold_format, '2i');
 eq('实例化覆盖 threshold', String(instCreated && instCreated.imda_threshold), '7');
+eq('实例化覆盖 threshold 强制标记', !!(instCreated && instCreated.imda_threshold_force), true);
 eq('实例化后 UUID 不与目标相同', !!(instCreated && instCreated.uuid && instCreated.uuid !== 'inst-target'), true);
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
