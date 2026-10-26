@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.90';
+const VERSION = '0.68.91';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2806,7 +2806,13 @@ function freshUuid() {
 
 function regenerateSubtreeUuids(node) {
 	if (!node || typeof node !== 'object') return;
-	try { node.uuid = freshUuid(); } catch (e) { /* ignore */ }
+	try {
+		const old = node.uuid;
+		if (typeof OutlinerNode !== 'undefined' && OutlinerNode && OutlinerNode.uuids && old && OutlinerNode.uuids[old] === node) delete OutlinerNode.uuids[old];
+		const next = freshUuid();
+		node.uuid = next;
+		if (typeof OutlinerNode !== 'undefined' && OutlinerNode && OutlinerNode.uuids) OutlinerNode.uuids[next] = node;
+	} catch (e) { /* ignore */ }
 	for (const child of (node.children || [])) regenerateSubtreeUuids(child);
 }
 
