@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.111';
+const VERSION = '0.68.112';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1828,19 +1828,25 @@ function runMerge(root) {
 /* 按分支编号/条件重排父分组的子分组（range_dispatch 按阈值升序，condition 按 on_true < on_false） */
 /* 新建/拖入/选择变化后，自动重排并编号（防抖，且在输入框聚焦时不打扰） */
 let branchSyncTimer = null;
-function scheduleBranchSync(target) {
+function scheduleBranchSync(target, reason) {
 	if (branchSyncTimer) clearTimeout(branchSyncTimer);
 	branchSyncTimer = setTimeout(() => {
 		branchSyncTimer = null;
 		try {
 			const active = (typeof document !== 'undefined') ? document.activeElement : null;
 			if (active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName || '')) return;
-			let changed = stripStrayBranchPrefixes();
 			const group = target || pickTargetGroup();
+			try { console.log('[装配] 分支同步触发', JSON.stringify({ reason: reason || '', target: group && group.name, parent: group && group.parent && group.parent.name })); } catch (e) { /* ignore */ }
+			let changed = stripStrayBranchPrefixes();
 			if (group) {
 				const parent = group.parent || null;
+				const beforeSelf = Array.isArray(group.children) ? group.children.filter(isGroup).map(c => (c.name || '') + ':' + c.imda_threshold) : [];
+				const beforeParent = parent && Array.isArray(parent.children) ? parent.children.filter(isGroup).map(c => (c.name || '') + ':' + c.imda_threshold) : [];
 				changed += sortBranchChildren(group) + syncBranchLabels(group);
 				if (parent) changed += sortBranchChildren(parent) + syncBranchLabels(parent);
+				const afterSelf = Array.isArray(group.children) ? group.children.filter(isGroup).map(c => (c.name || '') + ':' + c.imda_threshold) : [];
+				const afterParent = parent && Array.isArray(parent.children) ? parent.children.filter(isGroup).map(c => (c.name || '') + ':' + c.imda_threshold) : [];
+				if (changed) { try { console.log('[装配] 分支同步完成', JSON.stringify({ group: group.name, parent: parent && parent.name, beforeSelf, afterSelf, beforeParent, afterParent, changed })); } catch (e) { /* ignore */ } }
 			}
 			if (changed) { simInvalidate(); try { Project.saved = false; Canvas.updateAll(); } catch (e) { /* ignore */ } }
 		} catch (error) { /* ignore */ }
@@ -1852,9 +1858,10 @@ function sortBranchChildren(parent) {
 	const type = String(parent.imda_type || '').replace(/^minecraft:/, '');
 	if (type !== 'range_dispatch' && type !== 'condition') return 0;
 	const thresholdFormat = String(parent.imda_threshold_format || '').trim();
+	const groups = parent.children.filter(isGroup);
+	try { console.log('[装配] sortBranchChildren', JSON.stringify({ parent: parent.name || '', type, threshold_format: thresholdFormat, order: groups.map(g => ({ name: g.name || '', threshold: g.imda_threshold })) })); } catch (e) { /* ignore */ }
 	// 格式（如 5-i）已经定义了“第 i 个分支”的 threshold；再用 threshold 排序会和 syncBranchLabels 互相翻转。
 	if (type === 'range_dispatch' && thresholdFormat) return 0;
-	const groups = parent.children.filter(isGroup);
 	if (groups.length < 2) return 0;
 	const keyOf = (child) => {
 		if (type === 'condition') {
@@ -4836,10 +4843,11 @@ Plugin.register('item_model_definition_assembly', {
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
 		// 面板会自动出现在「视图 → 面板」里，不再占用 Tools 菜单
 		attachGroupMenu();
-		bindOutlinerHook();
+		// 不绑定 outliner 的 mouseup/dragend，也不在 update_selection 时同步分支；
+		// 避免普通选中触发 sortBranchChildren / syncBranchLabels。
 		try { Blockbench.on('update_selection', () => { try { guardLockedSelection(); } catch (e) { /* ignore */ } try { guardBatchSelection(); } catch (e) { /* ignore */ } try { guardBoxSelection(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
-		for (const event of ['add_group', 'remove_group', 'update_selection']) {
-			try { Blockbench.on(event, (data) => { simInvalidate(); scheduleBranchSync(data && data.object); }); } catch (e) { /* ignore */ }
+		for (const event of ['add_group', 'remove_group']) {
+			try { Blockbench.on(event, (data) => { simInvalidate(); scheduleBranchSync(data && data.object, event); }); } catch (e) { /* ignore */ }
 		}
 		for (const event of ['select_project', 'finished_loading_project', 'update_selection']) {
 			try { Blockbench.on(event, () => { try { simRestoreView(); simRestoreTints(); } catch (viewError) { /* ignore */ } simInvalidate(); attachGroupMenu(); }); } catch (e) { /* ignore */ }
