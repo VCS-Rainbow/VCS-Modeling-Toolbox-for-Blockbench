@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.106';
+const VERSION = '0.68.107';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -4645,7 +4645,7 @@ function attachGroupMenu() {
 		}
 	} catch (error) { /* ignore */ }
 	try {
-		if (typeof Locator !== 'undefined' && Locator.prototype && Locator.prototype.menu && typeof Locator.prototype.menu.addAction === 'function' && actions.editCall) {
+		if (!locatorMenuAttached && typeof Locator !== 'undefined' && Locator.prototype && Locator.prototype.menu && typeof Locator.prototype.menu.addAction === 'function' && actions.editCall) {
 			const menu = Locator.prototype.menu;
 			try {
 				if (Array.isArray(menu.structure)) menu.structure = menu.structure.filter(item => item !== actions.editCall && item !== actions.instantiateThis && !(item && item.id === 'imda_menu_sep'));
