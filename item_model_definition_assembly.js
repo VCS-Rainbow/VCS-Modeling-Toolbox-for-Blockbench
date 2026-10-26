@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.102';
+const VERSION = '0.68.103';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2895,6 +2895,7 @@ function instantiateCallTags(targets) {
 				if (!targetGroup) { try { created.init(); } catch (e) { /* ignore */ } }
 				try { if (created.preview_controller && created.preview_controller.updateTransform) created.preview_controller.updateTransform(created); } catch (e) { /* ignore */ }
 				applyCallOverridesToGroup(created, locator);
+				try { syncBranchLabels(created); } catch (e) { /* ignore */ }
 				try { console.log('[装配] 实例化覆盖', locator.name || 'Locator', JSON.stringify(callOverridesOf(locator)), '→ fmt=' + String(created.imda_threshold_format || '') + ' th=' + String(created.imda_threshold)); } catch (e) { /* ignore */ }
 				if (index >= 0) { const at = siblings.indexOf(created); if (at >= 0) siblings.splice(at, 1); siblings.splice(Math.min(index, siblings.length), 0, created); }
 				createdGroups.push(created);

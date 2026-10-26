@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.102', api.VERSION, '0.68.102');
+eq('版本是 0.68.103', api.VERSION, '0.68.103');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -903,6 +903,32 @@ const sibC = new global.Locator({ name: '调用 5', position: [0,0,0], rotation:
 const sibList = api.expandCallTagSiblings([sibA]);
 eq('同组标签一起收集', sibList.length, 3);
 eq('无覆盖的兄弟继承格式', sibB.imda_call_overrides, sibA.imda_call_overrides);
+/* ---------- 四个 range 分支各自格式 ---------- */
+console.log('\n[range 分支格式]');
+const fmtRoot = new global.Group({ name: 'fmtRoot', imda_type: 'composite' });
+const makeRange = (name, fmt) => {
+	const g = new global.Group({ name, imda_type: 'range_dispatch', imda_property: 'minecraft:custom_model_data', imda_index: 0, imda_threshold_format: fmt });
+	g.children.push(new global.Group({ name: name + '_a', imda_type: 'model', imda_model: 'ns:item/' + name + '_a' }));
+	g.children.push(new global.Group({ name: name + '_b', imda_type: 'model', imda_model: 'ns:item/' + name + '_b' }));
+	return g;
+};
+const fmtRanges = [makeRange('fmt0', 'i'), makeRange('fmt1', 'i+1'), makeRange('fmt2', 'i+2'), makeRange('fmt3', 'i+3'), makeRange('fmt4', 'i+4')];
+fmtRoot.children.push(...fmtRanges);
+global.Group.all = fmtRanges.slice(); global.Outliner.root.length = 0; global.Outliner.root.push(fmtRoot);
+const fmtMapping = api.createExporter().buildMapping();
+const fmtByName = {};
+(function walkFmt(node) {
+	if (!node || typeof node !== 'object') return;
+	if (node.type === 'minecraft:range_dispatch' && node.node_name) fmtByName[node.node_name] = (node.entries || []).map(e => String(e.threshold));
+	for (const key of ['models', 'entries', 'cases']) for (const child of (node[key] || [])) walkFmt(child && child.model ? child.model : child);
+	for (const key of ['on_true', 'on_false', 'fallback', 'model']) if (node[key]) walkFmt(node[key]);
+})(fmtMapping);
+console.log('FMT', JSON.stringify(fmtByName));
+eq('range 0 格式 i', (fmtByName.fmt0 || []).join(','), '0,1');
+eq('range 1 格式 i+1', (fmtByName.fmt1 || []).join(','), '1,2');
+eq('range 2 格式 i+2', (fmtByName.fmt2 || []).join(','), '2,3');
+eq('range 3 格式 i+3', (fmtByName.fmt3 || []).join(','), '3,4');
+eq('range 4 格式 i+4', (fmtByName.fmt4 || []).join(','), '4,5');
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);
