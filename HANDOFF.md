@@ -1,17 +1,17 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-26 · 当前版本 **0.68.107**（基于 `v0.68.85` 的最终尝试）
+> 生成时间：2026-10-26 · 当前版本 **0.68.108**（基于 `v0.68.85` 的最终尝试）
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
-> 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.107 是在 0.68.85 基础上的最终尝试，等待真实 Blockbench 验证。
+> 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.108 是在 0.68.85 基础上的最终尝试，等待真实 Blockbench 验证。
 
 ---
 
 ## 0. 当前正在进行的任务（交接时未完成）
 
-**状态：0.68.107 最终尝试已实现，等待用户真实操作验证。**  
-**基线是 `v0.68.85`；0.68.86–0.68.98 不采用。0.68.107 单测 229/229，包含实例化撤销 aspects 与覆盖集成测试。**
+**状态：0.68.108 最终尝试已实现，等待用户真实操作验证。**  
+**基线是 `v0.68.85`；0.68.86–0.68.98 不采用。0.68.108 单测 229/229，包含实例化撤销 aspects 与覆盖集成测试。**
 
-### 0.0 0.68.107 本次改动
+### 0.0 0.68.108 本次改动
 
 1. `instantiateCallTags` 的撤销 aspects 改为：
    - init：`{ outliner: true, groups: 父分组去重, elements: 待删除 Locator }`
@@ -24,8 +24,9 @@
 6. 实例化每个副本后调用 `syncBranchLabels()`，刷新该副本自己的分支名。
 7. `syncBranchLabels()` 格式生效时把 threshold 数值写回子节点，属性和分支名一致。
 9. 序列选择修复：`orderedSequenceItems()` 同时读取 `Group.multi_selected` / `Group.selected` / `Group.first_selected`，只选分组也能生成序列。
-10. 选择分支不再触发 `scheduleBranchSync`（移除 `update_selection` / `mouseup` 触发），避免序列正序/倒序反复翻转。
-11. 单测总数 229。
+10. 选择分支不再触发 `scheduleBranchSync`：移除 `update_selection`，并且不再绑定 outliner 的 `mouseup` / `dragend`；仅在 add/remove group 时同步。
+11. `sortBranchChildren()` 重排时输出前后名称与排序键。
+12. 单测总数 229。
 
 **仍待确认**：真实 Blockbench 中 Ctrl+Z 是否能完整撤回；若仍失败，优先检查 Console 的 `[装配] 实例化 initEdit 失败` / `finishEdit 失败`，以及 `Project.undo.history` 是否新增了「实例化复调用标签」。
 

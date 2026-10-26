@@ -2,6 +2,9 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.108
+- 不再绑定 outliner 的 `mouseup` / `dragend` 自动同步；选择或普通点击不会触发 `sortBranchChildren()`，解决序列分支正序/倒序反复重排。
+- `sortBranchChildren()` 发生重排时输出父分组、重排前后的名称与排序键，便于定位。
 ## 0.68.107
 - Locator 右键菜单重排加 `locatorMenuAttached` 守卫，避免每次选择/刷新都重复重排和刷 Console。
 ## 0.68.106

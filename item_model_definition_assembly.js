@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.107';
+const VERSION = '0.68.108';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1864,6 +1864,7 @@ function sortBranchChildren(parent) {
 	const sorted = groups.slice().sort((a, b) => keyOf(a) - keyOf(b));
 	const unchanged = sorted.every((child, index) => child === groups[index]);
 	if (unchanged) return 0;
+	try { console.log('[装配] 分支重排', parent.name || '', 'before=[' + groups.map(g => (g.name || '') + ':' + keyOf(g)).join(' | ') + '] after=[' + sorted.map(g => (g.name || '') + ':' + keyOf(g)).join(' | ') + ']'); } catch (e) { /* ignore */ }
 	const others = parent.children.filter(child => !isGroup(child));
 	parent.children.length = 0;
 	for (const child of sorted.concat(others)) parent.children.push(child);
@@ -4824,7 +4825,7 @@ Plugin.register('item_model_definition_assembly', {
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
 		// 面板会自动出现在「视图 → 面板」里，不再占用 Tools 菜单
 		attachGroupMenu();
-		bindOutlinerHook();
+		// 不绑定 outliner 的 mouseup/dragend：选择或普通点击不应触发分支重排。
 		try { Blockbench.on('update_selection', () => { try { guardLockedSelection(); } catch (e) { /* ignore */ } try { guardBatchSelection(); } catch (e) { /* ignore */ } try { guardBoxSelection(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
 		for (const event of ['add_group', 'remove_group']) {
 			try { Blockbench.on(event, (data) => { simInvalidate(); scheduleBranchSync(data && data.object); }); } catch (e) { /* ignore */ }
