@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.92';
+const VERSION = '0.68.93';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2847,7 +2847,9 @@ function instantiateCallTags(targets) {
 		buttons: ['实例化', '取消'], confirm: 0, cancel: 1,
 	}, (button) => {
 		if (button !== 0) return;
-		try { Undo.initEdit({ outliner: true, elements: locators.slice() }); } catch (e) { /* ignore */ }
+		const parentGroups = [];
+		for (const locator of locators) { const parent = locator.parent; if (isGroup(parent) && parentGroups.indexOf(parent) < 0) parentGroups.push(parent); }
+		try { Undo.initEdit({ outliner: true, groups: parentGroups.slice(), elements: locators.slice() }); } catch (e) { /* ignore */ }
 		let done = 0;
 		const createdGroups = [];
 		const createdCubes = [];
