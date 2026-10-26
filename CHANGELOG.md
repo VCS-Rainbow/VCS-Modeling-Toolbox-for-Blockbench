@@ -14,6 +14,10 @@
 - Locator 右键菜单重排加 `locatorMenuAttached` 守卫，避免每次选择/刷新都重复重排和刷 Console。
 ## 0.68.106
 - 停止在 `update_selection` 和 outliner `mouseup` 时自动重排分支；只有添加/删除分组和真正的 `dragend` 才同步，选择序列分支不再导致正序/倒序反复翻转。
+## 0.68.111
+- 基于 0.68.105：`sortBranchChildren()` 在父分组有 `imda_threshold_format` 时跳过排序，解决 `5-i` 这类递减格式与 `syncBranchLabels()` 互相翻转。
+- 每次实际重排时输出 parent、type、threshold_format、before/after 的 name/threshold/key，便于定位。
+- 单测 231 项。
 ## 0.68.105
 - 修复只选中分组、没有 Locator 时“生成复调用序列”误报选中数量不足：`orderedSequenceItems()` 现在读取 `Group.multi_selected` / `Group.selected` / `Group.first_selected`，不再只看 `Outliner.selected`。
 - 单测 229 项。

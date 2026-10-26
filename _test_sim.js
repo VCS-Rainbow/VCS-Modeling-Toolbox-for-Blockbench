@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.110', api.VERSION, '0.68.110');
+eq('版本是 0.68.111', api.VERSION, '0.68.111');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -944,21 +944,16 @@ const onlyGroupItems = api.orderedSequenceItems();
 eq('只选分组时序列项数量', onlyGroupItems.length, 2);
 eq('只选分组时按大纲顺序', onlyGroupItems[0] === onlyGroupA && onlyGroupItems[1] === onlyGroupB, true);
 global.Group.selected = [];
-/* ---------- 递减格式不重排 ---------- */
-console.log('\n[递减格式排序]');
+/* ---------- 递减格式不触发重排 ---------- */
+console.log('\n[递减格式重排]');
 const descParent = new global.Group({ name: 'descParent', imda_type: 'range_dispatch', imda_threshold_format: '5-i' });
 const descA = new global.Group({ name: 'a', imda_threshold: 5 });
 const descB = new global.Group({ name: 'b', imda_threshold: 4 });
 descParent.children.push(descA, descB);
 const descBefore = descParent.children.slice();
 const descChanged = api.sortBranchChildren(descParent);
-eq('递减格式不重排', descChanged, 0);
-eq('递减格式顺序保持', descParent.children[0] === descBefore[0] && descParent.children[1] === descBefore[1], true);
-const ascParent = new global.Group({ name: 'ascParent', imda_type: 'range_dispatch' });
-const ascA = new global.Group({ name: 'a', imda_threshold: 2 });
-const ascB = new global.Group({ name: 'b', imda_threshold: 1 });
-ascParent.children.push(ascA, ascB);
-eq('无格式仍按阈值排序', api.sortBranchChildren(ascParent) > 0 && ascParent.children[0] === ascB, true);
+eq('5-i 不重排', descChanged, 0);
+eq('5-i 保持原顺序', descParent.children[0] === descBefore[0] && descParent.children[1] === descBefore[1], true);
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);

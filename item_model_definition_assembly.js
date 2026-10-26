@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.110';
+const VERSION = '0.68.111';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1839,10 +1839,8 @@ function scheduleBranchSync(target) {
 			const group = target || pickTargetGroup();
 			if (group) {
 				const parent = group.parent || null;
-				// 分支顺序以 outliner 中的实际顺序为准，不在同步时自动排序；
-				// 递减格式（5-i）下排序和编号会互相反转。
-				changed += syncBranchLabels(group);
-				if (parent) changed += syncBranchLabels(parent);
+				changed += sortBranchChildren(group) + syncBranchLabels(group);
+				if (parent) changed += sortBranchChildren(parent) + syncBranchLabels(parent);
 			}
 			if (changed) { simInvalidate(); try { Project.saved = false; Canvas.updateAll(); } catch (e) { /* ignore */ } }
 		} catch (error) { /* ignore */ }
@@ -1853,8 +1851,9 @@ function sortBranchChildren(parent) {
 	if (!parent || !Array.isArray(parent.children)) return 0;
 	const type = String(parent.imda_type || '').replace(/^minecraft:/, '');
 	if (type !== 'range_dispatch' && type !== 'condition') return 0;
-	// 格式（如 5-i）本身就是按当前顺序计算 threshold；再用结果排序会和 syncBranchLabels 互相反转。
-	if (type === 'range_dispatch' && String(parent.imda_threshold_format || '').trim()) return 0;
+	const thresholdFormat = String(parent.imda_threshold_format || '').trim();
+	// 格式（如 5-i）已经定义了“第 i 个分支”的 threshold；再用 threshold 排序会和 syncBranchLabels 互相翻转。
+	if (type === 'range_dispatch' && thresholdFormat) return 0;
 	const groups = parent.children.filter(isGroup);
 	if (groups.length < 2) return 0;
 	const keyOf = (child) => {
@@ -1868,7 +1867,15 @@ function sortBranchChildren(parent) {
 	const sorted = groups.slice().sort((a, b) => keyOf(a) - keyOf(b));
 	const unchanged = sorted.every((child, index) => child === groups[index]);
 	if (unchanged) return 0;
-	try { console.log('[装配] 分支重排', parent.name || '', 'before=[' + groups.map(g => (g.name || '') + ':' + keyOf(g)).join(' | ') + '] after=[' + sorted.map(g => (g.name || '') + ':' + keyOf(g)).join(' | ') + ']'); } catch (e) { /* ignore */ }
+	try {
+		console.log('[装配] 分支重排', JSON.stringify({
+			parent: parent.name || '',
+			type,
+			threshold_format: thresholdFormat,
+			before: groups.map(g => ({ name: g.name || '', threshold: g.imda_threshold, key: keyOf(g) })),
+			after: sorted.map(g => ({ name: g.name || '', threshold: g.imda_threshold, key: keyOf(g) })),
+		}));
+	} catch (e) { /* ignore */ }
 	const others = parent.children.filter(child => !isGroup(child));
 	parent.children.length = 0;
 	for (const child of sorted.concat(others)) parent.children.push(child);
@@ -1953,7 +1960,7 @@ function bindOutlinerHook() {
 		simInvalidate();
 		scheduleBranchSync(pickTargetGroup());
 	};
-	// 只处理真正的拖拽结束；普通点击选中不应触发分支重排。
+	try { document.addEventListener('mouseup', onMaybeReparent, true); } catch (e) { /* ignore */ }
 	try { document.addEventListener('dragend', onMaybeReparent, true); } catch (e) { /* ignore */ }
 }
 
@@ -4650,7 +4657,7 @@ function attachGroupMenu() {
 		}
 	} catch (error) { /* ignore */ }
 	try {
-		if (!locatorMenuAttached && typeof Locator !== 'undefined' && Locator.prototype && Locator.prototype.menu && typeof Locator.prototype.menu.addAction === 'function' && actions.editCall) {
+		if (typeof Locator !== 'undefined' && Locator.prototype && Locator.prototype.menu && typeof Locator.prototype.menu.addAction === 'function' && actions.editCall) {
 			const menu = Locator.prototype.menu;
 			try {
 				if (Array.isArray(menu.structure)) menu.structure = menu.structure.filter(item => item !== actions.editCall && item !== actions.instantiateThis && !(item && item.id === 'imda_menu_sep'));
@@ -4829,9 +4836,9 @@ Plugin.register('item_model_definition_assembly', {
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
 		// 面板会自动出现在「视图 → 面板」里，不再占用 Tools 菜单
 		attachGroupMenu();
-		// 不绑定 outliner 的 mouseup/dragend：选择或普通点击不应触发分支重排。
+		bindOutlinerHook();
 		try { Blockbench.on('update_selection', () => { try { guardLockedSelection(); } catch (e) { /* ignore */ } try { guardBatchSelection(); } catch (e) { /* ignore */ } try { guardBoxSelection(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
-		for (const event of ['add_group', 'remove_group']) {
+		for (const event of ['add_group', 'remove_group', 'update_selection']) {
 			try { Blockbench.on(event, (data) => { simInvalidate(); scheduleBranchSync(data && data.object); }); } catch (e) { /* ignore */ }
 		}
 		for (const event of ['select_project', 'finished_loading_project', 'update_selection']) {
