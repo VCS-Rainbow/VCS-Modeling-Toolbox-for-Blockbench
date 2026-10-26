@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.103';
+const VERSION = '0.68.104';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2364,6 +2364,8 @@ function syncBranchLabels(group) {
 		} else {
 			try { if (!exporter) exporter = createExporter(); } catch (e) { exporter = null; }
 			const formatted = exporter ? exporter.evalThreshold(group.imda_threshold_format, index) : null;
+			// 格式生效时把数值同步回子节点，属性面板的 threshold 才不会永远显示 0。
+			if (formatted !== null) child.imda_threshold = formatted;
 			const manual = Number(child.imda_threshold) || 0;
 			label = String(formatted !== null ? formatted : (manual !== 0 ? manual : index));
 		}
