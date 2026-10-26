@@ -14,6 +14,8 @@
 - Locator 右键菜单重排加 `locatorMenuAttached` 守卫，避免每次选择/刷新都重复重排和刷 Console。
 ## 0.68.106
 - 停止在 `update_selection` 和 outliner `mouseup` 时自动重排分支；只有添加/删除分组和真正的 `dragend` 才同步，选择序列分支不再导致正序/倒序反复翻转。
+## 0.68.113
+- 恢复 Locator 右键菜单挂载守卫，避免每次 `update_selection` 重复输出 `已重排复调用标签右键菜单`。
 ## 0.68.112
 - 选择/拖拽不再触发分支同步：移除 `update_selection` 和 outliner hook，只在 `add_group` / `remove_group` 时同步。
 - `sortBranchChildren()` 每次调用输出 parent/type/format/order；`scheduleBranchSync()` 输出触发原因、同步前后顺序；真正重排仍输出 before/after 的 name/threshold/key。
