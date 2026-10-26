@@ -2,6 +2,9 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.87
+- 修实例化撤销残留分组：Undo.initEdit 启用 groups aspect，finishEdit 的 createdGroups 才会被记录。
+- 单测 209 项。
 ## 0.68.86
 - 实例化覆盖改为每个 Locator 在 `created.init()` 之后单独应用，避免批量时只有第一个副本保留覆盖。
 - 单测 209 项。
