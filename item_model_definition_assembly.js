@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.97';
+const VERSION = '0.68.98';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -865,7 +865,9 @@ class Exporter {
 				if (!childNode) continue;
 				const manualText = String(child.imda_threshold == null ? '' : child.imda_threshold).trim();
 				const manual = num(child.imda_threshold);
-				const formatted = this.evalThreshold(group.imda_threshold_format, branch_index);
+				// 子分支自己的 threshold_format 优先；否则父级 range_dispatch 的格式会覆盖实例化分支的覆盖值。
+				const childFormatted = this.evalThreshold(child.imda_threshold_format, branch_index);
+				const formatted = childFormatted !== null ? childFormatted : this.evalThreshold(group.imda_threshold_format, branch_index);
 				// 复调用覆盖的阈值必须优先于父级 threshold_format；0 也是合法值。
 				const threshold = (child.imda_threshold_force && manualText !== '') ? manual : (formatted !== null ? formatted : (manual !== 0 ? manual : branch_index));
 				node.entries.push({ threshold: clean(threshold), model: childNode });

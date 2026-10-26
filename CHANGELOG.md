@@ -2,6 +2,8 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.98
+- 导出 range_dispatch 时优先使用子分支自己的 imda_threshold_format，不再无条件被父级格式覆盖；实例化覆盖的 	hreshold_format 现在会进入最终 JSON。
 ## 0.68.97
 - 实例化覆盖前清除副本继承的 imda_threshold_force，避免旧阈值标记污染未覆盖阈值的新分支。
 ## 0.68.96
