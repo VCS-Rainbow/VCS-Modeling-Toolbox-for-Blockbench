@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.89';
+const VERSION = '0.68.90';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2797,9 +2797,16 @@ function removeTimelineTags() {
 }
 
 /** 把所有复调用 Locator 实例化成真实的分组/模型节点 */
+let __imdaUuidSeq = 0;
+function freshUuid() {
+	try { if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID(); } catch (e) { /* ignore */ }
+	__imdaUuidSeq++;
+	return 'imda-' + Date.now().toString(36) + '-' + __imdaUuidSeq.toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+}
+
 function regenerateSubtreeUuids(node) {
 	if (!node || typeof node !== 'object') return;
-	try { node.uuid = (typeof guid === 'function') ? guid() : ('uuid-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)); } catch (e) { /* ignore */ }
+	try { node.uuid = freshUuid(); } catch (e) { /* ignore */ }
 	for (const child of (node.children || [])) regenerateSubtreeUuids(child);
 }
 
@@ -2807,7 +2814,6 @@ function applyCallOverridesToGroup(group, locator) {
 	if (!group || !locator) return;
 	try {
 		const ov = callOverridesOf(locator);
-		console.log('[装配] 实例化覆盖', locator.name, ov);
 		if (ov.property) group.imda_property = String(ov.property).replace(/^minecraft:/, '');
 		for (const key of ['index', 'scale', 'threshold', 'threshold_format', 'component', 'predicate', 'value', 'keybind', 'target', 'source', 'wobble', 'normalize', 'period', 'remaining', 'condition']) {
 			if (ov[key] === undefined || ov[key] === '') continue;
@@ -2833,7 +2839,7 @@ function instantiateCallTags(targets) {
 		buttons: ['实例化', '取消'], confirm: 0, cancel: 1,
 	}, (button) => {
 		if (button !== 0) return;
-		try { Undo.initEdit({ outliner: true, groups: [], elements: locators.slice() }); } catch (e) { /* ignore */ }
+		try { Undo.initEdit({ outliner: true, elements: locators.slice() }); } catch (e) { /* ignore */ }
 		let done = 0;
 		const createdGroups = [];
 		const createdCubes = [];
@@ -2862,7 +2868,6 @@ function instantiateCallTags(targets) {
 				} else if (target) {
 					created = new Group({ name: '实例 ' + target.split(':').pop(), imda_type: 'model', imda_model: target, origin: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() });
 				}
-				regenerateSubtreeUuids(created);
 				if (!created) continue;
 				if (parent) created.addTo(parent); else created.addTo();
 				try { created.init(); } catch (e) { /* ignore */ }
@@ -4790,7 +4795,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, regenerateSubtreeUuids, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
