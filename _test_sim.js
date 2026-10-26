@@ -863,6 +863,7 @@ const instParent = new global.Group({ name: 'instParent', imda_type: 'composite'
 const instTarget = new global.Group({ name: 'instTarget', imda_type: 'range_dispatch', uuid: 'inst-target', origin: [0,0,0], rotation: [0,0,0] });
 instTarget.duplicate = function () {
 	const copy = new global.Group({ name: this.name, imda_type: this.imda_type, uuid: 'inst-copy-' + Math.random(), origin: [0,0,0], rotation: [0,0,0] });
+	copy.children = [new global.Group({ name: 'b1', imda_type: 'model', imda_model: 'ns:item/b1' }), new global.Group({ name: 'b2', imda_type: 'model', imda_model: 'ns:item/b2' })];
 	return copy;
 };
 global.Group.all.push(instTarget);
@@ -894,6 +895,9 @@ eq('实例化覆盖 threshold', instCreated && String(instCreated.imda_threshold
 eq('实例化覆盖 threshold 强制', instCreated && instCreated.imda_threshold_force, true);
 eq('实例化覆盖 property 去前缀', instCreated && instCreated.imda_property, 'cooldown');
 eq('实例化后副本 UUID 不同', !!(instCreated && instCreated.uuid !== 'inst-target'), true);
+eq('同步子分支 threshold 1', instCreated && instCreated.children && instCreated.children[0] && instCreated.children[0].imda_threshold, 0);
+eq('同步子分支 threshold 2', instCreated && instCreated.children && instCreated.children[1] && instCreated.children[1].imda_threshold, 2);
+eq('同步子分支名前缀', instCreated && instCreated.children && instCreated.children[1] && String(instCreated.children[1].name).indexOf('[2]') === 0, true);
 /* ---------- 右键同组标签扩展 ---------- */
 console.log('\n[同组标签扩展]');
 const sibParent = new global.Group({ name: 'sibParent', imda_type: 'composite' });
