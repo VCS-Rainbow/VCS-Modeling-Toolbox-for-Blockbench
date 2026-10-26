@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.88';
+const VERSION = '0.68.89';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2797,6 +2797,12 @@ function removeTimelineTags() {
 }
 
 /** 把所有复调用 Locator 实例化成真实的分组/模型节点 */
+function regenerateSubtreeUuids(node) {
+	if (!node || typeof node !== 'object') return;
+	try { node.uuid = (typeof guid === 'function') ? guid() : ('uuid-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)); } catch (e) { /* ignore */ }
+	for (const child of (node.children || [])) regenerateSubtreeUuids(child);
+}
+
 function applyCallOverridesToGroup(group, locator) {
 	if (!group || !locator) return;
 	try {
@@ -2856,6 +2862,7 @@ function instantiateCallTags(targets) {
 				} else if (target) {
 					created = new Group({ name: '实例 ' + target.split(':').pop(), imda_type: 'model', imda_model: target, origin: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() });
 				}
+				regenerateSubtreeUuids(created);
 				if (!created) continue;
 				if (parent) created.addTo(parent); else created.addTo();
 				try { created.init(); } catch (e) { /* ignore */ }
