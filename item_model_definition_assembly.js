@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.87';
+const VERSION = '0.68.88';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2801,6 +2801,7 @@ function applyCallOverridesToGroup(group, locator) {
 	if (!group || !locator) return;
 	try {
 		const ov = callOverridesOf(locator);
+		console.log('[装配] 实例化覆盖', locator.name, ov);
 		if (ov.property) group.imda_property = String(ov.property).replace(/^minecraft:/, '');
 		for (const key of ['index', 'scale', 'threshold', 'threshold_format', 'component', 'predicate', 'value', 'keybind', 'target', 'source', 'wobble', 'normalize', 'period', 'remaining', 'condition']) {
 			if (ov[key] === undefined || ov[key] === '') continue;
@@ -2866,7 +2867,7 @@ function instantiateCallTags(targets) {
 				done++;
 			} catch (error) { console.warn('[装配] 实例化复调用失败', error); }
 		}
-		try { Undo.finishEdit('实例化复调用标签', { outliner: true, groups: createdGroups, elements: createdCubes.concat(locators) }); } catch (e) { /* ignore */ }
+		try { Undo.finishEdit('实例化复调用标签', { outliner: true, groups: parentGroups.concat(createdGroups), elements: createdCubes.concat(locators) }); } catch (e) { /* ignore */ }
 		try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 		try { Project.saved = false; } catch (e) { /* ignore */ }
 		Blockbench.showQuickMessage('已实例化 ' + done + ' 个复调用标签', 3000);

@@ -2,6 +2,9 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.88
+- 实例化撤销数据纳入父分组，让 before/post 的 groups 差异能正确删除新建分组；覆盖应用增加控制台日志。
+- 单测 209 项。
 ## 0.68.87
 - 修实例化撤销残留分组：Undo.initEdit 启用 groups aspect，finishEdit 的 createdGroups 才会被记录。
 - 单测 209 项。
