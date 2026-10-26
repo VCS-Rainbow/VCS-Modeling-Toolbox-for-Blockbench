@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.98';
+const VERSION = '0.68.85';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -863,14 +863,9 @@ class Exporter {
 			for (const child of childGroups) {
 				const childNode = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'), own_shift);
 				if (!childNode) continue;
-				const manualText = String(child.imda_threshold == null ? '' : child.imda_threshold).trim();
 				const manual = num(child.imda_threshold);
-				// 子分支自己的 threshold_format 优先；否则父级 range_dispatch 的格式会覆盖实例化分支的覆盖值。
-				const childFormatted = this.evalThreshold(child.imda_threshold_format, branch_index);
-				const formatted = childFormatted !== null ? childFormatted : this.evalThreshold(group.imda_threshold_format, branch_index);
-				// 复调用覆盖的阈值必须优先于父级 threshold_format；0 也是合法值。
-				const threshold = (child.imda_threshold_force && manualText !== '') ? manual : (formatted !== null ? formatted : (manual !== 0 ? manual : branch_index));
-				node.entries.push({ threshold: clean(threshold), model: childNode });
+				const formatted = this.evalThreshold(group.imda_threshold_format, branch_index);
+				node.entries.push({ threshold: clean(formatted !== null ? formatted : (manual !== 0 ? manual : branch_index)), model: childNode });
 				branch_index++;
 			}
 			for (const locator of callLocators) {
@@ -2802,46 +2797,6 @@ function removeTimelineTags() {
 }
 
 /** 把所有复调用 Locator 实例化成真实的分组/模型节点 */
-let __imdaUuidSeq = 0;
-function freshUuid() {
-	try { if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID(); } catch (e) { /* ignore */ }
-	__imdaUuidSeq++;
-	return 'imda-' + Date.now().toString(36) + '-' + __imdaUuidSeq.toString(36) + '-' + Math.random().toString(36).slice(2, 10);
-}
-
-function regenerateSubtreeUuids(node) {
-	if (!node || typeof node !== 'object') return;
-	try {
-		const old = node.uuid;
-		if (typeof OutlinerNode !== 'undefined' && OutlinerNode && OutlinerNode.uuids && old && OutlinerNode.uuids[old] === node) delete OutlinerNode.uuids[old];
-		const next = freshUuid();
-		node.uuid = next;
-		if (typeof OutlinerNode !== 'undefined' && OutlinerNode && OutlinerNode.uuids) OutlinerNode.uuids[next] = node;
-	} catch (e) { /* ignore */ }
-	for (const child of (node.children || [])) regenerateSubtreeUuids(child);
-}
-
-function applyCallOverridesToGroup(group, locator) {
-	if (!group || !locator) return;
-	try {
-		const ov = callOverridesOf(locator);
-		// 副本会继承目标分组的旧标记，先清掉再由本次覆盖决定。
-		group.imda_threshold_force = false;
-		if (ov.property) group.imda_property = String(ov.property).replace(/^minecraft:/, '');
-		for (const key of ['index', 'scale', 'threshold', 'threshold_format', 'component', 'predicate', 'value', 'keybind', 'target', 'source', 'wobble', 'normalize', 'period', 'remaining', 'condition']) {
-			// property 已在上面去掉 minecraft: 前缀，不能再被通用循环覆盖回原值。
-			if (key === 'property') continue;
-			if (ov[key] === undefined || ov[key] === '') continue;
-			const prop = ({ threshold: 'imda_threshold', threshold_format: 'imda_threshold_format', target: 'imda_range_target', source: 'imda_range_source', wobble: 'imda_range_wobble', normalize: 'imda_range_normalize', period: 'imda_range_period', remaining: 'imda_range_remaining' })[key] || ('imda_' + key);
-			if (['wobble', 'normalize', 'remaining'].includes(key)) group[prop] = ov[key] === 'true';
-			else group[prop] = ov[key];
-		}
-		// 阈值 0 也是合法覆盖；父级 range_dispatch 的 threshold_format 默认会覆盖子分组阈值，
-		// 所以给实例化分组加显式标记，导出时优先使用这个值。
-		if (ov.threshold !== undefined && ov.threshold !== '') group.imda_threshold_force = true;
-	} catch (e) { /* ignore */ }
-}
-
 function instantiateCallTags(targets) {
 	const locators = [];
 	if (Array.isArray(targets)) {
@@ -2857,36 +2812,11 @@ function instantiateCallTags(targets) {
 		buttons: ['实例化', '取消'], confirm: 0, cancel: 1,
 	}, (button) => {
 		if (button !== 0) return;
-		// 获取当前项目的撤销栈。插件作用域里不保证有全局 Undo，优先用 Project.undo。
-		let undo = null;
-		try { undo = (Blockbench.Project && Blockbench.Project.undo) || (typeof Undo !== 'undefined' ? Undo : null); } catch (e) { undo = null; }
-		let SaveClass = null;
-		try { if (typeof UndoSystem !== 'undefined' && UndoSystem.save) SaveClass = UndoSystem; } catch (e) { /* ignore */ }
-		if (!SaveClass) { try { SaveClass = (undo && undo.constructor && undo.constructor.save) ? undo.constructor : null; } catch (e) { /* ignore */ } }
-
-		// 撤销必须同时记录 outliner、groups、elements：
-		// - outliner 快照不能真正删除新增分组（loadJSON 会把未出现的节点放回 root）
-		// - Locator 被删除后只能靠 elements 快照重建，只存 UUID 的 outliner 快照找不到它
-		const undoGroups = [];
-		for (const locator of locators) {
-			const parent = locator.parent;
-			if (isGroup(parent) && undoGroups.indexOf(parent) < 0) undoGroups.push(parent);
-		}
-		const undoElements = locators.slice();
-		const initAspects = { outliner: true, groups: undoGroups.slice(), elements: undoElements.slice() };
-		let undoBefore = null;
-		try { if (SaveClass) undoBefore = new SaveClass.save(initAspects); } catch (e) { console.warn('[装配] 实例化 撤销前快照失败', e); }
-		try { if (undo) undo.initEdit(initAspects); } catch (e) { console.warn('[装配] 实例化 initEdit 失败', e); }
+		try { Undo.initEdit({ outliner: true, elements: locators.slice() }); } catch (e) { /* ignore */ }
 		let done = 0;
-		let overridden = 0;
 		const createdGroups = [];
 		const createdCubes = [];
-		const collectCreated = (node) => {
-			for (const child of (node.children || [])) {
-				if (isCube(child)) createdCubes.push(child);
-				else if (isGroup(child)) { createdGroups.push(child); collectCreated(child); }
-			}
-		};
+		const collectCubes = (node) => { for (const child of (node.children || [])) { if (isCube(child)) createdCubes.push(child); else if (isGroup(child)) collectCubes(child); } };
 		for (const locator of locators) {
 			try {
 				const target = String(locator.imda_call_target || '').trim();
@@ -2905,57 +2835,35 @@ function instantiateCallTags(targets) {
 						try { translateGroupCoordinates(created, [nextOrigin[0] - oldOrigin[0], nextOrigin[1] - oldOrigin[1], nextOrigin[2] - oldOrigin[2]]); } catch (e) { /* ignore */ }
 						created.origin = nextOrigin;
 						created.rotation = Array.isArray(locator.rotation) ? locator.rotation.slice() : (created.rotation || [0, 0, 0]);
-
+						try {
+							const ov = callOverridesOf(locator);
+							if (ov.property) created.imda_property = String(ov.property).replace(/^minecraft:/, '');
+							for (const key of ['index', 'scale', 'threshold', 'threshold_format', 'component', 'predicate', 'value', 'keybind', 'target', 'source', 'wobble', 'normalize', 'period', 'remaining', 'condition']) {
+								if (ov[key] === undefined || ov[key] === '') continue;
+								const prop = ({ threshold: 'imda_threshold', threshold_format: 'imda_threshold_format', target: 'imda_range_target', source: 'imda_range_source', wobble: 'imda_range_wobble', normalize: 'imda_range_normalize', period: 'imda_range_period', remaining: 'imda_range_remaining' })[key] || ('imda_' + key);
+								if (['wobble', 'normalize', 'remaining'].includes(key)) created[prop] = ov[key] === 'true';
+								else created[prop] = ov[key];
+							}
+						} catch (e) { /* ignore */ }
 						created.selected = false;
 					}
 				} else if (target) {
 					created = new Group({ name: '实例 ' + target.split(':').pop(), imda_type: 'model', imda_model: target, origin: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() });
 				}
 				if (!created) continue;
-				// 每次实例化都必须是独立的 outliner 节点，沿用原 UUID 会让 Blockbench 的撤销/查找表互相覆盖
-				regenerateSubtreeUuids(created);
-				// duplicate() 可能用同一个 UUID 覆盖了目标分组的查找表，实例化后必须把目标映射还回去
-				try { if (targetGroup && typeof OutlinerNode !== 'undefined' && OutlinerNode.uuids && OutlinerNode.uuids[targetGroup.uuid] !== targetGroup) OutlinerNode.uuids[targetGroup.uuid] = targetGroup; } catch (e) { /* ignore */ }
 				if (parent) created.addTo(parent); else created.addTo();
 				try { created.init(); } catch (e) { /* ignore */ }
-				applyCallOverridesToGroup(created, locator);
-				try {
-					const applied = {};
-					for (const key of ['property', 'index', 'scale', 'threshold', 'threshold_format', 'component', 'predicate', 'value', 'keybind', 'target', 'source', 'wobble', 'normalize', 'period', 'remaining', 'condition']) {
-						const prop = ({ threshold: 'imda_threshold', threshold_format: 'imda_threshold_format', target: 'imda_range_target', source: 'imda_range_source', wobble: 'imda_range_wobble', normalize: 'imda_range_normalize', period: 'imda_range_period', remaining: 'imda_range_remaining' })[key] || ('imda_' + key);
-						if (created[prop] !== undefined && created[prop] !== '') applied[key] = created[prop];
-					}
-					const ovKeys = Object.keys(callOverridesOf(locator));
-					if (ovKeys.length) overridden++;
-					console.log('[装配] 实例化覆盖', locator.name || 'Locator', JSON.stringify(callOverridesOf(locator)), '→', JSON.stringify(applied));
-				} catch (e) { /* ignore */ }
 				if (index >= 0) { const at = siblings.indexOf(created); if (at >= 0) siblings.splice(at, 1); siblings.splice(Math.min(index, siblings.length), 0, created); }
 				createdGroups.push(created);
-				collectCreated(created);
+				collectCubes(created);
 				try { locator.remove(); } catch (e) { /* ignore */ }
 				done++;
 			} catch (error) { console.warn('[装配] 实例化复调用失败', error); }
 		}
-		const finishAspects = { outliner: true, groups: undoGroups.concat(createdGroups), elements: createdCubes.slice() };
-		try { if (undo) undo.finishEdit('实例化复调用标签', finishAspects); } catch (e) { console.warn('[装配] 实例化 finishEdit 失败', e); }
-		// 某些插件状态会让 finishEdit 的 current_save 丢失，导致历史里没有这一步。这里用前后快照兜底。
-		try {
-			const history = undo ? undo.history : [];
-			const last = history[history.length - 1];
-			if (!last || last.action !== '实例化复调用标签' || (undo && undo.index < history.length)) {
-				if (undoBefore && SaveClass && undo) {
-					try { delete undo.current_save; } catch (e) { /* ignore */ }
-					history.length = undo.index;
-					history.push({ before: undoBefore, post: new SaveClass.save(finishAspects), action: '实例化复调用标签', type: 'edit', time: Date.now() });
-					undo.index = history.length;
-					console.log('[装配] 实例化撤销记录由兜底补写');
-				}
-			}
-		} catch (e) { console.warn('[装配] 实例化 撤销兜底失败', e); }
-		try { console.log('[装配] 实例化撤销记录', undo.history.length, undo.index, (undo.history[undo.history.length - 1] || {}).action); } catch (e) { /* ignore */ }
+		try { Undo.finishEdit('实例化复调用标签', { outliner: true, groups: createdGroups, elements: createdCubes.concat(locators) }); } catch (e) { /* ignore */ }
 		try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 		try { Project.saved = false; } catch (e) { /* ignore */ }
-		Blockbench.showQuickMessage('已实例化 ' + done + ' 个复调用标签' + (overridden ? ('，其中 ' + overridden + ' 个带覆盖') : ''), 3000);
+		Blockbench.showQuickMessage('已实例化 ' + done + ' 个复调用标签', 3000);
 	});
 }
 
@@ -4577,15 +4485,6 @@ function registerProperties() {
 	new Property(Animation, 'boolean', 'imda_timeline_remaining', { default: false, label: '时间轴 use_duration remaining' });
 		} } catch (e) { /* ignore */ }
 	const cond = { formats: [FORMAT_ID] };
-	// 登记到 Locator.properties，Blockbench 的 getUndoCopy()/getSaveCopy() 才会复制这些字段；
-	// 否则实例化撤销重建 Locator 时会丢失复调用目标和覆盖设置。
-	try {
-		if (typeof Locator !== 'undefined' && Locator.properties) {
-			for (const key of ['imda_call_target','imda_call_overrides','imda_call_threshold','imda_call_property','imda_call_index','imda_call_scale']) {
-				if (!Locator.properties[key]) new Property(Locator, 'string', key, { default: '', exposed: false, condition: { formats: [FORMAT_ID] } });
-			}
-		}
-	} catch (e) { console.warn('[装配] 登记 Locator 复调用字段失败', e); }
 	const P = (target, type, name, options) => new Property(target, type, name, Object.assign({ condition: cond, exposed: true }, options));
 P(ModelProject, 'string', 'imda_namespace', { label: '命名空间（可带子空间，如 sqsptst:weapon/shotgun）', default: 'custom' });
 	P(ModelProject, 'boolean', 'imda_center_pivot', { label: '旋转枢轴用 (0.5,0.5,0.5)（= 像素 8,8,8）', default: false });
@@ -4877,7 +4776,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, regenerateSubtreeUuids, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

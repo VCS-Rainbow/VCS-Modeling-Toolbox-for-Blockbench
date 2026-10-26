@@ -1,7 +1,83 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-26 · 当前版本 **0.68.98**（tag `v0.68.98`）
+> 生成时间：2026-10-26 · 当前代码基线 **0.68.85**（tag `v0.68.85`）
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
+> 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退，不要把这些版本的“兜底补写/强制标记”重新叠回来。
+
+---
+
+## 0. 当前正在进行的任务（交接时未完成）
+
+**状态：已回退到 0.68.85，等待重新实现。**  
+**代码/测试已回退到 `v0.68.85`（单测 207/207），并已复制到 Blockbench 插件目录；`0.68.86`–`0.68.98` 的尝试不采用。**
+
+### 0.1 用户目标
+
+1. 选中复调用 Locator 后执行「实例化」，生成真实分组/模型节点。
+2. 实例化完成后按一次 Ctrl+Z，必须完整恢复：
+   - 删除所有新生成的分组和方块；
+   - 恢复被删除的 Locator；
+   - 恢复 Locator 的 `imda_call_target` 和 `imda_call_overrides`；
+   - 恢复 outliner 顺序和选择状态。
+3. 实例化时把每个 Locator 自己的 `imda_call_overrides` 应用到对应副本，不能只对第一个生效。
+
+### 0.2 用户实际反馈
+
+- 0.68.85：能实例化，但 Ctrl+Z 没有反应；覆盖没有生效。
+- 0.68.86–0.68.98：反复修改 `Undo` aspects、UUID、兜底历史、threshold 强制标记，用户仍反馈“可以实例化，但撤销完全没响应，覆盖也没有”；最后按要求回退。
+- 关键事实：不是“只撤销失败”，而是 **Ctrl+Z 完全没有响应**；说明 Undo 历史可能没有写入，或写入后 `current_save`/history 被污染。
+
+### 0.3 0.68.85 当前实现与已确认的问题
+
+文件 `item_model_definition_assembly.js`，函数 `instantiateCallTags` 约 2800–2868 行。
+
+已确认/高概率的缺陷：
+
+1. **init/finish aspects 不平衡**
+   - init：`Undo.initEdit({ outliner: true, elements: locators.slice() })`
+   - finish：`Undo.finishEdit('实例化复调用标签', { outliner: true, groups: createdGroups, elements: createdCubes.concat(locators) })`
+   - Locator 同时出现在 init 和 finish 的 `elements`，不符合 Blockbench 的 aspect 约定：删除对象应只在 init，新增对象应只在 finish。
+   - `createdGroups` 只收根分组，嵌套分组没有收；undo 的 groups 差异可能删不干净。
+
+2. **outliner 快照无法独立完成撤销**
+   - Blockbench `Outliner.loadJSON()` 对快照中不存在的节点不会删除，而是把未处理的 `Group.all`/`Outliner.elements` 节点重新 push 到 `Outliner.root`；仅靠 `outliner: true` 会留下新分组。
+   - 被删除的 Locator 在 outliner 快照里只剩 UUID；快照不保存对象数据，必须靠 `elements` 的 undo save 重建。
+
+3. **Locator 自定义字段不在 undo 快照里**
+   - Blockbench `Locator` 继承 `OutlinerElement.getUndoCopy()`，它只通过构造器 `extend()` 复制 `Locator.properties` 中登记的字段。
+   - 插件直接挂在 Locator 上的 `imda_call_target`、`imda_call_overrides`、`imda_call_threshold`、`imda_call_property`、`imda_call_index`、`imda_call_scale` 没有登记，undo 重建后可能变成空标签。
+
+4. **覆盖应用时机错误**
+   - 0.68.85 在 `created.addTo(parent)` **之前**、`created.init()` **之前**应用覆盖；`init()` 可能重置/覆盖这些字段。
+   - `property` 先去掉 `minecraft:` 前缀，随后通用字段循环又把它写回原值（循环里包含 `property`）。
+   - 目标分组是 `range_dispatch` 时，父级 `imda_threshold_format` 在导出时优先于子分组 `imda_threshold`；子分支的 `threshold_format` 也没有被导出器读取，所以覆盖阈值/格式可能完全不体现在 JSON。
+
+5. **副本 UUID 冲突**
+   - Blockbench `Group.duplicate()` 使用 `new this.constructor(this)`，会沿用原分组 UUID；保存项目里已发现两个“调用 sacpack2”分组 UUID 相同。
+   - 副本 UUID 冲突会破坏 `OutlinerNode.uuids` 查找/撤销目标；但 0.68.89–0.97 的“递归重生成 UUID”曾因没同步 `OutlinerNode.uuids` 让撤销更坏，重做时必须同时处理注册表，且不要无条件改 UUID。
+
+### 0.4 推荐的下一次实现顺序
+
+1. 只改 `instantiateCallTags` 的撤销 aspects，先不动 UUID：
+   - init：`{ outliner: true, groups: 父分组去重, elements: 待删除 Locator }`
+   - finish：`{ outliner: true, groups: 父分组 + 全部新建分组（含嵌套）, elements: 全部新建方块 }`
+   - 先验证 Ctrl+Z 能删除新分组、恢复 Locator。
+2. 把 `imda_call_*` 登记为 `Locator` 的 Property，保证 `getUndoCopy()/getSaveCopy()` 能复制；或给 `Locator.getUndoCopy` 做受控补丁。
+3. 再修覆盖：
+   - 移到 `created.init()` 之后应用；
+   - 循环排除 `property`，统一去 `minecraft:` 前缀；
+   - 子分支阈值覆盖显式优先于父 range 的 `threshold_format`；
+   - 导出器读取子分支 `threshold_format`。
+4. 最后处理副本 UUID：只在检测到与目标/已有节点冲突时生成新 UUID，并同步 `OutlinerNode.uuids`。不要无条件重生成。
+5. 每步都用真实 Blockbench 操作验证，并补一个“实例化→撤销”集成测试；不要再用 `undo` 事件兜底或手工 push history 掩盖问题。
+
+### 0.5 验证清单
+
+- `node --check item_model_definition_assembly.js`
+- `node _test_sim.js`（0.68.85 基线 207/207）
+- `node _test_assembly.js`（当前 mock 有 File 菜单报错，可能 exit 1，仅作冒烟）
+- 真实 Blockbench：新建项目 → 选中一个复调用 Locator → 实例化 → Ctrl+Z 一次；检查分组、Locator、目标 UUID、覆盖 JSON。
+- Console 关注：`[装配] 实例化复调用失败`、`Undo` 相关异常；0.68.85 没有额外撤销日志，重做时可加临时日志。
 
 ---
 
@@ -140,6 +216,20 @@
 ## 3. 版本历史（近期，git tag）
 
 ```
+0.68.98  实验：range 子分支 threshold_format 优先（已回退）
+0.68.97  实验：清 threshold_force 继承（已回退）
+0.68.96  实验：Locator 字段 Property + property 前缀（已回退）
+0.68.95  实验：撤销 aspects + threshold_force（已回退）
+0.68.94  实验：outliner 快照 + 手工补历史（已回退）
+0.68.93  实验：补 parentGroups（已回退）
+0.68.92  实验：undo 事件兜底（已回退）
+0.68.91  实验：同步 UUID 注册表（已回退）
+0.68.90  实验：重写 UUID/撤销（已回退）
+0.68.89  实验：副本重生成 UUID（已回退）
+0.68.88  实验：groups aspects / 覆盖日志（已回退）
+0.68.87  实验：initEdit groups aspect（已回退）
+0.68.86  实验：覆盖改到 init 后（已回退）
+0.68.85  当前基线（回退点）：复调用实例化、覆盖字段、右键菜单
 0.68.28  全量 imm_ → imda_，旧项目自动迁移
 0.68.27  adopt 不再覆盖已有属性（修目标被清空）
 0.68.26  批量编辑纳入 selected 标记，目标不存在时提示
