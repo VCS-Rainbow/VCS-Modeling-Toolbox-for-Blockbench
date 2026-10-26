@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.85', api.VERSION, '0.68.85');
+eq('版本是 0.68.86', api.VERSION, '0.68.86');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -857,6 +857,15 @@ global.Outliner.root.length = 0; global.Outliner.root.push(invParent, valModel);
 api.removeInvalidInternalGroups();
 eq('无效 internal 被删除', invParent.children.indexOf(invInternal), -1);
 eq('model 下的 internal 保留', valModel.children.indexOf(valInternal) >= 0, true);
+/* ---------- 批量实例化覆盖 ---------- */
+console.log('\n[批量实例化覆盖]');
+const ovGroupA = new global.Group({ name: 'ovA', imda_type: 'range_dispatch' });
+const ovGroupB = new global.Group({ name: 'ovB', imda_type: 'range_dispatch' });
+const ovLocA = new global.Locator({ name: 'a', position: [0,0,0], rotation: [0,0,0] }); ovLocA.imda_call_overrides = JSON.stringify({ threshold_format: 'i' });
+const ovLocB = new global.Locator({ name: 'b', position: [0,0,0], rotation: [0,0,0] }); ovLocB.imda_call_overrides = JSON.stringify({ threshold_format: '2i' });
+api.applyCallOverridesToGroup(ovGroupA, ovLocA); api.applyCallOverridesToGroup(ovGroupB, ovLocB);
+eq('批量覆盖 A', ovGroupA.imda_threshold_format, 'i');
+eq('批量覆盖 B', ovGroupB.imda_threshold_format, '2i');
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);
