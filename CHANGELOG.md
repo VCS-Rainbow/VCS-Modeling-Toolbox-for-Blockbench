@@ -2,6 +2,10 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.94
+- 实例化撤销改为 outliner 全量快照；若 `finishEdit` 没有把这一步写进历史，就用前后快照补写一条，避免 current_save 丢失导致 Ctrl+Z 完全无反应。
+- 实例化覆盖逐个 Locator 应用并统计；快捷消息显示带覆盖的数量，Console 输出每个标签的覆盖前后值。
+- 单测 216 项。
 ## 0.68.93
 - 修复实例化撤销无响应：`Undo.initEdit` 未定义/未登记 `parentGroups`，而 `finishEdit` 引用它抛 ReferenceError，导致 Undo 事务没有关闭。
 - 单测 210 项。

@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.93', api.VERSION, '0.68.93');
+eq('版本是 0.68.94', api.VERSION, '0.68.94');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -874,6 +874,38 @@ const uuidCube = new global.Cube({ from: [0,0,0], to: [1,1,1], origin: [0,0,0], 
 uuidChild.children.push(uuidCube); uuidParent.children.push(uuidChild);
 api.regenerateSubtreeUuids(uuidParent);
 eq('复制子树 UUID 唯一', new Set([uuidParent.uuid, uuidChild.uuid, uuidCube.uuid]).size, 3);
+/* ---------- 实例化实际流程（撤销 aspects + 覆盖） ---------- */
+console.log('\n[实例化流程]');
+const instParent = new global.Group({ name: 'instParent', imda_type: 'composite' });
+const instTarget = new global.Group({ name: 'instTarget', imda_type: 'range_dispatch', uuid: 'inst-target', origin: [0,0,0], rotation: [0,0,0] });
+instTarget.duplicate = function () {
+	const copy = new global.Group({ name: this.name, imda_type: this.imda_type, imda_threshold_format: this.imda_threshold_format, origin: [0,0,0], rotation: [0,0,0] });
+	copy.children = [];
+	return copy;
+};
+global.Group.all.push(instTarget);
+const instLoc = new global.Locator({ name: '调用 instTarget', position: [0,0,0], rotation: [0,0,0] });
+instLoc.parent = instParent; instParent.children.push(instLoc);
+instLoc.imda_call_target = 'inst-target';
+instLoc.imda_call_overrides = JSON.stringify({ threshold_format: '2i', threshold: '7' });
+global.Outliner.root.push(instParent);
+let instInitAspects = null, instFinishAspects = null;
+global.Undo = {
+	history: [], index: 0,
+	initEdit(a) { instInitAspects = a; },
+	finishEdit(name, a) { instFinishAspects = a; this.history.push({ action: name }); this.index = this.history.length; },
+};
+const oldMessageBox = global.Blockbench.showMessageBox;
+global.Blockbench.showMessageBox = (opts, cb) => { if (typeof cb === 'function') cb(0); };
+api.instantiateCallTags([instLoc]);
+global.Blockbench.showMessageBox = oldMessageBox;
+eq('实例化 init 记录 outliner', !!(instInitAspects && instInitAspects.outliner), true);
+eq('实例化 finish 记录 outliner', !!(instFinishAspects && instFinishAspects.outliner), true);
+const instCreated = instParent.children.find(n => n && n.name === '调用 instTarget');
+eq('实例化节点已加入父分组', !!instCreated, true);
+eq('实例化覆盖 threshold_format', instCreated && instCreated.imda_threshold_format, '2i');
+eq('实例化覆盖 threshold', String(instCreated && instCreated.imda_threshold), '7');
+eq('实例化后 UUID 不与目标相同', !!(instCreated && instCreated.uuid && instCreated.uuid !== 'inst-target'), true);
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);

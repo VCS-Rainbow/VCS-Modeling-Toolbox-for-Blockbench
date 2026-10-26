@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.93';
+const VERSION = '0.68.94';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2830,8 +2830,6 @@ function applyCallOverridesToGroup(group, locator) {
 	} catch (e) { /* ignore */ }
 }
 
-const imdaInstantiateBatches = [];
-
 function instantiateCallTags(targets) {
 	const locators = [];
 	if (Array.isArray(targets)) {
@@ -2847,10 +2845,12 @@ function instantiateCallTags(targets) {
 		buttons: ['实例化', '取消'], confirm: 0, cancel: 1,
 	}, (button) => {
 		if (button !== 0) return;
-		const parentGroups = [];
-		for (const locator of locators) { const parent = locator.parent; if (isGroup(parent) && parentGroups.indexOf(parent) < 0) parentGroups.push(parent); }
-		try { Undo.initEdit({ outliner: true, groups: parentGroups.slice(), elements: locators.slice() }); } catch (e) { /* ignore */ }
+		// 只记录 outliner 快照：实例化同时会删除 Locator、新增分组和方块，逐项 aspects 很容易漏。
+		let undoBefore = null;
+		try { if (typeof UndoSystem !== 'undefined') undoBefore = new UndoSystem.save({ outliner: true }); } catch (e) { console.warn('[装配] 实例化 撤销前快照失败', e); }
+		try { Undo.initEdit({ outliner: true }); } catch (e) { console.warn('[装配] 实例化 initEdit 失败', e); }
 		let done = 0;
+		let overridden = 0;
 		const createdGroups = [];
 		const createdCubes = [];
 		const collectCubes = (node) => { for (const child of (node.children || [])) { if (isCube(child)) createdCubes.push(child); else if (isGroup(child)) collectCubes(child); } };
@@ -2879,9 +2879,23 @@ function instantiateCallTags(targets) {
 					created = new Group({ name: '实例 ' + target.split(':').pop(), imda_type: 'model', imda_model: target, origin: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() });
 				}
 				if (!created) continue;
+				// 每次实例化都必须是独立的 outliner 节点，沿用原 UUID 会让 Blockbench 的撤销/查找表互相覆盖
+				regenerateSubtreeUuids(created);
+				// duplicate() 可能用同一个 UUID 覆盖了目标分组的查找表，实例化后必须把目标映射还回去
+				try { if (targetGroup && typeof OutlinerNode !== 'undefined' && OutlinerNode.uuids && OutlinerNode.uuids[targetGroup.uuid] !== targetGroup) OutlinerNode.uuids[targetGroup.uuid] = targetGroup; } catch (e) { /* ignore */ }
 				if (parent) created.addTo(parent); else created.addTo();
 				try { created.init(); } catch (e) { /* ignore */ }
 				applyCallOverridesToGroup(created, locator);
+				try {
+					const applied = {};
+					for (const key of ['property', 'index', 'scale', 'threshold', 'threshold_format', 'component', 'predicate', 'value', 'keybind', 'target', 'source', 'wobble', 'normalize', 'period', 'remaining', 'condition']) {
+						const prop = ({ threshold: 'imda_threshold', threshold_format: 'imda_threshold_format', target: 'imda_range_target', source: 'imda_range_source', wobble: 'imda_range_wobble', normalize: 'imda_range_normalize', period: 'imda_range_period', remaining: 'imda_range_remaining' })[key] || ('imda_' + key);
+						if (created[prop] !== undefined && created[prop] !== '') applied[key] = created[prop];
+					}
+					const ovKeys = Object.keys(callOverridesOf(locator));
+					if (ovKeys.length) overridden++;
+					console.log('[装配] 实例化覆盖', locator.name || 'Locator', JSON.stringify(callOverridesOf(locator)), '→', JSON.stringify(applied));
+				} catch (e) { /* ignore */ }
 				if (index >= 0) { const at = siblings.indexOf(created); if (at >= 0) siblings.splice(at, 1); siblings.splice(Math.min(index, siblings.length), 0, created); }
 				createdGroups.push(created);
 				collectCubes(created);
@@ -2889,11 +2903,23 @@ function instantiateCallTags(targets) {
 				done++;
 			} catch (error) { console.warn('[装配] 实例化复调用失败', error); }
 		}
-		try { Undo.finishEdit('实例化复调用标签', { outliner: true, groups: parentGroups.concat(createdGroups), elements: createdCubes.concat(locators) }); } catch (e) { /* ignore */ }
-		if (createdGroups.length) imdaInstantiateBatches.push(createdGroups.slice());
+		try { Undo.finishEdit('实例化复调用标签', { outliner: true }); } catch (e) { console.warn('[装配] 实例化 finishEdit 失败', e); }
+		// 某些插件状态会让 finishEdit 的 current_save 丢失，导致历史里没有这一步。这里用前后快照兜底。
+		try {
+			const last = Undo.history[Undo.history.length - 1];
+			if (!last || last.action !== '实例化复调用标签' || Undo.index < Undo.history.length) {
+				if (undoBefore && typeof UndoSystem !== 'undefined') {
+					Undo.history.length = Undo.index;
+					Undo.history.push({ before: undoBefore, post: new UndoSystem.save({ outliner: true }), action: '实例化复调用标签', type: 'edit', time: Date.now() });
+					Undo.index = Undo.history.length;
+					console.log('[装配] 实例化撤销记录由兜底补写');
+				}
+			}
+		} catch (e) { console.warn('[装配] 实例化 撤销兜底失败', e); }
+		try { console.log('[装配] 实例化撤销记录', Undo.history.length, Undo.index, (Undo.history[Undo.history.length - 1] || {}).action); } catch (e) { /* ignore */ }
 		try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 		try { Project.saved = false; } catch (e) { /* ignore */ }
-		Blockbench.showQuickMessage('已实例化 ' + done + ' 个复调用标签', 3000);
+		Blockbench.showQuickMessage('已实例化 ' + done + ' 个复调用标签' + (overridden ? ('，其中 ' + overridden + ' 个带覆盖') : ''), 3000);
 	});
 }
 
@@ -4651,7 +4677,6 @@ Plugin.register('item_model_definition_assembly', {
 		try { attachAnimationTimelineMenu(); } catch (e) { /* ignore */ }
 		
 		try { if (typeof Blockbench !== 'undefined' && Blockbench.on) Blockbench.on('load_project', () => { try { migrateLegacyAll(); } catch (e) { /* ignore */ } try { attachAnimationTimelineMenu(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
-	try { if (typeof Blockbench !== 'undefined' && Blockbench.on) Blockbench.on('undo', (data) => { const action = String((data && data.entry && data.entry.action) || ''); if (action.indexOf('实例化') < 0) return; const batch = imdaInstantiateBatches.pop(); if (!batch) return; for (const group of batch) { try { if (typeof Group !== 'undefined' && Array.isArray(Group.all) && Group.all.indexOf(group) >= 0) group.remove(); } catch (e) { /* ignore */ } } try { Canvas.updateAll(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
 		console.log('[装配] onload 开始，版本 ' + VERSION);
 		try {
 		try {
@@ -4807,7 +4832,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, regenerateSubtreeUuids, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, regenerateSubtreeUuids, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
