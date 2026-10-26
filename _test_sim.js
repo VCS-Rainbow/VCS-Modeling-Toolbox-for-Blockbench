@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.95', api.VERSION, '0.68.95');
+eq('版本是 0.68.95', api.VERSION, '0.68.96');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -866,6 +866,13 @@ const ovLocB = new global.Locator({ name: 'b', position: [0,0,0], rotation: [0,0
 api.applyCallOverridesToGroup(ovGroupA, ovLocA); api.applyCallOverridesToGroup(ovGroupB, ovLocB);
 eq('批量覆盖 A', ovGroupA.imda_threshold_format, 'i');
 eq('批量覆盖 B', ovGroupB.imda_threshold_format, '2i');
+const ovPropGroup = new global.Group({ name: 'ovProp', imda_type: 'range_dispatch' });
+const ovPropLoc = new global.Locator({ name: 'prop', position: [0,0,0], rotation: [0,0,0] });
+ovPropLoc.imda_call_overrides = JSON.stringify({ property: 'minecraft:cooldown', threshold: 0 });
+api.applyCallOverridesToGroup(ovPropGroup, ovPropLoc);
+eq('property 覆盖去掉 minecraft: 前缀', ovPropGroup.imda_property, 'cooldown');
+eq('threshold=0 覆盖保留', ovPropGroup.imda_threshold, 0);
+eq('threshold=0 标记强制', ovPropGroup.imda_threshold_force, true);
 /* ---------- 实例化 UUID ---------- */
 console.log('\n[实例化 UUID]');
 const uuidParent = new global.Group({ name: 'uuidParent', imda_type: 'composite' });

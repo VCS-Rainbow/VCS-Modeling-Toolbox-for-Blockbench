@@ -2,6 +2,10 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.96
+- 把 `imda_call_target`/`imda_call_overrides` 等字段登记为 `Locator` 的 Property，Blockbench `getUndoCopy()` 重建 Locator 时不再丢失复调用目标与覆盖。
+- 修复 `property` 覆盖被通用字段循环写回 `minecraft:` 前缀；`property` 现统一去掉前缀。
+- 补 property/threshold=0 覆盖回归测试，单测 223 项。
 ## 0.68.95
 - 修正实例化撤销：不再只依赖 outliner 快照，`initEdit` 同时登记父分组和待删除 Locator，`finishEdit` 登记新建分组/方块。撤销时才能重建 Locator、真正删除新增分组，而不是被 Blockbench 的未处理节点兜底重新挂到 root。
 - 显式从 `Blockbench.Project.undo` 取撤销栈，避免插件作用域里全局 `Undo` 不可用；兜底补写仍保留。

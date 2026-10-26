@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.95';
+const VERSION = '0.68.96';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2825,6 +2825,8 @@ function applyCallOverridesToGroup(group, locator) {
 		const ov = callOverridesOf(locator);
 		if (ov.property) group.imda_property = String(ov.property).replace(/^minecraft:/, '');
 		for (const key of ['index', 'scale', 'threshold', 'threshold_format', 'component', 'predicate', 'value', 'keybind', 'target', 'source', 'wobble', 'normalize', 'period', 'remaining', 'condition']) {
+			// property 已在上面去掉 minecraft: 前缀，不能再被通用循环覆盖回原值。
+			if (key === 'property') continue;
 			if (ov[key] === undefined || ov[key] === '') continue;
 			const prop = ({ threshold: 'imda_threshold', threshold_format: 'imda_threshold_format', target: 'imda_range_target', source: 'imda_range_source', wobble: 'imda_range_wobble', normalize: 'imda_range_normalize', period: 'imda_range_period', remaining: 'imda_range_remaining' })[key] || ('imda_' + key);
 			if (['wobble', 'normalize', 'remaining'].includes(key)) group[prop] = ov[key] === 'true';
