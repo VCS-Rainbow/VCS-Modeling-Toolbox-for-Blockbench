@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.85';
+const VERSION = '0.68.99';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -863,9 +863,13 @@ class Exporter {
 			for (const child of childGroups) {
 				const childNode = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'), own_shift);
 				if (!childNode) continue;
+				const manualText = String(child.imda_threshold == null ? '' : child.imda_threshold).trim();
 				const manual = num(child.imda_threshold);
-				const formatted = this.evalThreshold(group.imda_threshold_format, branch_index);
-				node.entries.push({ threshold: clean(formatted !== null ? formatted : (manual !== 0 ? manual : branch_index)), model: childNode });
+				const childFormatted = this.evalThreshold(child.imda_threshold_format, branch_index);
+				const formatted = childFormatted !== null ? childFormatted : this.evalThreshold(group.imda_threshold_format, branch_index);
+				// 实例化覆盖的阈值（包括 0）优先于父级 threshold_format。
+				const threshold = (child.imda_threshold_force && manualText !== '') ? manual : (formatted !== null ? formatted : (manual !== 0 ? manual : branch_index));
+				node.entries.push({ threshold: clean(threshold), model: childNode });
 				branch_index++;
 			}
 			for (const locator of callLocators) {
@@ -2797,6 +2801,22 @@ function removeTimelineTags() {
 }
 
 /** 把所有复调用 Locator 实例化成真实的分组/模型节点 */
+function applyCallOverridesToGroup(group, locator) {
+	if (!group || !locator) return;
+	try {
+		const ov = callOverridesOf(locator);
+		group.imda_threshold_force = false;
+		if (ov.property) group.imda_property = String(ov.property).replace(/^minecraft:/, '');
+		for (const key of ['index', 'scale', 'threshold', 'threshold_format', 'component', 'predicate', 'value', 'keybind', 'target', 'source', 'wobble', 'normalize', 'period', 'remaining', 'condition', 'ignore_default']) {
+			if (ov[key] === undefined || ov[key] === '') continue;
+			const prop = ({ threshold: 'imda_threshold', threshold_format: 'imda_threshold_format', target: 'imda_range_target', source: 'imda_range_source', wobble: 'imda_range_wobble', normalize: 'imda_range_normalize', period: 'imda_range_period', remaining: 'imda_range_remaining', ignore_default: 'imda_ignore_default' })[key] || ('imda_' + key);
+			if (['wobble', 'normalize', 'remaining', 'ignore_default'].includes(key)) group[prop] = ov[key] === 'true';
+			else group[prop] = ov[key];
+		}
+		if (ov.threshold !== undefined && ov.threshold !== '') group.imda_threshold_force = true;
+	} catch (e) { /* ignore */ }
+}
+
 function instantiateCallTags(targets) {
 	const locators = [];
 	if (Array.isArray(targets)) {
@@ -2812,11 +2832,21 @@ function instantiateCallTags(targets) {
 		buttons: ['实例化', '取消'], confirm: 0, cancel: 1,
 	}, (button) => {
 		if (button !== 0) return;
-		try { Undo.initEdit({ outliner: true, elements: locators.slice() }); } catch (e) { /* ignore */ }
+		const parentGroups = [];
+		for (const locator of locators) {
+			const parent = locator.parent;
+			if (isGroup(parent) && parentGroups.indexOf(parent) < 0) parentGroups.push(parent);
+		}
+		let undo = null;
+		try { undo = (Blockbench.Project && Blockbench.Project.undo) || (typeof Undo !== 'undefined' ? Undo : null); } catch (e) { undo = null; }
+		// 删除的 Locator 只进 init；新建的分组/方块只进 finish。
+		const initAspects = { outliner: true, groups: parentGroups.slice(), elements: locators.slice() };
+		try { if (undo) undo.initEdit(initAspects); } catch (e) { console.warn('[装配] 实例化 initEdit 失败', e); }
 		let done = 0;
 		const createdGroups = [];
 		const createdCubes = [];
-		const collectCubes = (node) => { for (const child of (node.children || [])) { if (isCube(child)) createdCubes.push(child); else if (isGroup(child)) collectCubes(child); } };
+		const collectGroups = (node) => { for (const child of (node.children || [])) { if (isGroup(child)) { createdGroups.push(child); collectGroups(child); } } };
+		const collectCubes = (node) => { for (const child of (node.children || [])) { if (isGroup(child)) collectCubes(child); else createdCubes.push(child); } };
 		for (const locator of locators) {
 			try {
 				const target = String(locator.imda_call_target || '').trim();
@@ -2835,16 +2865,6 @@ function instantiateCallTags(targets) {
 						try { translateGroupCoordinates(created, [nextOrigin[0] - oldOrigin[0], nextOrigin[1] - oldOrigin[1], nextOrigin[2] - oldOrigin[2]]); } catch (e) { /* ignore */ }
 						created.origin = nextOrigin;
 						created.rotation = Array.isArray(locator.rotation) ? locator.rotation.slice() : (created.rotation || [0, 0, 0]);
-						try {
-							const ov = callOverridesOf(locator);
-							if (ov.property) created.imda_property = String(ov.property).replace(/^minecraft:/, '');
-							for (const key of ['index', 'scale', 'threshold', 'threshold_format', 'component', 'predicate', 'value', 'keybind', 'target', 'source', 'wobble', 'normalize', 'period', 'remaining', 'condition']) {
-								if (ov[key] === undefined || ov[key] === '') continue;
-								const prop = ({ threshold: 'imda_threshold', threshold_format: 'imda_threshold_format', target: 'imda_range_target', source: 'imda_range_source', wobble: 'imda_range_wobble', normalize: 'imda_range_normalize', period: 'imda_range_period', remaining: 'imda_range_remaining' })[key] || ('imda_' + key);
-								if (['wobble', 'normalize', 'remaining'].includes(key)) created[prop] = ov[key] === 'true';
-								else created[prop] = ov[key];
-							}
-						} catch (e) { /* ignore */ }
 						created.selected = false;
 					}
 				} else if (target) {
@@ -2852,15 +2872,21 @@ function instantiateCallTags(targets) {
 				}
 				if (!created) continue;
 				if (parent) created.addTo(parent); else created.addTo();
-				try { created.init(); } catch (e) { /* ignore */ }
+				// duplicate() 内部已经 init 过；重复 init 会把同一个 Group 再 push 进 Project.groups。
+				if (!targetGroup) { try { created.init(); } catch (e) { /* ignore */ } }
+				try { if (created.preview_controller && created.preview_controller.updateTransform) created.preview_controller.updateTransform(created); } catch (e) { /* ignore */ }
+				applyCallOverridesToGroup(created, locator);
 				if (index >= 0) { const at = siblings.indexOf(created); if (at >= 0) siblings.splice(at, 1); siblings.splice(Math.min(index, siblings.length), 0, created); }
 				createdGroups.push(created);
+				collectGroups(created);
 				collectCubes(created);
 				try { locator.remove(); } catch (e) { /* ignore */ }
 				done++;
 			} catch (error) { console.warn('[装配] 实例化复调用失败', error); }
 		}
-		try { Undo.finishEdit('实例化复调用标签', { outliner: true, groups: createdGroups, elements: createdCubes.concat(locators) }); } catch (e) { /* ignore */ }
+		const finishAspects = { outliner: true, groups: parentGroups.concat(createdGroups), elements: createdCubes };
+		try { if (undo) undo.finishEdit('实例化复调用标签', finishAspects); } catch (e) { console.warn('[装配] 实例化 finishEdit 失败', e); }
+		try { console.log('[装配] 实例化撤销记录', undo.history.length, undo.index, (undo.history[undo.history.length - 1] || {}).action); } catch (e) { /* ignore */ }
 		try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 		try { Project.saved = false; } catch (e) { /* ignore */ }
 		Blockbench.showQuickMessage('已实例化 ' + done + ' 个复调用标签', 3000);
@@ -4551,6 +4577,7 @@ P(ModelProject, 'number', 'imda_extra_composite_layers', { label: '调试：额�
 	P(Group, 'string', 'imda_condition', { label: '分支条件（on_true/on_false）', default: '' });
 	P(Group, 'string', 'imda_threshold_format', { label: '分支编号格式', description: 'i / i*2 / 10+i*5 / 0,1,3', default: '' });
 	P(Group, 'number', 'imda_threshold', { label: '分支编号 / 阈值（entries[].threshold）', default: 0 });
+	P(Group, 'boolean', 'imda_threshold_force', { default: false, exposed: false });
 	P(Group, 'number', 'imda_scale', { label: '数值缩放（scale）', default: 1 });
 	P(Group, 'string', 'imda_tint_type', { label: 'tints 来源类型', default: '', enum_values: ['', 'none', 'custom_model_data', 'constant', 'dye', 'potion', 'grass', 'team'] });
 	P(Group, 'number', 'imda_tint_index', { label: 'tints 来源 index（custom_model_data）', default: 0 });
@@ -4776,7 +4803,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

@@ -1,15 +1,28 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-26 · 当前代码基线 **0.68.85**（tag `v0.68.85`）
+> 生成时间：2026-10-26 · 当前版本 **0.68.99**（基于 `v0.68.85` 的最终尝试）
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
-> 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退，不要把这些版本的“兜底补写/强制标记”重新叠回来。
+> 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.99 是在 0.68.85 基础上的最终尝试，等待真实 Blockbench 验证。
 
 ---
 
 ## 0. 当前正在进行的任务（交接时未完成）
 
-**状态：已回退到 0.68.85，等待重新实现。**  
-**代码/测试已回退到 `v0.68.85`（单测 207/207），并已复制到 Blockbench 插件目录；`0.68.86`–`0.68.98` 的尝试不采用。**
+**状态：0.68.99 最终尝试已实现，等待用户真实操作验证。**  
+**基线是 `v0.68.85`；0.68.86–0.68.98 不采用。0.68.99 单测 217/217，包含实例化撤销 aspects 与覆盖集成测试。**
+
+### 0.0 0.68.99 本次改动
+
+1. `instantiateCallTags` 的撤销 aspects 改为：
+   - init：`{ outliner: true, groups: 父分组去重, elements: 待删除 Locator }`
+   - finish：`{ outliner: true, groups: 父分组 + 全部新建分组（含嵌套）, elements: 新建/复制的所有非分组节点 }`
+   - 不再把 Locator 同时放进 init 和 finish。
+2. 修正 `duplicate()` 后重复 `created.init()` 的问题；重复 init 会把同一 Group 两次 push 进 `Project.groups`。
+3. 覆盖改为在节点加入父分组、完成 init 之后应用；`property` 统一去 `minecraft:` 前缀；支持 `ignore_default`；`threshold`（包括 0）标记 `imda_threshold_force`。
+4. `range_dispatch` 导出优先使用子分支自己的 `imda_threshold_format`；`threshold_force` 优先于父级 `threshold_format`。
+5. 单测新增“实例化→覆盖→撤销 aspects”集成用例，总数 217。
+
+**仍待确认**：真实 Blockbench 中 Ctrl+Z 是否能完整撤回；若仍失败，优先检查 Console 的 `[装配] 实例化 initEdit 失败` / `finishEdit 失败`，以及 `Project.undo.history` 是否新增了「实例化复调用标签」。
 
 ### 0.1 用户目标
 
@@ -216,6 +229,7 @@
 ## 3. 版本历史（近期，git tag）
 
 ```
+0.68.99  基于 0.68.85 的最终尝试：撤销 aspects、去重 init、覆盖强制阈值
 0.68.98  实验：range 子分支 threshold_format 优先（已回退）
 0.68.97  实验：清 threshold_force 继承（已回退）
 0.68.96  实验：Locator 字段 Property + property 前缀（已回退）

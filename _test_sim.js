@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.85', api.VERSION, '0.68.85');
+eq('版本是 0.68.99', api.VERSION, '0.68.99');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -857,6 +857,43 @@ global.Outliner.root.length = 0; global.Outliner.root.push(invParent, valModel);
 api.removeInvalidInternalGroups();
 eq('无效 internal 被删除', invParent.children.indexOf(invInternal), -1);
 eq('model 下的 internal 保留', valModel.children.indexOf(valInternal) >= 0, true);
+/* ---------- 实例化：撤销 aspects + 每个标签覆盖 ---------- */
+console.log('\n[实例化流程]');
+const instParent = new global.Group({ name: 'instParent', imda_type: 'composite' });
+const instTarget = new global.Group({ name: 'instTarget', imda_type: 'range_dispatch', uuid: 'inst-target', origin: [0,0,0], rotation: [0,0,0] });
+instTarget.duplicate = function () {
+	const copy = new global.Group({ name: this.name, imda_type: this.imda_type, uuid: 'inst-copy-' + Math.random(), origin: [0,0,0], rotation: [0,0,0] });
+	return copy;
+};
+global.Group.all.push(instTarget);
+const instLoc = new global.Locator({ name: '调用 instTarget', position: [0,0,0], rotation: [0,0,0] });
+instLoc.parent = instParent; instParent.children.push(instLoc);
+instLoc.imda_call_target = 'inst-target';
+instLoc.imda_call_overrides = JSON.stringify({ threshold_format: '2i', threshold: 7, property: 'minecraft:cooldown' });
+global.Outliner.root.push(instParent);
+let instInit = null, instFinish = null;
+const instUndo = {
+	history: [], index: 0,
+	initEdit(a) { instInit = a; },
+	finishEdit(name, a) { instFinish = a; this.history.push({ action: name }); this.index = this.history.length; },
+};
+global.Blockbench.Project = global.Project;
+global.Project.undo = instUndo;
+const oldBox = global.Blockbench.showMessageBox;
+global.Blockbench.showMessageBox = (opts, cb) => { if (typeof cb === 'function') cb(0); };
+api.instantiateCallTags([instLoc]);
+global.Blockbench.showMessageBox = oldBox;
+const instCreated = instParent.children.find(n => n && n.name === '调用 instTarget');
+eq('实例化 init 含待删除 Locator', !!(instInit && instInit.elements && instInit.elements.indexOf(instLoc) >= 0), true);
+eq('实例化 init 含父分组', !!(instInit && instInit.groups && instInit.groups.indexOf(instParent) >= 0), true);
+eq('实例化 finish 不含 Locator', !!(instFinish && (!instFinish.elements || instFinish.elements.indexOf(instLoc) < 0)), true);
+eq('实例化 finish 含新分组', !!(instFinish && instFinish.groups && instFinish.groups.indexOf(instCreated) >= 0), true);
+eq('实例化节点已加入父分组', !!instCreated, true);
+eq('实例化覆盖 threshold_format', instCreated && instCreated.imda_threshold_format, '2i');
+eq('实例化覆盖 threshold', instCreated && String(instCreated.imda_threshold), '7');
+eq('实例化覆盖 threshold 强制', instCreated && instCreated.imda_threshold_force, true);
+eq('实例化覆盖 property 去前缀', instCreated && instCreated.imda_property, 'cooldown');
+eq('实例化后副本 UUID 不同', !!(instCreated && instCreated.uuid !== 'inst-target'), true);
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);

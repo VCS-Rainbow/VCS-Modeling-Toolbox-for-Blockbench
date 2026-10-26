@@ -2,6 +2,12 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.99
+- 基于 `v0.68.85` 的最终尝试：实例化 Undo 的 init/finish aspects 分离（删除 Locator 只进 init，新建分组/方块只进 finish），并收集嵌套分组。
+- 修复 `duplicate()` 后重复 `created.init()` 造成同一 Group 两次进入 `Project.groups`。
+- 覆盖在加入父级/init 后应用；修正 property 前缀、补齐 ignore_default；threshold（含 0）用 `imda_threshold_force` 优先于父级 threshold_format。
+- range_dispatch 导出优先读取子分支 `imda_threshold_format`。
+- 新增实例化集成测试，单测 217 项。
 ## 0.68.98
 - 导出 range_dispatch 时优先使用子分支自己的 imda_threshold_format，不再无条件被父级格式覆盖；实例化覆盖的 	hreshold_format 现在会进入最终 JSON。
 ## 0.68.97
