@@ -71,7 +71,7 @@ const HIT = (items) => items.filter(i => i.hit).map(i => i.node.model);
 const leaf = (model) => ({ type: 'minecraft:model', model });
 
 console.log('版本：' + api.VERSION);
-eq('版本是 0.68.113', api.VERSION, '0.68.113');
+eq('版本是 0.68.114', api.VERSION, '0.68.114');
 eq('测试钩子暴露 simEvaluate', typeof api.simEvaluate, 'function');
 
 /* ---------- 项目设置里的目标版本（应为下拉） ---------- */
@@ -954,6 +954,52 @@ const descBefore = descParent.children.slice();
 const descChanged = api.sortBranchChildren(descParent);
 eq('5-i 不重排', descChanged, 0);
 eq('5-i 保持原顺序', descParent.children[0] === descBefore[0] && descParent.children[1] === descBefore[1], true);
+/* ---------- 父级编号格式优先于子级自带格式（bone7 5-i / sacpackN 带 i+iN） ---------- */
+console.log('\n[父级格式优先]');
+const pfRoot = new global.Group({ name: 'pfRoot', imda_type: 'composite' });
+const pfBone = new global.Group({ name: 'bone7', imda_type: 'range_dispatch', imda_property: 'minecraft:custom_model_data', imda_index: 0, imda_threshold_format: '5-i' });
+const pfChildren = [];
+[5, 4, 3, 2, 1].forEach((prefix, i) => {
+	// 子分组自带格式（i / i+N）且 threshold 是升序 1..5，正是真实工程里 bone7 的形态
+	const child = new global.Group({ name: '[' + prefix + '] sacpack' + (i + 1), imda_type: 'range_dispatch', imda_threshold_format: (i === 0 ? 'i' : 'i+' + i), imda_threshold: i + 1 });
+	child.children.push(new global.Group({ name: 'sacpack' + (i + 1) + '_leaf', imda_type: 'model', imda_model: 'ns:item/sacpack' + (i + 1) }));
+	pfChildren.push(child);
+	pfBone.children.push(child);
+});
+pfRoot.children.push(pfBone);
+global.Group.all = [pfRoot, pfBone].concat(pfChildren).concat(pfChildren.map(c => c.children[0]));
+global.Outliner.root.length = 0; global.Outliner.root.push(pfRoot);
+
+// 先跑一次分支名同步：子分组 threshold 应被写成与名字前缀同向的 5,4,3,2,1
+api.syncBranchLabels(pfBone);
+eq('同步后子分支 threshold 降序', pfChildren.map(c => c.imda_threshold).join(','), '5,4,3,2,1');
+eq('同步后不丢前缀', pfChildren.map(c => c.name).join('|'), '[5] sacpack1|[4] sacpack2|[3] sacpack3|[2] sacpack4|[1] sacpack5');
+
+const pfMapping = api.createExporter().buildMapping();
+const pfByName = {};
+(function walkPf(node) {
+	if (!node || typeof node !== 'object') return;
+	if (node.type === 'minecraft:range_dispatch' && node.node_name) pfByName[node.node_name] = (node.entries || []).map(e => String(e.threshold));
+	for (const key of ['models', 'entries', 'cases']) for (const child of (node[key] || [])) walkPf(child && child.model ? child.model : child);
+	for (const key of ['on_true', 'on_false', 'fallback', 'model']) if (node[key]) walkPf(node[key]);
+})(pfMapping);
+console.log('PF', JSON.stringify(pfByName));
+eq('父级 5-i 覆盖子级自带格式', (pfByName.bone7 || []).join(','), '5,4,3,2,1');
+
+// 阈值强制（实例化覆盖）仍然优先于父级格式
+pfChildren[0].imda_threshold_force = true;
+pfChildren[0].imda_threshold = 9;
+const pfForced = api.createExporter().buildMapping();
+const pfForcedByName = {};
+(function walkPf2(node) {
+	if (!node || typeof node !== 'object') return;
+	if (node.type === 'minecraft:range_dispatch' && node.node_name) pfForcedByName[node.node_name] = (node.entries || []).map(e => String(e.threshold));
+	for (const key of ['models', 'entries', 'cases']) for (const child of (node[key] || [])) walkPf2(child && child.model ? child.model : child);
+	for (const key of ['on_true', 'on_false', 'fallback', 'model']) if (node[key]) walkPf2(node[key]);
+})(pfForced);
+eq('threshold_force 仍优先', (pfForcedByName.bone7 || []).slice(0, 2).join(','), '9,4');
+pfChildren[0].imda_threshold_force = false;
+pfChildren[0].imda_threshold = 5;
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);

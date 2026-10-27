@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.113';
+const VERSION = '0.68.114';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -865,8 +865,12 @@ class Exporter {
 				if (!childNode) continue;
 				const manualText = String(child.imda_threshold == null ? '' : child.imda_threshold).trim();
 				const manual = num(child.imda_threshold);
-				const childFormatted = this.evalThreshold(child.imda_threshold_format, branch_index);
-				const formatted = childFormatted !== null ? childFormatted : this.evalThreshold(group.imda_threshold_format, branch_index);
+				// 父级编号格式优先：子分组自己的 imda_threshold_format 描述的是“它自己 entries 的编号”，
+				// 不是它在父级里的位置。若让子级格式覆盖父级，bone7 的 5-i 会被 sacpackN 自带的 i/i+N
+				// 顶掉，输出变成 0,1,1,2…（与名字前缀 [5..1] 相反）。只有父级没写格式时才回退到子级格式。
+				const parentFormatted = this.evalThreshold(group.imda_threshold_format, branch_index);
+				const childFormatted = parentFormatted === null ? this.evalThreshold(child.imda_threshold_format, branch_index) : null;
+				const formatted = parentFormatted !== null ? parentFormatted : childFormatted;
 				// 实例化覆盖的阈值（包括 0）优先于父级 threshold_format。
 				const threshold = (child.imda_threshold_force && manualText !== '') ? manual : (formatted !== null ? formatted : (manual !== 0 ? manual : branch_index));
 				node.entries.push({ threshold: clean(threshold), model: childNode });
@@ -2369,7 +2373,8 @@ function openPivotFix() {
 
 function syncBranchLabels(group) {
 	const type = String((group && group.imda_type) || '').replace(/^minecraft:/, '');
-	if (type !== 'range_dispatch' && type !== 'condition') return 0;
+	// select 也有分支前缀（[when] …），此前被这里挡在门外，导致 select 分支名永远不刷新
+	if (type !== 'range_dispatch' && type !== 'condition' && type !== 'select') return 0;
 	const children = (group.children || []).filter(isGroup);
 	let exporter = null;
 	let changed = 0;
@@ -4857,7 +4862,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

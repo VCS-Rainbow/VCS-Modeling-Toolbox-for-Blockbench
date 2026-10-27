@@ -1,15 +1,69 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-26 · 当前版本 **0.68.113**（基于 `v0.68.105` 的尝试）
+> 生成时间：2026-10-27 更新 · 当前版本 **0.68.114**
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
-> 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是在 0.68.105 基础上的尝试，等待真实 Blockbench 验证。
+> 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉了「导出阈值被子级格式覆盖」的根因。
+> **调试入口已升级：可用 `_bbcdp.js` 从终端直连软件内 Console + 全部 Blockbench 事件，见 `_BBCDP.md` 与 0.0.2。**
 
 ---
 
 ## 0. 当前正在进行的任务（交接时未完成）
 
-**状态：0.68.113 尝试已实现，等待用户真实操作验证。**  
+**状态：0.68.113 已部署，用户验证后仍反馈「选择序列分支时顺序仍变化，且 Console 没有任何输出」。**  
 **代码基线是 `v0.68.105`（其撤销/覆盖来自 0.68.85 的修复链）；0.68.86–0.68.98 不采用。0.68.113 单测 231/231，包含实例化撤销 aspects 与覆盖集成测试。**
+
+### 0.0.1 最新一轮结论（2026-10-27，务必先读）
+
+用户在本轮反馈两点：
+
+1. **顺序仍然在变化，但 Console 没有任何输出。**
+2. 追问「为什么刚才的输出是『右键菜单』」。
+
+已完成的排查（通过读取真实 `assembly.bbmodel` 备份 + 反编译 `app.asar` 中 Blockbench 5.2.2 源码）：
+
+- **「右键菜单」日志解释**：`[装配] 已重排复调用标签右键菜单` 来自 `attachLocatorMenu()/attachGroupMenu()`，是**挂载 Locator 右键菜单**时打印，**与排序无关**。旧版之所以刷屏，是因为 `attachGroupMenu()` 被绑在 `update_selection` 上、每选一次就重建菜单；0.68.112 起 `update_selection` 只跑选择守卫，`.113` 又恢复 `locatorMenuAttached` 守卫，所以现在不再刷。
+- **Console 无输出是符合预期的**：`.112/.113` 已让「选择」不再触发 `scheduleBranchSync`，选择时本就不应出现 `[装配] 分支同步触发` / `sortBranchChildren`。**没有日志 ≠ 没改顺序，也不代表排序逻辑被触发。**
+- **Blockbench 自身源码确认**：`Group.select()` / `multiSelect()` / `markAsSelected()` 只改 `selected` 标记，**不动 `children` 数组顺序**；outliner 的 Vue 模板直接 `v-for` 渲染 `node.children`，**没有按选中重排 / 按名字自动排序**。所以「选择导致顺序变化」不可能是 Blockbench 原生行为，只能来自插件改动 `children` 或改 `name` 前缀。
+- **真实工程备份分析**（`%APPDATA%\Blockbench\backups\backup_27.10.26_0.28_assembly.bbmodel`，已用 Blockbench 内嵌 lz-string 解压）：
+  - 容器 `bone7`：`imda_threshold_format = "5-i"`，子分支实际 outliner 顺序是
+    `[5] sacpack1, [4] 调用 sacpack2, [3] 调用 sacpack3, [2] 调用 sacpack4, [1] 调用 sacpack5`（**这就是 `5-i` 期望的顺序，是对的**）。
+  - **但每个子分支自己的 `imda_threshold` 字段却是 1,2,3,4,5（升序）**，与名字前缀 `[5..1]` 相反。
+  - 0:18 与 0:28 两个备份顺序/数值完全一致 → **静止状态下顺序是稳定的**，用户看到的“变化”应发生在交互过程中。
+  - 对比 0:08 工程里的 `sac_counts`（同样 `5-i`）：子分支 `imda_threshold` 是 5,4,3,2,1（降序、正确）。说明 `bone7` 是后续「实例化/覆盖」产物，且 **threshold 数值被写成了升序**。
+- **定位到的真实缺陷（待修）**：
+  1. `syncBranchLabels()` 用父级 `imda_threshold_format` 算出的 `formatted`（如 `5-i`→5,4,3,2,1）写回 `child.imda_threshold`；但导出器 `Exporter` 的 range 子循环**优先读子分支自己的 `imda_threshold_format`**（`childFormatted`），`sacpackN` 自身都带 `i`/`i+N`，于是父级 `5-i` 被子级格式覆盖，输出阈值变成 0,1,1,2… 而非 5,4,3,2,1。**子级格式只在“被显式覆盖”时才应优先；否则应继承父级格式。**
+  2. `syncBranchLabels()` 的 `select` 分支实际不可达（函数开头只放行 `range_dispatch` / `condition`）。
+  3. 若一次同步中先按子级格式/手动值算前缀，再被别处改回，就会出现「名字前缀升序/降序交替」的观感——这与用户描述的“正序倒序交替”高度吻合，且**不需要移动 `children`**。
+- **调试环境（已升级，见 0.0.2 / `_BBCDP.md`）**：不要再开 `--user-data-dir` 临时 profile（插件不会加载，报“无效格式”）。正确做法是**完全退出** Blockbench 后带 `--remote-debugging-port=9222 --remote-allow-origins=*` 用**默认 profile** 启动，再用 `_bbcdp.js --watch` 从终端接 Console 与事件总线；接入/断开都不需要重启软件。
+- **下一步（尚未做）**：
+  - 修 `syncBranchLabels` + 导出器：父分支在“子级无显式覆盖时”必须继承父级 `threshold_format`，保证 `5-i` 输出 5,4,3,2,1；并把子分支 `imda_threshold` 写成与名字前缀一致的降序。
+  - 若要彻底确认“选择时谁改了 children/name”，在真实实例里挂最小探针：`update_selection` 前后快照父分组 `children` 的 uuid 顺序 + 每个子节点 `name`，有变化才用 `Blockbench.showQuickMessage`/`console.warn` 报出（不要只 `console.log`，避免用户看不到）。
+  - 每次改动后跑 `node --check` + `node _test_sim.js`，并让用户在**完全重启**后确认 onload 版本号。
+
+### 0.0.2 0.68.114（2026-10-27，本轮已完成）
+
+**a) 根因修复（0.0.1 里定位的两个缺陷）**
+
+1. 导出器 `Exporter` 的 `range_dispatch` 子循环改为 **父级 `imda_threshold_format` 优先**：
+   `parentFormatted` 有值就直接用，子分组的 `imda_threshold_format` 只在父级没写格式时回退使用。
+   理由：子分组的 `threshold_format` 语义是「它自己 entries 的编号」，不是它在父级里的位置；
+   让子级覆盖父级正是 `bone7` 的 `5-i` 被 `sacpackN` 的 `i`/`i+N` 顶掉、输出 0,1,1,2… 的原因。
+   `imda_threshold_force`（实例化覆盖的显式阈值，含 0）仍然最高优先级。
+2. `syncBranchLabels()` 开头放行 `select` 类型（此前 `select` 分支不可达，`[when]` 前缀永不刷新）。
+
+单测 235/235（新增 4 项：父级 `5-i` 覆盖子级自带格式、`threshold_force` 仍优先、
+同步后子分支 `imda_threshold` 与名字前缀同向、同步后不丢前缀）。
+
+**b) 新增终端调试桥 `_bbcdp.js`（见 `_BBCDP.md`）**
+
+- 用 CDP（`--remote-debugging-port`）接**主实例默认 profile**，插件照常加载；
+  早先 9224 + 临时 `--user-data-dir` 的做法不再需要，也不会再出现「无效格式」。
+- 终端可直接读：`console.*`、未捕获异常、以及**全部** `Blockbench.dispatchEvent` 事件
+  （包装 `dispatchEvent`，带代际号 + 同名限流，默认屏蔽 `render_frame` 等每帧噪音）。
+- 附带 `--eval`（页内执行任意 JS）与 `--snapshot`（打印 outliner 树 + `imda_*` 字段）。
+- 下次排查「谁改了 children / name」时，直接 `--watch --out=_bbcdp.log`，
+  看 `update_selection` / `add_group` / `finish_edit` 前后的 `[装配]` 日志即可，不必再看软件内 Console。
+
 
 ### 0.0 0.68.113 本次改动
 
@@ -88,6 +142,7 @@
    - 循环排除 `property`，统一去 `minecraft:` 前缀；
    - 子分支阈值覆盖显式优先于父 range 的 `threshold_format`；
    - 导出器读取子分支 `threshold_format`。
+   - **⚠ 修正（0.0.1 结论）：子分支 `threshold_format` 只能在“被显式覆盖”时优先；未显式覆盖时必须继承父级格式，否则父级 `5-i` 会被子级自带的 `i`/`i+N` 覆盖，输出 0,1,2… 而非 5,4,3,2,1。`syncBranchLabels` 写回的 `imda_threshold` 也必须与名字前缀同向（`5-i` → 5,4,3,2,1）。这是当前“顺序/阈值正倒序交替”的根因，优先级最高。**
 4. 最后处理副本 UUID：只在检测到与目标/已有节点冲突时生成新 UUID，并同步 `OutlinerNode.uuids`。不要无条件重生成。
 5. 每步都用真实 Blockbench 操作验证，并补一个“实例化→撤销”集成测试；不要再用 `undo` 事件兜底或手工 push history 掩盖问题。
 
@@ -98,6 +153,8 @@
 - `node _test_assembly.js`（当前 mock 有 File 菜单报错，可能 exit 1，仅作冒烟）
 - 真实 Blockbench：新建项目 → 选中一个复调用 Locator → 实例化 → Ctrl+Z 一次；检查分组、Locator、目标 UUID、覆盖 JSON。
 - Console 关注：`[装配] 实例化复调用失败`、`Undo` 相关异常；0.68.85 没有额外撤销日志，重做时可加临时日志。
+- **顺序/选择专项**：完全重启 Blockbench，确认 onload 打印当前版本号。选择序列分支时应**不出现** `[装配] 分支同步触发` / `[装配] sortBranchChildren`；若顺序仍变，说明是 `name` 前缀或导出阈值（见 0.0.1），不是排序。必要时在真机挂探针：`update_selection` 前后快照父分组 `children` 的 uuid 顺序 + 每个子节点 `name`，变化时用 `Blockbench.showQuickMessage`/`console.warn`（避免只看 `console.log`）。
+- **备份分析工具**：Blockbench 的 `*.bbmodel` 备份是 `<lz>` + lz-string（`compressToUTF16`/StorageBinaryString，即 v2 的 `ci` 模块，源码在 `dist/bundle.js` 内）。本次已用 Node 从 `app.asar` 提取 `var ci;...var Lw=ci;` 段并 `vm` 执行，`ci.decompress(payload,{inputEncoding:'StorageBinaryString',outputEncoding:'String'})` 即可解压，用于核对真实数据结构。
 
 ---
 
@@ -116,6 +173,7 @@
 | 输出目录 | `...\assets\sqsptst\items\assembly.json` + `models/item/*.json` |
 | Node（跑脚本/校验） | `C:\Users\Rainbow_\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe` |
 | 离线测试脚本 | 仓库内 `_test_assembly.js`、`_harness.js`、`_check3.js`（mock Blockbench 全局） |
+| **终端调试桥** | `_bbcdp.js`（CDP 接主实例 Console + 事件总线），用法见 `_BBCDP.md` |
 
 ---
 
@@ -250,6 +308,7 @@
 0.68.88  实验：groups aspects / 覆盖日志（已回退）
 0.68.87  实验：initEdit groups aspect（已回退）
 0.68.86  实验：覆盖改到 init 后（已回退）
+0.68.114 修 range 导出：父级 threshold_format 优先于子级自带格式；syncBranchLabels 支持 select
 0.68.85  当前基线（回退点）：复调用实例化、覆盖字段、右键菜单
 0.68.28  全量 imm_ → imda_，旧项目自动迁移
 0.68.27  adopt 不再覆盖已有属性（修目标被清空）
@@ -434,9 +493,25 @@
 $node = 'C:\Users\Rainbow_\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 & $node --check 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js'
 & $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_assembly.js'   # 离线冒烟
-& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图/复调用/着色单测（148 项）
+& $node 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\_test_sim.js'         # 求值/面板/枢轴/视图/复调用/着色单测（235 项）
 Copy-Item 'C:\Users\Rainbow_\blockbench_item_model_mapping_isolated\item_model_definition_assembly.js' `
   'C:\Users\Rainbow_\AppData\Roaming\Blockbench\plugins\item_model_definition_assembly.js' -Force
+```
+
+真机调试（终端看 Console + 事件）：
+
+```powershell
+# 1) 完全退出 Blockbench，再用调试端口启动（默认 profile，插件照常加载）
+& 'C:\Program Files\Blockbench\Blockbench.exe' --remote-debugging-port=9222 --remote-allow-origins=*
+
+# 2) 持续监听（建议写文件，PowerShell 直接看 stdout 会乱码）
+& $node '_bbcdp.js' --watch --out=_bbcdp.log
+Get-Content _bbcdp.log -Encoding utf8 -Tail 50
+
+# 3) 看某类事件 / 打印 outliner 树 / 页内求值
+& $node '_bbcdp.js' --watch --event-filter='^update_selection$|^add_group$|^finish_edit$'
+& $node '_bbcdp.js' --snapshot
+& $node '_bbcdp.js' --eval "Blockbench.version"
 ```
 
 ---
