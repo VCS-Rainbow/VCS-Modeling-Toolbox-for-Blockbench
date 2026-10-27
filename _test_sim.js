@@ -861,9 +861,10 @@ eq('model 下的 internal 保留', valModel.children.indexOf(valInternal) >= 0, 
 console.log('\n[实例化流程]');
 const instParent = new global.Group({ name: 'instParent', imda_type: 'composite' });
 const instTarget = new global.Group({ name: 'instTarget', imda_type: 'range_dispatch', uuid: 'inst-target', origin: [0,0,0], rotation: [0,0,0] });
+instTarget.export = false; // 复调用源分组：被“复调用选中的分组”标记为不直接导出
 instTarget.duplicate = function () {
-	const copy = new global.Group({ name: this.name, imda_type: this.imda_type, uuid: 'inst-copy-' + Math.random(), origin: [0,0,0], rotation: [0,0,0] });
-	copy.children = [new global.Group({ name: 'b1', imda_type: 'model', imda_model: 'ns:item/b1' }), new global.Group({ name: 'b2', imda_type: 'model', imda_model: 'ns:item/b2' })];
+	const copy = new global.Group({ name: this.name, imda_type: this.imda_type, uuid: 'inst-copy-' + Math.random(), origin: [0,0,0], rotation: [0,0,0], export: this.export });
+	copy.children = [new global.Group({ name: 'b1', imda_type: 'model', imda_model: 'ns:item/b1', export: false }), new global.Group({ name: 'b2', imda_type: 'model', imda_model: 'ns:item/b2', export: false })];
 	return copy;
 };
 global.Group.all.push(instTarget);
@@ -898,6 +899,9 @@ eq('实例化后副本 UUID 不同', !!(instCreated && instCreated.uuid !== 'ins
 eq('同步子分支 threshold 1', instCreated && instCreated.children && instCreated.children[0] && instCreated.children[0].imda_threshold, 0);
 eq('同步子分支 threshold 2', instCreated && instCreated.children && instCreated.children[1] && instCreated.children[1].imda_threshold, 2);
 eq('同步子分支名前缀', instCreated && instCreated.children && instCreated.children[1] && String(instCreated.children[1].name).indexOf('[2]') === 0, true);
+eq('实例化副本恢复导出', !!(instCreated && instCreated.export !== false), true);
+eq('实例化子节点恢复导出', !!(instCreated && instCreated.children && instCreated.children.every(c => c.export !== false)), true);
+eq('源分组仍不导出', instTarget.export, false);
 /* ---------- 右键同组标签扩展 ---------- */
 console.log('\n[同组标签扩展]');
 const sibParent = new global.Group({ name: 'sibParent', imda_type: 'composite' });

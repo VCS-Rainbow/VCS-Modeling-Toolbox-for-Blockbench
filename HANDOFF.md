@@ -1,8 +1,8 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-27 更新 · 当前版本 **0.68.114**
+> 生成时间：2026-10-27 更新 · 当前版本 **0.68.115**
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
-> 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉了「导出阈值被子级格式覆盖」的根因。
+> 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉「导出阈值被子级格式覆盖」，0.68.115 修掉「实例化后 export=false 导致整条分支不导出」。
 > **调试入口已升级：可用 `_bbcdp.js` 从终端直连软件内 Console + 全部 Blockbench 事件，见 `_BBCDP.md` 与 0.0.2。**
 
 ---
@@ -64,6 +64,26 @@
 - 下次排查「谁改了 children / name」时，直接 `--watch --out=_bbcdp.log`，
   看 `update_selection` / `add_group` / `finish_edit` 前后的 `[装配]` 日志即可，不必再看软件内 Console。
 
+
+### 0.0.3 0.68.115（真实工程数据验证后补的修复，重要）
+
+用 `_bbcdp.js` 把真实备份（`backups\backup_27.10.26_0.28_assembly.bbmodel`，先用 `_unlz.js` 解压）
+载入运行中的 Blockbench，直接调 `Formats.item_model_definition_assembly.codec.compile()` 复核，发现：
+
+- `bone7` 的 **5 个子分支全部 `export === false`**（40 个分组里 30 个如此），
+  于是 `buildNode` 对每个子分组返回 `null`，`bone7` 因为没有任何 entries **整条不导出**
+  —— 导出 JSON 里连 `bone7` 这个节点都不存在。
+- 来源：`复调用选中的分组` 会把源分组标成 `export = false`（只由 Locator 引用），
+  而 `instantiateCallTags` 用 `duplicate()` 复制时把 `export` 一并继承，**从不恢复**。
+- 修复：实例化后把副本及其整棵子树的 `export === false` 恢复为 `true`，并打印
+  `[装配] 实例化恢复导出 N 个节点`；源分组保持不导出。单测 238 项。
+
+**改完后的真实数据复核**：`bone7` 导出为 `entries.threshold = [5,4,3,2,1]`，
+与名字前缀 `[5] sacpack1 … [1] 调用 sacpack5` 完全一致（修复前该节点根本不出现）。
+
+> 复核手法（可复用）：`_unlz.js` 解压备份 → 用 `--eval-file` 传一段
+> `setupProject(Formats.item_model_definition_assembly)` + `Codecs.project.parse/load` +
+> `codec.compile()` 的探针脚本 → 在 JSON 里按键名取 `entries[].threshold`。
 
 ### 0.0 0.68.113 本次改动
 

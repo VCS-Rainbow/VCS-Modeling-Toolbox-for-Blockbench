@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.114';
+const VERSION = '0.68.115';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2925,6 +2925,20 @@ function instantiateCallTags(targets) {
 				if (!targetGroup) { try { created.init(); } catch (e) { /* ignore */ } }
 				try { if (created.preview_controller && created.preview_controller.updateTransform) created.preview_controller.updateTransform(created); } catch (e) { /* ignore */ }
 				applyCallOverridesToGroup(created, locator);
+				// 复调用源分组通常 export=false（`复调用选中的分组` 会把源分组标记为不直接导出，
+				// 只由标签引用）。实例化出来的副本必须重新参与导出，否则整条分支在导出里直接消失
+				// ——真实工程 bone7 的 5 个分支全是这种情况，导出 JSON 里连 bone7 节点都没有。
+				let reEnabled = 0;
+				if (created.export === false) { created.export = true; reEnabled++; }
+				const enableExportDeep = (node) => {
+					for (const child of (node.children || [])) {
+						if (!isGroup(child)) continue;
+						if (child.export === false) { child.export = true; reEnabled++; }
+						enableExportDeep(child);
+					}
+				};
+				enableExportDeep(created);
+				if (reEnabled) { try { console.log('[装配] 实例化恢复导出', reEnabled, '个节点'); } catch (e) { /* ignore */ } }
 				try { syncBranchLabels(created); } catch (e) { /* ignore */ }
 				try { console.log('[装配] 实例化覆盖', locator.name || 'Locator', JSON.stringify(callOverridesOf(locator)), '→ fmt=' + String(created.imda_threshold_format || '') + ' th=' + String(created.imda_threshold)); } catch (e) { /* ignore */ }
 				if (index >= 0) { const at = siblings.indexOf(created); if (at >= 0) siblings.splice(at, 1); siblings.splice(Math.min(index, siblings.length), 0, created); }

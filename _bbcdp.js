@@ -458,7 +458,6 @@ function fmtStackTrace(stack) {
             returnByValue: true,
             awaitPromise: true,
             userGesture: true,
-            replMode: true,
         });
         if (res.exceptionDetails) {
             const d = res.exceptionDetails;
