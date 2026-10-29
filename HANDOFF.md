@@ -1,8 +1,8 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-29 更新 · 当前版本 **0.68.116**
+> 生成时间：2026-10-29 更新 · 当前版本 **0.68.117**
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
-> 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉「导出阈值被子级格式覆盖」，0.68.115 修掉「实例化后 export=false 导致整条分支不导出」，0.68.116 修掉「撤销不删除新建节点」的 3 处问题。
+> 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉「导出阈值被子级格式覆盖」，0.68.115 修掉「实例化后 export=false 导致整条分支不导出」，0.68.116 修掉「撤销不删除新建节点」的 3 处问题，0.68.117 修掉「枢轴归位把方块挪走」并说明 gizmo 位置规则。
 > **调试入口已升级：可用 `_bbcdp.js` 从终端直连软件内 Console + 全部 Blockbench 事件，见 `_BBCDP.md` 与 0.0.2。**
 
 ---
@@ -120,6 +120,36 @@
 **验证方式**：`_bbcdp.js --eval-file` 在真机里建组 → 执行动作 → `Undo.undo()` → 比对 `Locator.all/Group.all/Outliner.root`，
 见本文件中「复调用创建撤销」相关探针脚本（已删除，逻辑记录在此）。
 
+### 0.0.5 0.68.117（gizmo / 枢轴：为什么“不在中心”）
+
+**Blockbench 的 gizmo 位置规则（读 5.2.2 源码 + 实测确认）**
+
+- `Group.select()` 末尾是 `this.children.forEach(s => s.markAsSelected(true))` —— **点选分组必然连带选中全部子元素**，无法通过设置关闭。
+- 多选时 `Transformer.position` = `getSelectionCenter()`，其实现是：遍历 `Outliner.selected`（**跳过 Group**），取每个元素 `getWorldCenter()` 的 **min/max 包围盒中心**；本格式 `Format.centered_grid === false`，所以最后再 `+(8,0,8)`。
+- `Cube.getWorldCenter()` = `THREE.fastWorldPosition(cube.mesh)` = **该方块渲染包围盒的中心**（与 `cube.origin` 无关）。
+  ⇒ 所以「选中 sacpack1」时那个大 gizmo 本来就在 9 个方块的几何包围中心附近；**看起来偏的是画在 `group.origin` 上的枢轴标记**。
+- 实测证据：把 `sacpack1.origin` 从 `[8.094,3.943,8.252]` 精确移到内容质心 `[9.148,3.925,11.753]` 后，`Transformer.position` **一个数都没变**（`[9.038,4.72,10.657]` 前后一致）。
+
+**方块 origin 从哪来的**
+
+Java 模型没有 Blockbench 的枢轴概念。`importModelReference` 原来只在元素带 `rotation` 时写 `cube.origin = rotation.origin`，其余保持 `[0,0,0]`（方块原点，不是几何中心）；`duplicate()` 实例化还会把源方块的 origin 一并复制。于是 origin 与几何脱节（实测有的方块 origin 在 `[1.58,16.44,17.52]`，在模型外）。
+
+**踩过的坑（务必记住）**
+
+Blockbench 的方块网格是「`mesh.position = origin`，顶点相对 origin 构建」。**在 `init()` 之后改 `cube.origin` 而不重建顶点，方块就会被整体挪走**。
+实测：`centerCubePivot(child, g.origin)`、Blockbench 自带 `center_individual_pivots`、以及「origin 改成几何中心 + updateView(geometry:true)」三种做法在这份模型上都会让渲染包围盒炸开（`y` 从 0.55 变成 -12.16 之类）。所以 0.68.117 **删掉了 `applyPivotFix` 里的方块枢轴那一步**。
+
+**0.68.117 的改动**
+
+1. `applyPivotFix` 只做 `fixGroupPivot(g)`（分组 origin → 内容质心，递归），不再动方块枢轴。
+   全模型实测：8 个分组 origin 归中，**渲染包围盒前后完全一致**（外观不变）。
+2. `importModelReference`：无 `rotation` 的元素在 `cube.init()` **之前**把 `origin` 设为自身几何中心，从源头避免错位枢轴（带 rotation 的仍保留 Java 旋转原点）。
+3. 单测 252 项（新增 4 项：枢轴归位只动分组 origin、不动方块 origin/from/to）。
+
+**仍未解决**
+
+- 已有工程里那些错位的历史方块 origin 没有安全的修复手段（改 origin 必须重建顶点，而这边试过的重建路径都会移位）。若要修，需要在真实工程上逐组迭代验证「bbox 完全一致 + gizmo 居中」，别盲改。
+- 结论：**想让“选中分组时那个小枢轴标记居中”，用 Tools → 枢轴归位（选中分组）即可**（0.68.117 起不会再动方块）。
 ### 0.0 0.68.113 本次改动
 
 1. `instantiateCallTags` 的撤销 aspects 改为：
@@ -363,6 +393,7 @@
 0.68.88  实验：groups aspects / 覆盖日志（已回退）
 0.68.87  实验：initEdit groups aspect（已回退）
 0.68.86  实验：覆盖改到 init 后（已回退）
+0.68.117 枢轴归位不再动方块枢轴（会把方块挪走）；导入时把方块 origin 设为几何中心
 0.68.116 撤销审计：复调用/时间轴/导入引用模型的新建节点进 finish aspects；规范化与属性删除合并撤销
 0.68.115 实例化后恢复副本 export（否则整条分支不导出）；真实备份验证 bone7 输出 5,4,3,2,1
 0.68.114 修 range 导出：父级 threshold_format 优先于子级自带格式；syncBranchLabels 支持 select

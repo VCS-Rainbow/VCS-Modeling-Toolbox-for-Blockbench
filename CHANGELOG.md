@@ -2,6 +2,14 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.68.117
+- **修「选中分组时 gizmo / 枢轴标记不在中心」**。实测结论（assembly.bbmodel）：
+  - Blockbench 的 `Group.select()` 会把子元素一起选中；多选时 gizmo 取 `getSelectionCenter()` = 被选元素 `getWorldCenter()` 的**包围盒中心**（本格式 `centered_grid=false` 再 +8），而 `getWorldCenter()` 本身就是方块渲染包围盒的中心 —— 所以**大 gizmo 本来就在几何中心**，偏的是画在 `group.origin` 上的枢轴标记。
+  - 直接改 `group.origin` 不会移动大 gizmo（实测前后完全一致），但会移动枢轴标记。
+  - 方块 `origin` 是 Java 模型导入时留下的（常见 `[0,0,0]` 或旋转原点），与几何无关。
+- **「枢轴归位」不再改方块枢轴**：原来那一步 `centerCubePivot(child, g.origin)` 会把方块整体挪走（Blockbench 方块网格 = 位置取 origin、顶点相对 origin 构建，init 后改 origin 不重建顶点就会移位）。实测在真实工程上渲染包围盒会炸开。现在只做分组 origin 归中 —— 全模型实测：8 个分组 origin 归到内容质心，**渲染包围盒完全不变**。
+- **导入引用模型时为方块设好枢轴**：`origin` 在 `cube.init()` 之前设为自身几何中心（带 `rotation` 的元素仍保留 Java 旋转原点），从源头避免 `[0,0,0]` 这类错位枢轴。
+- 单测 252 项（新增：枢轴归位只动分组 origin、不动方块 origin/from/to）。
 ## 0.68.116
 - **修「复调用选中的分组」撤销不删标签**：`Undo.finishEdit` 没传 aspects，新建的 Locator 不在 `elements` 里，Ctrl+Z 只会还原 outliner（Blockbench 把不认识的节点丢回根目录），看起来就是「只撤销了移动，标签还在」。现在 finish 带上 `{ outliner, elements: 新建 Locator }`，实测撤销后标签被删除。
 - 同类问题一并修：**「解析动画时间轴」**（新建 `[timeline]` 分组 + N 个帧标签未进 finish）、**「导入引用模型」**（新建导入分组/方块未进 finish）——这两个操作以前撤销后都会留下孤儿节点。

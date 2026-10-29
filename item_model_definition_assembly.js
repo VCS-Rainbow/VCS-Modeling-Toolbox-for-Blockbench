@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.116';
+const VERSION = '0.68.117';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2127,12 +2127,12 @@ function applyPivotFix(selectedOnly) {
 	const run = (g) => {
 		const moved = fixGroupPivot(g);
 		if (moved > 0.001) { fixed++; total += moved; if (moved > max) max = moved; }
-		// 分组枢轴已到自身内容中心；本层方块的旋转枢轴再归到这个父级中心（带补偿，外观不变）
-		for (const child of (g.children || [])) {
-			if (!isCube(child)) continue;
-			const movedCube = centerCubePivot(child, g.origin);
-			if (movedCube > 0.001) { cubesFixed++; cubeTotal += movedCube; if (movedCube > cubeMax) cubeMax = movedCube; }
-		}
+		// 注意：**不再**把方块的 rotation 枢轴改到父级 origin。
+		// 实测（assembly.bbmodel）这一步会改变方块的渲染位置（几何相对 origin 构建，
+		// 改 origin 而不重建顶点 = 模型被挪走），而且对“选中分组时 gizmo 的位置”没有帮助：
+		//   gizmo = getSelectionCenter() = 被选方块 getWorldCenter() 的包围盒中心，
+		//   而 getWorldCenter() 本来就是方块渲染包围盒的中心。
+		// 方块枢轴改为在“创建时”就设成自身几何中心（见 importModelReference）。
 		for (const child of (g.children || [])) if (isGroup(child)) run(child);
 	};
 	for (const t of targets) run(t);
@@ -3441,6 +3441,15 @@ function importModelReference(group) {
 				(Number(el.to[2]) || 0) + (Number(import_base[2]) || 0),
 			],
 		}).addTo(elementGroup[index] || import_holder);
+		// 枢轴必须在 init 之前定好：Blockbench 的方块网格是“网格位置=origin、顶点相对 origin”构建的，
+		// init 之后再改 origin 会把方块整体挪走。方块的默认 origin 是 [0,0,0]（方块原点，
+		// 不是几何中心），选中分组时 gizmo/枢轴标记就会偏。这里直接把 origin 设为几何中心；
+		// 带 rotation 的元素保留 Java 的旋转原点（下方 rotation 分支会覆盖），以免改变外观。
+		if (!el.rotation) {
+			try {
+				cube.origin = [0, 1, 2].map(a => (Number(cube.from[a]) + Number(cube.to[a])) / 2);
+			} catch (e) { /* ignore */ }
+		}
 		try { if (typeof cube.init === 'function') cube.init(); } catch (e) { console.warn('[装配] cube.init 失败', e); }
 		if (typeof Cube !== 'undefined' && Array.isArray(Cube.all) && Cube.all.indexOf(cube) < 0) Cube.all.push(cube);
 		try { cube.visibility = true; } catch (e) { /* ignore */ }
@@ -4903,7 +4912,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, applyPivotFix, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

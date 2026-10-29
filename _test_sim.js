@@ -1047,6 +1047,21 @@ eq('规范化 init 含被删除的 internal', !!(global.Undo.lastInit && global.
 eq('规范化 finish 含新建 inline 分组', !!(global.Undo.lastFinish && global.Undo.lastFinish.aspects && global.Undo.lastFinish.aspects.groups && global.Undo.lastFinish.aspects.groups.some(g => g && /\[inline\]/.test(String(g.name)))), true);
 eq('规范化后 nzBad 已移除', global.Outliner.root.some(n => n === nzBad), false);
 eq('规范化后 cube 进入 inline 子分组', !!(nzRoot.children && nzRoot.children.some(g => g && /\[inline\]/.test(String(g.name)) && (g.children || []).indexOf(nzCube) >= 0)), true);
+/* ---------- 枢轴归位：只动分组 origin，绝不动方块枢轴（否则方块会被挪走） ---------- */
+console.log('\n[枢轴归位不动方块]');
+const pvRoot = new global.Group({ name: 'pvRoot', imda_type: 'composite', origin: [0, 0, 0] });
+pvRoot.addTo();
+const pvCube = new global.Cube({ name: 'pvCube', from: [2, 1, 3], to: [6, 5, 7], origin: [0, 0, 0], rotation: [0, 0, 0] });
+pvCube.addTo(pvRoot); pvCube.init();
+global.Group.all = [pvRoot];
+global.Outliner.root.length = 0; global.Outliner.root.push(pvRoot);
+global.Group.selected = [pvRoot];
+global.Outliner.selected.length = 0; global.Outliner.selected.push(pvRoot);
+api.applyPivotFix(true);
+eq('枢轴归位后分组 origin 落在内容中心', pvRoot.origin, [4, 3, 5]);
+eq('枢轴归位不改方块 origin', pvCube.origin, [0, 0, 0]);
+eq('枢轴归位不改方块 from', pvCube.from, [2, 1, 3]);
+eq('枢轴归位不改方块 to', pvCube.to, [6, 5, 7]);
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);
