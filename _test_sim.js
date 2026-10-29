@@ -31,9 +31,17 @@ global.THREE = {
 	MeshBasicMaterial: class { constructor(o) { Object.assign(this, o || {}); this.color = { v: (o && o.color) || 0xffffff, setHex(h) { this.v = h; } }; } dispose() { } },
 };
 global.Texture = class { constructor(o) { Object.assign(this, o); } }; Texture.all = [];
-global.Cube = class { constructor(o) { Object.assign(this, o); } addTo(parent) { if (this.parent && Array.isArray(this.parent.children)) { const old = this.parent.children.indexOf(this); if (old >= 0) this.parent.children.splice(old, 1); } if (parent) { this.parent = parent; if (Array.isArray(parent.children) && parent.children.indexOf(this) < 0) parent.children.push(this); } return this; } init() { return this; } }; global.Cube.all = [];
-global.Group = class { constructor(o) { Object.assign(this, o); this.children = []; } addTo(parent) { if (this.parent && Array.isArray(this.parent.children)) { const old = this.parent.children.indexOf(this); if (old >= 0) this.parent.children.splice(old, 1); } if (parent) { this.parent = parent; if (Array.isArray(parent.children) && parent.children.indexOf(this) < 0) parent.children.push(this); } else if (Array.isArray(global.Outliner.root) && global.Outliner.root.indexOf(this) < 0) global.Outliner.root.push(this); return this; } init() { return this; } }; global.Group.all = [];
-global.Locator = class { constructor(o) { Object.assign(this, o); this.uuid = (o && o.uuid) || ('loc-' + Math.random()); } addTo() { return this; } init() { return this; } };
+global.Cube = class { constructor(o) { Object.assign(this, o); } addTo(parent) { if (this.parent && Array.isArray(this.parent.children)) { const old = this.parent.children.indexOf(this); if (old >= 0) this.parent.children.splice(old, 1); } if (parent) { this.parent = parent; if (Array.isArray(parent.children) && parent.children.indexOf(this) < 0) parent.children.push(this); } return this; } init() { return this; } remove() { if (this.parent && Array.isArray(this.parent.children)) { const i = this.parent.children.indexOf(this); if (i >= 0) this.parent.children.splice(i, 1); } const j = global.Outliner.root.indexOf(this); if (j >= 0) global.Outliner.root.splice(j, 1); return this; } }; global.Cube.all = [];
+global.Group = class { constructor(o) { Object.assign(this, o); this.children = []; } addTo(parent) { if (this.parent && Array.isArray(this.parent.children)) { const old = this.parent.children.indexOf(this); if (old >= 0) this.parent.children.splice(old, 1); } if (parent) { this.parent = parent; if (Array.isArray(parent.children) && parent.children.indexOf(this) < 0) parent.children.push(this); } else if (Array.isArray(global.Outliner.root) && global.Outliner.root.indexOf(this) < 0) global.Outliner.root.push(this); return this; } init() { return this; } remove() { if (this.parent && Array.isArray(this.parent.children)) { const i = this.parent.children.indexOf(this); if (i >= 0) this.parent.children.splice(i, 1); } const j = global.Outliner.root.indexOf(this); if (j >= 0) global.Outliner.root.splice(j, 1); return this; } }; global.Group.all = [];
+global.Locator = class { constructor(o) { Object.assign(this, o); this.uuid = (o && o.uuid) || ('loc-' + Math.random()); if (global.Locator.all.indexOf(this) < 0) global.Locator.all.push(this); } addTo(parent) { if (this.parent && Array.isArray(this.parent.children)) { const old = this.parent.children.indexOf(this); if (old >= 0) this.parent.children.splice(old, 1); } if (parent) { this.parent = parent; if (Array.isArray(parent.children) && parent.children.indexOf(this) < 0) parent.children.push(this); } else if (Array.isArray(global.Outliner.root) && global.Outliner.root.indexOf(this) < 0) global.Outliner.root.push(this); return this; } init() { return this; } };
+global.Locator.all = [];
+// 记录型 Undo mock：用于断言 initEdit / finishEdit 的 aspects
+global.Undo = {
+	history: [], index: 0, lastInit: null, lastFinish: null,
+	initEdit(aspects) { this.lastInit = aspects; return aspects; },
+	finishEdit(name, aspects) { this.lastFinish = { name, aspects: aspects || this.lastInit }; this.history.push({ action: name }); this.index = this.history.length; },
+	undo() { }, redo() { },
+};
 global.Outliner = { root: [], selected: [] };
 global.Project = { name: 'test', imda_pack_version: '26.2' };
 global.Properties = [];
@@ -1004,6 +1012,41 @@ const pfForcedByName = {};
 eq('threshold_force 仍优先', (pfForcedByName.bone7 || []).slice(0, 2).join(','), '9,4');
 pfChildren[0].imda_threshold_force = false;
 pfChildren[0].imda_threshold = 5;
+/* ---------- 复调用选中的分组：撤销必须能删掉新建的 Locator ---------- */
+console.log('\n[复调用创建撤销]');
+const callRoot = new global.Group({ name: 'callRoot', imda_type: 'composite' });
+global.Outliner.root.length = 0; global.Outliner.root.push(callRoot);
+global.Group.all = [callRoot];
+global.Locator.all.length = 0;
+global.Group.selected = [];
+global.Outliner.selected.length = 0; global.Outliner.selected.push(callRoot);
+const callUndoBefore = global.Undo.history.length;
+global.Undo.lastFinish = null;
+api.callSelectedGroup();
+eq('创建了 1 个复调用 Locator', global.Locator.all.length, 1);
+eq('finish 带新建 Locator', !!(global.Undo.lastFinish && global.Undo.lastFinish.aspects && global.Undo.lastFinish.aspects.elements && global.Undo.lastFinish.aspects.elements[0] === global.Locator.all[0]), true);
+eq('finish 仍带 outliner', !!(global.Undo.lastFinish && global.Undo.lastFinish.aspects && global.Undo.lastFinish.aspects.outliner), true);
+eq('复调用只产生 1 条撤销记录', global.Undo.history.length, callUndoBefore + 1);
+eq('时间轴写入帧标签导出到测试钩子', typeof api.bakeTimelineToCallTags, 'function');
+/* ---------- 规范化结构：删除 internal + 收 cube 合并成一条撤销记录 ---------- */
+console.log('\n[规范化撤销]');
+const nzRoot = new global.Group({ name: 'nzRoot', imda_type: 'composite' });
+nzRoot.addTo();
+const nzCube = new global.Cube({ name: 'nzCube', from: [0, 0, 0], to: [2, 2, 2] });
+nzCube.addTo(nzRoot); nzCube.init();
+const nzBad = new global.Group({ name: 'nzBad', imda_type: 'internal' });
+nzBad.addTo();
+const nzKeep = new global.Group({ name: 'nzKeep', imda_type: 'internal' });
+nzKeep.addTo(nzRoot); nzKeep.init();
+global.Group.all = [nzRoot, nzBad, nzKeep];
+global.Outliner.root.length = 0; global.Outliner.root.push(nzRoot, nzBad);
+global.Undo.history.length = 0; global.Undo.index = 0; global.Undo.lastInit = null; global.Undo.lastFinish = null;
+api.normalizeCompositeCubes();
+eq('规范化只产生 1 条撤销记录', global.Undo.history.length, 1);
+eq('规范化 init 含被删除的 internal', !!(global.Undo.lastInit && global.Undo.lastInit.groups && global.Undo.lastInit.groups.indexOf(nzBad) >= 0), true);
+eq('规范化 finish 含新建 inline 分组', !!(global.Undo.lastFinish && global.Undo.lastFinish.aspects && global.Undo.lastFinish.aspects.groups && global.Undo.lastFinish.aspects.groups.some(g => g && /\[inline\]/.test(String(g.name)))), true);
+eq('规范化后 nzBad 已移除', global.Outliner.root.some(n => n === nzBad), false);
+eq('规范化后 cube 进入 inline 子分组', !!(nzRoot.children && nzRoot.children.some(g => g && /\[inline\]/.test(String(g.name)) && (g.children || []).indexOf(nzCube) >= 0)), true);
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);

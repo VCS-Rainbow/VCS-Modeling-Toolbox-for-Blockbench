@@ -1,8 +1,8 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-27 更新 · 当前版本 **0.68.115**
+> 生成时间：2026-10-29 更新 · 当前版本 **0.68.116**
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
-> 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉「导出阈值被子级格式覆盖」，0.68.115 修掉「实例化后 export=false 导致整条分支不导出」。
+> 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉「导出阈值被子级格式覆盖」，0.68.115 修掉「实例化后 export=false 导致整条分支不导出」，0.68.116 修掉「撤销不删除新建节点」的 3 处问题。
 > **调试入口已升级：可用 `_bbcdp.js` 从终端直连软件内 Console + 全部 Blockbench 事件，见 `_BBCDP.md` 与 0.0.2。**
 
 ---
@@ -84,6 +84,41 @@
 > 复核手法（可复用）：`_unlz.js` 解压备份 → 用 `--eval-file` 传一段
 > `setupProject(Formats.item_model_definition_assembly)` + `Codecs.project.parse/load` +
 > `codec.compile()` 的探针脚本 → 在 JSON 里按键名取 `entries[].threshold`。
+
+### 0.0.4 0.68.116（撤销审计：同类问题全量排查）
+
+**Blockbench Undo 语义（实测确认，务必记住）**
+
+`Undo.finishEdit(name)` 不传 aspects 时会**复用 init 的 aspects**（`t = aspects || current_save.aspects`）。
+所以：
+
+- **只改属性 / 只删除**：`initEdit({groups/elements})` + `finishEdit(name)` 就够了（实测可正确回退）。
+- **新建**节点：必须把新节点显式写进 **finish** 的 `elements` / `groups`。否则 `before`/`post` 两个快照里都没有它们，
+  撤销时 `outliner` 只会把“不认识的节点”丢回根目录，**节点不会被删除** —— 表现为“只撤销了移动，标签还在”。
+
+**本轮修掉的（都是「新建了却没进 finish」）**
+
+| 功能 | 以前 | 现在 |
+| --- | --- | --- |
+| 复调用选中的分组（`imda_call_group`） | finish 无 aspects → Locator 留在根目录 | finish `{outliner, elements:[新建 Locator]}` |
+| 解析动画时间轴（`imda_bake_timeline`） | 同上 → `[timeline]` 分组和帧标签残留 | finish `{outliner, groups:[timeline], elements:[帧标签]}` |
+| 导入引用模型 | 同上 → 导入的分组/方块残留 | finish `{outliner, groups:[group].concat(importedGroups), elements:created}` |
+| 规范化结构 | 删除 internal + 收 cube 分两条撤销 | 合并为一条 |
+| 分组属性「继续并删除」 | 删子元素 + 改属性分两条撤销 | 合并为一条 |
+
+**已核对无需改动的功能**（都是“只修改/只删除”，finish 省略 aspects 正确）：
+枢轴归位 / 参考源重建枢轴 / 从分组创建模型 / 分组映射属性 / 编辑复调用标签 / 修复失效目标 /
+移除时间线标签 / 生成复调用序列（新建的 groups+locators 已在 finish）/ 将分组转换为复调用标签（已带 locators）/
+实例化复调用标签（0.68.113 已修，本轮真机复测：loc 4→3→4、grp 10→11→10，撤销完整恢复）。
+
+**已知残留限制（非 bug，暂不处理）**
+
+- 「从分组创建模型」「导出/合并资源包」会写磁盘文件，撤销只回退项目内的分组属性，**不会删除已写出的文件**。
+- 「导入引用模型」新建的 `Texture` 不在 aspects 里，撤销后纹理会留在项目里（可能被其它分组引用，强删有风险）。
+- `syncBranchLabels()` / `stripStrayBranchPrefixes()` 等**自动**改名/改阈值不在撤销栈内（属自动规范化；它们会把 `Project.saved` 置 false）。
+
+**验证方式**：`_bbcdp.js --eval-file` 在真机里建组 → 执行动作 → `Undo.undo()` → 比对 `Locator.all/Group.all/Outliner.root`，
+见本文件中「复调用创建撤销」相关探针脚本（已删除，逻辑记录在此）。
 
 ### 0.0 0.68.113 本次改动
 
@@ -328,6 +363,8 @@
 0.68.88  实验：groups aspects / 覆盖日志（已回退）
 0.68.87  实验：initEdit groups aspect（已回退）
 0.68.86  实验：覆盖改到 init 后（已回退）
+0.68.116 撤销审计：复调用/时间轴/导入引用模型的新建节点进 finish aspects；规范化与属性删除合并撤销
+0.68.115 实例化后恢复副本 export（否则整条分支不导出）；真实备份验证 bone7 输出 5,4,3,2,1
 0.68.114 修 range 导出：父级 threshold_format 优先于子级自带格式；syncBranchLabels 支持 select
 0.68.85  当前基线（回退点）：复调用实例化、覆盖字段、右键菜单
 0.68.28  全量 imm_ → imda_，旧项目自动迁移

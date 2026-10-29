@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.115';
+const VERSION = '0.68.116';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1432,6 +1432,7 @@ function bakeTimelineToCallTags() {
 	for (const old of oldTimeline) { try { old.remove(); } catch (e) { /* ignore */ } }
 	const timeline = new Group({ name: '[timeline]', imda_type: 'range_dispatch_timeline', imda_property: 'minecraft:custom_model_data', imda_index: num(projectValue('imda_anim_index', 0)) || 0, origin: [8, 8, 8], rotation: [0, 0, 0] });
 	addAndInit(timeline, null);
+	const createdLocators = [];
 	for (let frame = 0; frame < sampled.poses.length; frame++) {
 		try {
 			const locator = new Locator({ name: 'frame ' + frame, position: [8, 8, 8], rotation: [0, 0, 0] });
@@ -1439,9 +1440,11 @@ function bakeTimelineToCallTags() {
 			locator.imda_frame = frame;
 			locator.imda_pose = JSON.stringify(sampled.poses[frame]);
 			locator.imda_call_target = 'timeline';
+			createdLocators.push(locator);
 		} catch (error) { console.warn('[装配] 创建帧标签失败', error); }
 	}
-	try { Undo.finishEdit('解析时间轴为复调用标签'); } catch (e) { /* ignore */ }
+	// 新建的分组/帧标签都要进 finish aspects，否则撤销时只会还原 outliner、留下孤儿节点
+	try { Undo.finishEdit('解析时间轴为复调用标签', { outliner: true, groups: [timeline], elements: createdLocators }); } catch (e) { /* ignore */ }
 	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 	try { Project.saved = false; } catch (e) { /* ignore */ }
 	try { simInvalidate(); } catch (e) { /* ignore */ }
@@ -2504,13 +2507,18 @@ function editGroupProps() {
 			if (selectedNow.length && selectedNow.indexOf(group) < 0) targetsNow = [group];
 			if (targetsNow.indexOf(group) < 0) targetsNow.unshift(group);
 			const warnGroups = String(result.imda_type || 'composite') !== 'model' ? targetsNow.filter(g => String(g.imda_type || '').replace(/^minecraft:/, '') === 'model' && (g.children || []).length > 0) : [];
-			const applyChanges = () => {
+			const applyChanges = (deleteGroups) => {
+			const extraGroups = Array.isArray(deleteGroups) ? deleteGroups : [];
 			try {
 				const selected = selectedGroups();
 				let targets = selected.length ? selected.slice() : [group];
 				if (selected.length && selected.indexOf(group) < 0) targets = [group];
 				if (targets.indexOf(group) < 0) targets.unshift(group);
-				Undo.initEdit({ groups: targets });
+				// “继续并删除”把删子元素和改属性合成同一条撤销记录
+				Undo.initEdit(extraGroups.length ? { outliner: true, groups: targets.concat(extraGroups), elements: [] } : { groups: targets });
+				for (const g of extraGroups) for (const child of (g.children || []).slice()) {
+					try { if (typeof child.remove === 'function') child.remove(); } catch (e) { /* ignore */ }
+				}
 				const tintIndexOf = (g) => {
 					const raw = String(g.imda_tints || '').trim();
 					if (/^-?\d+$/.test(raw)) return Number(raw);
@@ -2563,7 +2571,7 @@ function editGroupProps() {
 					try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 					try { if (typeof UVEditor !== 'undefined' && UVEditor.updateView) UVEditor.updateView(); } catch (e) { /* ignore */ }
 				}
-				Undo.finishEdit('修改分组映射属性');
+				Undo.finishEdit('修改分组映射属性', extraGroups.length ? { outliner: true, groups: targets.concat(extraGroups), elements: [] } : undefined);
 				simInvalidate();
 				try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 				const modelRef = String(group.imda_model || '').trim();
@@ -2591,12 +2599,7 @@ function editGroupProps() {
 					buttons: ['取消', '继续并删除'], confirm: 1, cancel: 0,
 				}, (button) => {
 					if (button !== 1) return;
-					try { Undo.initEdit({ outliner: true, groups: warnGroups, elements: [] }); } catch (e) { /* ignore */ }
-					for (const g of warnGroups) for (const child of (g.children || []).slice()) {
-						try { if (typeof child.remove === 'function') child.remove(); } catch (e) { /* ignore */ }
-					}
-					try { Undo.finishEdit('删除引用模型下属元素', { outliner: true, groups: warnGroups, elements: [] }); } catch (e) { /* ignore */ }
-					applyChanges();
+					applyChanges(warnGroups);
 				});
 				return;
 			}
@@ -2618,16 +2621,20 @@ function callSelectedGroup() {
 	}
 	try { Undo.initEdit({ outliner: true, elements: [] }); } catch (e) { /* ignore */ }
 	let created = 0;
+	// 新建的 Locator 必须进 finish 的 elements，否则撤销时 Blockbench 只会把 outliner 还原，
+	// 不认识的节点会被丢回根目录而不是删除（表现为“只撤销了移动，标签还在”）。
+	const createdLocators = [];
 	for (const group of groups) {
 		try {
 			const locator = new Locator({ name: '调用 ' + labelOf(group), position: (group.origin || [0, 0, 0]).slice(), rotation: (group.rotation || [0, 0, 0]).slice(), ignore_inherited_scale: true });
 			if (group.parent) locator.addTo(group.parent); else locator.addTo();
 			try { locator.init(); } catch (e) { /* ignore */ }
 			locator.imda_call_target = group.uuid;
+			createdLocators.push(locator);
 			created++;
 		} catch (error) { console.error('[装配] 创建复调用标签失败', error); }
 	}
-	try { Undo.finishEdit('复调用选中的分组'); } catch (e) { /* ignore */ }
+	try { Undo.finishEdit('复调用选中的分组', { outliner: true, elements: createdLocators }); } catch (e) { /* ignore */ }
 	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 	try { Project.saved = false; } catch (e) { /* ignore */ }
 	simInvalidate();
@@ -2636,7 +2643,7 @@ function callSelectedGroup() {
 
 /** 属性前缀迁移：imda_* → imda_*（默认复制，可选删除旧键） */
 /** 把所有 composite 分组的直属 cube 收进 inline 子分组，等价于导出时的内联模型 */
-function removeInvalidInternalGroups() {
+function scanInvalidInternalGroups() {
 	const invalid = [];
 	const walk = (nodes, parent) => {
 		for (const node of (nodes || [])) {
@@ -2650,27 +2657,46 @@ function removeInvalidInternalGroups() {
 		}
 	};
 	walk((typeof Outliner !== 'undefined' && Outliner) ? Outliner.root : [], null);
-	if (!invalid.length) return 0;
 	const cubes = [];
 	const collect = (node) => { for (const child of (node.children || [])) { if (isCube(child)) cubes.push(child); else if (isGroup(child)) collect(child); } };
 	for (const group of invalid) collect(group);
-	try { Undo.initEdit({ outliner: true, groups: invalid, elements: cubes }); } catch (e) { /* ignore */ }
+	return { groups: invalid, cubes };
+}
+
+function removeInvalidInternalGroups(options) {
+	const scan = scanInvalidInternalGroups();
+	const invalid = scan.groups;
+	if (!invalid.length) return 0;
+	const ownUndo = !(options && options.noUndo);
+	if (ownUndo) { try { Undo.initEdit({ outliner: true, groups: invalid, elements: scan.cubes }); } catch (e) { /* ignore */ } }
 	for (const group of invalid) {
 		try { if (typeof group.remove === 'function') group.remove(); else if (group.parent && Array.isArray(group.parent.children)) group.parent.children.splice(group.parent.children.indexOf(group), 1); } catch (e) { /* ignore */ }
 	}
-	try { Undo.finishEdit('删除无效 internal 分组', { outliner: true, groups: invalid, elements: cubes }); } catch (e) { /* ignore */ }
+	if (ownUndo) { try { Undo.finishEdit('删除无效 internal 分组', { outliner: true, groups: invalid, elements: scan.cubes }); } catch (e) { /* ignore */ } }
 	return invalid.length;
 }
 
 function normalizeCompositeCubes() {
-	const removedInternal = removeInvalidInternalGroups();
+	// 「删除无效 internal」和「cube 收进 inline」合成同一个撤销会话，
+	// 否则一次“规范化”要按两次 Ctrl+Z 才能完全回退。
+	const invalidScan = scanInvalidInternalGroups();
+	const invalidSet = new Set(invalidScan.groups);
+	const insideInvalid = (node) => {
+		let p = node && node.parent;
+		while (p) { if (invalidSet.has(p)) return true; p = p.parent; }
+		return false;
+	};
 	const groups = (typeof Group !== 'undefined' && Group.all) ? Group.all.slice() : [];
-	const targets = groups.filter(group => group && (group.imda_type === undefined || group.imda_type === '' || group.imda_type === 'composite'));
-	if (!targets.length) { Blockbench.showQuickMessage(removedInternal ? ('已删除 ' + removedInternal + ' 个无效 internal 分组') : '没有 composite 分组。', 2500); return 0; }
+	const targets = groups.filter(group => group && !invalidSet.has(group) && !insideInvalid(group) && (group.imda_type === undefined || group.imda_type === '' || group.imda_type === 'composite'));
+	const removedInternal = invalidScan.groups.length;
+	if (!targets.length && !removedInternal) { Blockbench.showQuickMessage('没有 composite 分组。', 2500); return 0; }
 	let moved = 0;
 	const created = [];
 	const changed = [];
-	try { Undo.initEdit({ outliner: true, groups: targets.slice() }); } catch (e) { /* ignore */ }
+	try { Undo.initEdit({ outliner: true, groups: targets.slice().concat(invalidScan.groups), elements: invalidScan.cubes }); } catch (e) { /* ignore */ }
+	for (const group of invalidScan.groups) {
+		try { if (typeof group.remove === 'function') group.remove(); else if (group.parent && Array.isArray(group.parent.children)) group.parent.children.splice(group.parent.children.indexOf(group), 1); } catch (e) { /* ignore */ }
+	}
 	for (const group of targets) {
 		const cubes = (group.children || []).filter(c => isCube(c));
 		if (!cubes.length) continue;
@@ -3491,7 +3517,8 @@ function importModelReference(group) {
 		} else {
 			group.imda_offset = [0, 0, 0];
 		}
-		Undo.finishEdit('导入引用模型');
+		// 新建的导入分组/方块必须进 finish aspects，否则撤销后它们不会被删除（只会被 outliner 丢回根目录）
+		Undo.finishEdit('导入引用模型', { outliner: true, groups: [group].concat(importedGroups), elements: created });
 		try { if (typeof unselectAll === 'function') unselectAll(); } catch (e) { /* ignore */ }
 		try { Canvas.updateView({ elements: created, element_aspects: { faces: true, uv: true } }); } catch (e) { /* ignore */ }
 		try { Canvas.updateAll(); } catch (e) { /* ignore */ }
@@ -4876,7 +4903,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
