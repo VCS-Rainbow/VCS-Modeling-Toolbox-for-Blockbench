@@ -194,6 +194,16 @@ Blockbench 的方块网格是「`mesh.position = origin`，顶点相对 origin �
 4. 单测 274 项（+6：空分支纳入、嵌套方块半透明、嵌套分组隐藏/恢复）。
 
 **真机验证（0.69.4）**：`vSlots`(range) → `slot0`(平铺) / `slot1`(内嵌 `slot1_inner`)，值 0 时 `slot0` 可见、`slot1` 与 `slot1_inner` 均 `visible=false`；菜单 ids 末尾为 `imda_menu_props`；面板 root 子节点为 [controlRow, scrollBody]。
+### 0.0.8 测试纪律（2026-10-30 事故）
+
+**事故**：为清理模拟测试用的临时分组，脚本执行了 `for (node of Outliner.root) node.remove()` + `Outliner.root.length = 0`，而当时用户正开着 `assembly.bbmodel`，**把用户工程的内存态清空**（`cubes` 85 → 0）。磁盘文件未损坏（最后写入 22:42，事故在 23:0x），通过 `Codecs.project.load` 从磁盘重载恢复（85 方块 / 61 分组 / 12 根节点）。
+
+**规则（已写入 AGENTS.md §6）**：
+1. 测试结束**绝不保存工程文件**，绝不在用户工程上写盘。
+2. **绝不整体清空 `Outliner.root`**；清理只按名字白名单删自己创建的节点（`simRoot` / `vRoot` / `probe*` / `branch*`）。
+3. 测试优先在 `setupProject` 新建的空工程或临时 `.bbmodel` 里做。
+4. 必须在用户工程上验证时，只做只读检查；改了要 `Undo` 回原状。
+5. 只重载插件（`_bbcdp.js --reload-plugin`），不重启 Blockbench。
 ### 0.0 0.68.113 本次改动
 
 1. `instantiateCallTags` 的撤销 aspects 改为：

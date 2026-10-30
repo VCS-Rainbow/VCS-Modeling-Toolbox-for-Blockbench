@@ -59,3 +59,13 @@ g.init();                                // 缺 add
 - `node _test_sim.js`
 - `node _test_assembly.js`
 - 相关新行为补最小回归测试，再部署到 `%APPDATA%\Blockbench\plugins`。
+
+## 6. 真机测试纪律（血泪教训，必须遵守）
+
+1. **测试结束后绝不保存工程文件**：不要调用 `Project.save()` / 触发保存动作，也不要留下 `Project.saved = false` 之外的副作用；**永远不要在用户的工程上写盘**。
+2. **不要清空 `Outliner.root`**：2026-10-30 曾用「清空全部根节点」清理测试分组，把用户正在编辑的 `assembly.bbmodel` 内存态清空（磁盘文件未损坏，靠重载恢复）。
+   清理测试对象只能**按名字白名单删除自己创建的东西**（如 `simRoot` / `vRoot` / `probe*` / `branch*` 等固定前缀），删前先校验 `node.name`。
+3. **测试优先在独立工程里做**：先 `setupProject(Formats.item_model_definition_assembly)` 新建空工程，或用一个临时 `.bbmodel`；不要在用户打开的真实工程里建测试分组。
+4. 如果必须在用户工程上验证，结束前**只做只读检查**（读状态、读层级），不要改结构；已改的用 `Undo` 回到原状并确认 `Project.saved` 状态。
+5. 重载插件即可（`_bbcdp.js --reload-plugin`），**不要重启 Blockbench**——会丢用户的编辑状态。
+
