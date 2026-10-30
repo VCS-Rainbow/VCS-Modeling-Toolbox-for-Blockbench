@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-29 更新 · 当前版本 **0.68.117**
+> 生成时间：2026-10-30 更新 · 当前版本 **0.69.0**
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 > 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉「导出阈值被子级格式覆盖」，0.68.115 修掉「实例化后 export=false 导致整条分支不导出」，0.68.116 修掉「撤销不删除新建节点」的 3 处问题，0.68.117 修掉「枢轴归位把方块挪走」并说明 gizmo 位置规则。
 > **调试入口已升级：可用 `_bbcdp.js` 从终端直连软件内 Console + 全部 Blockbench 事件，见 `_BBCDP.md` 与 0.0.2。**
@@ -150,6 +150,40 @@ Blockbench 的方块网格是「`mesh.position = origin`，顶点相对 origin �
 
 - 已有工程里那些错位的历史方块 origin 没有安全的修复手段（改 origin 必须重建顶点，而这边试过的重建路径都会移位）。若要修，需要在真实工程上逐组迭代验证「bbox 完全一致 + gizmo 居中」，别盲改。
 - 结论：**想让“选中分组时那个小枢轴标记居中”，用 Tools → 枢轴归位（选中分组）即可**（0.68.117 起不会再动方块）。
+### 0.0.6 0.69.0（引用其他映射 / 更新所有调用 / 右键菜单条件化 / 提取应用变换 / 文件选择）
+
+**1) 引用其他物品模型映射**
+
+- `imda_model` 新增语法 `<命名空间>:items/<路径>` → 对应 `assets/<命名空间>/items/<路径>.json`。
+- 导出时把该文件里的 `model` 定义**内联**为 `composite` 包裹，外层保留本分组的 `transformation` / `node_name`；读取失败会 `warn` 并退回普通模型引用。
+- **重要设计**：导出路径**不读文件系统**。映射内容缓存在项目属性 `imda_mapping_cache`（JSON 字符串）里，导出只读缓存。
+  原因：`getScopedFs()` 会走 `requireNativeModule('fs', { show_permission_dialog: true })`，在非用户手势的上下文里调用会**直接把渲染进程搞崩**（本轮实测崩了两次）。
+  缓存由「选择引用文件…」和「更新所有调用」填充（这两个都是用户手势，允许弹权限框）。
+
+**2) 工具 → 更新所有调用**（`refreshAllCalls`）
+
+重扫全部复调用标签与 `imda_model` 引用：统计失效目标、`fresh` 重读物品映射（写回缓存）、重排分支名，最后汇总；有问题时弹窗列出（最多 20 条）。
+
+**3) 右键菜单条件化**
+
+- 分组右键：`props`（任意分组）、`pick_model` / `import_model`（仅 `model` 类型）、`create_model` / `call`（仅 `composite`/`inline`）、`convert_call` / `pivot` / `extract_pose` / `apply_pose`。
+- 复调用标签右键：`instantiate_this` / `edit_call` 仅在 `imda_call_target` 非空时出现；外加位姿两项。
+- 方块右键：位姿两项。
+- 实现方式：`menuVariant(base, id, condition)` 生成带条件的菜单副本（共用 `click`），菜单项按 `imda_` 前缀清理后重建；实测条件随选中类型正确切换（model ↔ composite ↔ 未选中）。
+
+**4) 提取变换 / 应用变换**
+
+`extractPose()` 记录选中分组（`origin`+`rotation`）或复调用标签（`position`+`rotation`）；`applyPose()` 套用到所有选中同类元素，分组连同子树按 `translateGroupCoordinates` 平移，枢轴落到同一位置，可撤销。
+
+**5) 引用模型支持资源管理器选择**
+
+- 分组属性新增 `imda_model_file`（Blockbench `type: 'file'` 表单字段，已确认 `FormElement.types.file` 存在），支持拖放。
+- 选中后按路径自动解析：`assets/<ns>/models/…` → `<ns>:<路径>`；`assets/<ns>/items/…` → `<ns>:items/<路径>`。
+- 另有独立菜单项「选择引用模型 / 物品映射文件…」（`Blockbench.import`），选完立刻读入并写缓存。
+
+**测试**：单测 268 项（新增 16 项：映射引用解析、路径→引用、位姿提取/应用、更新所有调用统计）。真机验证（`_bbcdp.js`）：
+导出 `refModel`（`imda_model = test:items/probe` + 预置项目缓存）→
+`{"type":"minecraft:composite","node_name":"refModel","transformation":{…},"models":[{"type":"minecraft:composite","models":[{"type":"minecraft:model","model":"test:item/probe_part"}]}]}`。
 ### 0.0 0.68.113 本次改动
 
 1. `instantiateCallTags` 的撤销 aspects 改为：
@@ -393,6 +427,7 @@ Blockbench 的方块网格是「`mesh.position = origin`，顶点相对 origin �
 0.68.88  实验：groups aspects / 覆盖日志（已回退）
 0.68.87  实验：initEdit groups aspect（已回退）
 0.68.86  实验：覆盖改到 init 后（已回退）
+0.69.0 引用 items/*.json 映射（内联+项目缓存）、更新所有调用、右键菜单条件化、提取/应用变换、引用文件选择器
 0.68.117 枢轴归位不再动方块枢轴（会把方块挪走）；导入时把方块 origin 设为几何中心
 0.68.116 撤销审计：复调用/时间轴/导入引用模型的新建节点进 finish aspects；规范化与属性删除合并撤销
 0.68.115 实例化后恢复副本 export（否则整条分支不导出）；真实备份验证 bone7 输出 5,4,3,2,1

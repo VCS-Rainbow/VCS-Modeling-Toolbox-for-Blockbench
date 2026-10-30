@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.68.117';
+const VERSION = '0.69.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -797,6 +797,19 @@ class Exporter {
 		this.groupShifts.set(group, own_shift);
 		const transformation = this.buildTransformation(group, own_shift, parent_shift);
 		if (transformation) node.transformation = transformation;
+
+		// 引用其他物品模型映射（imda_model 写成 `ns:items/路径`）：
+		// 读取目标 items/*.json 里的 model 定义，内联为 composite 包裹，外层仍带本分组的 transformation。
+		if (type === 'model' && parseMappingReference(group.imda_model)) {
+			const def = loadMappingDefinition(String(group.imda_model).trim(), { readOnly: true });
+			if (def && def.model) {
+				node.type = 'minecraft:composite';
+				node.models = [def.model];
+				try { this.mappingRefs = (this.mappingRefs || 0) + 1; } catch (e) { /* ignore */ }
+				return node;
+			}
+			this.warn('分组 “' + labelOf(group) + '” 引用物品映射失败：' + ((def && def.error) || '未知错误'));
+		}
 
 		const extras = ownCubes.map(cube => this.buildCubeNode(cube, hint, parent_shift)).filter(Boolean);
 		const callLocators = children.filter(isLocator);
@@ -2435,6 +2448,17 @@ function assignGroupMapProps(group, result) {
 	const type = String(group.imda_type || '').replace(/^minecraft:/, '');
 	if (type !== 'range_dispatch' && type !== 'condition' && type !== 'select') stripChildPrefixes(group);
 	if (result.imda_model !== undefined) group.imda_model = result.imda_model;
+	// 从资源管理器选的引用文件 → 按路径自动解析成引用串（models → ns:路径；items → ns:items/路径）
+	if (result.imda_model_file) {
+		const parsed = referenceFromPickedPath(result.imda_model_file);
+		if (parsed && parsed.reference) {
+			group.imda_model = parsed.reference;
+			console.log('[装配] 引用解析', result.imda_model_file, '→', parsed.reference);
+		} else if (parsed && parsed.error) {
+			console.warn('[装配] ' + parsed.error);
+			try { Blockbench.showQuickMessage('无法解析引用路径，已保留原值', 3000); } catch (e) { /* ignore */ }
+		}
+	}
 				if (result.imda_display_mode !== undefined) group.imda_display_mode = result.imda_display_mode;
 	if (result.imda_property !== undefined) group.imda_property = result.imda_property;
 	if (result.imda_component !== undefined) group.imda_component = result.imda_component;
@@ -2478,7 +2502,8 @@ function editGroupProps() {
 				label: '映射类型（type）', description: '语法：{"type": "minecraft:<类型>"}\n作用：决定本节点是哪一种物品模型映射。\n可选：composite / model / range_dispatch / condition / empty', type: 'select', value: String(group.imda_type || 'composite'),
 				options: { composite: 'composite', inline: 'inline（内联模型）', model: 'model（引用模型）', internal: 'internal（内部结构）', range_dispatch: 'range_dispatch', range_dispatch_timeline: 'range_dispatch(timeline)（逐帧时间轴）', condition: 'condition', select: 'select', empty: 'empty' },
 			},
-			imda_model: { label: '引用模型（model）', description: '语法：{"type": "minecraft:model", "model": "<命名空间>:item/<路径>"}\n作用：本节点直接引用一个 Java 版模型；\n留空则由本层方块生成模型文件。', type: 'text', value: String(group.imda_model || ''), condition: (r) => r.imda_type === 'model' },
+			imda_model: { label: '引用模型（model）', description: '语法：{"type": "minecraft:model", "model": "<命名空间>:item/<路径>"}\n作用：本节点直接引用一个 Java 版模型；\n留空则由本层方块生成模型文件。\n引用其他物品映射：写成 <命名空间>:items/<路径>（对应 assets/<命名空间>/items/<路径>.json），导出时会把目标映射的 model 内联进来。', type: 'text', value: String(group.imda_model || ''), condition: (r) => r.imda_type === 'model' },
+			imda_model_file: { label: '从资源包选择引用…', type: 'file', value: '', description: '用资源管理器选 assets/<命名空间>/models/… 或 assets/<命名空间>/items/…，会按路径自动解析并写入上一行的「引用模型」（items → ns:items/路径）。', condition: (r) => r.imda_type === 'model' },
 			imda_display_mode: { label: '强制统一显示调整', type: 'select', value: String(group.imda_display_mode || 'copy'), options: { copy: '生成模型副本', none: '不处理', overwrite: '覆盖源模型参数' }, description: '引用模型的 display 与当前“显示调整”页不一致时：\n生成副本 = 在项目里生成一份改好 display 的模型副本（默认）\n不处理 = 保持原模型\n覆盖源模型参数 = 直接改写资源包里的原模型文件', condition: (r) => r.imda_type === 'model' },
 			imda_property: { label: 'property（谓词 / 属性）', type: 'select', value: String(group.imda_property || ''), options: { '': '（未设置）', selected: 'selected', broken: 'broken', damaged: 'damaged', carried: 'carried', extended_view: 'extended_view', using_item: 'using_item', view_entity: 'view_entity', 'fishing_rod/cast': 'fishing_rod/cast', 'bundle/has_selected_item': 'bundle/has_selected_item', custom_model_data: 'custom_model_data', has_component: 'has_component', component: 'component', keybind_down: 'keybind_down', compass: 'compass（range）', count: 'count（range）', damage: 'damage（range）', time: 'time（range）', use_cycle: 'use_cycle（range）', use_duration: 'use_duration（range）', 'bundle/fullness': 'bundle/fullness（range）', cooldown: 'cooldown（range）', 'crossbow/pull': 'crossbow/pull（range）', context_dimension: 'context_dimension（select）', block_state: 'block_state（select）', local_time: 'local_time（select）' }, description: 'condition：谓词（selected / broken / custom_model_data / has_component / component / keybind_down …）；\nrange_dispatch：数值属性（custom_model_data / compass / count / damage / time / use_cycle / use_duration）', condition: (r) => r.imda_type === 'range_dispatch' || r.imda_type === 'condition' },
 			imda_component: { label: 'component（has_component 用）', type: 'text', value: String(group.imda_component || ''), description: '语法："component": "minecraft:lodestone_tracker"', condition: (r) => r.imda_property === 'has_component' },
@@ -3538,6 +3563,249 @@ function importModelReference(group) {
 		Blockbench.showMessageBox({ title: '导入失败', message: String((error && error.message) || error), icon: 'error' });
 		return false;
 	}
+}
+
+/* ============================== 引用其他物品模型映射（assets/<ns>/items/*.json） ============================== */
+
+/** 映射引用语法：`ns:items/路径`（对应 assets/ns/items/路径.json）；不是映射引用返回 null */
+function parseMappingReference(reference) {
+	const text = String(reference == null ? '' : reference).trim();
+	const m = /^([a-z0-9_.\-]+):items\/([^\s]+)$/i.exec(text);
+	if (!m) return null;
+	return { ns: m[1], path: m[2].replace(/\.json$/i, '') };
+}
+
+function mappingPathOf(pathmod, root, reference) {
+	const parsed = parseMappingReference(reference);
+	if (!parsed) return null;
+	return pathmod.join(root, 'assets', parsed.ns, 'items', parsed.path + '.json');
+}
+
+/** 读取被引用的物品模型映射文件，取出其中的 model 节点
+ *  - 结果缓存在项目里（`imda_mapping_cache`），导出时只读缓存，避免导出路径碰文件系统/权限弹窗；
+ *  - `fresh: true` 强制重读（「更新所有调用」与选文件后调用）；
+ *  - `readOnly: true` 只读缓存，不读盘（导出用）。 */
+function loadMappingDefinition(reference, options) {
+	const opts = options || {};
+	const key = String(reference == null ? '' : reference).trim();
+	const parsed = parseMappingReference(key);
+	if (!parsed) return { error: '不是物品映射引用（应形如 ns:items/路径）' };
+	const cache = mappingCacheRead();
+	if (!opts.fresh && cache[key]) return { model: cache[key], cached: true };
+	if (opts.readOnly) return { error: '尚未缓存该映射，请先执行「更新所有调用」或重新选择文件' };
+	const root = String(projectValue('imda_pack_path', '') || '').trim();
+	if (!root) return { error: '未设置「资源包工程路径」' };
+	const pathmod = getPath();
+	const fsmod = getScopedFs(root);
+	if (!pathmod || !fsmod) return { error: '无法读取资源包（需要桌面版 Blockbench 且已授权该目录）' };
+	const file = mappingPathOf(pathmod, root, key);
+	const json = readJSONFile(pathmod, fsmod, file);
+	if (!json) return { error: '找不到映射文件：' + file };
+	if (!json.model) return { error: '该文件没有 model 字段：' + file };
+	cache[key] = json.model;
+	mappingCacheWrite(cache);
+	return { model: json.model, file };
+}
+
+function mappingCacheRead() {
+	try {
+		const raw = String(projectValue('imda_mapping_cache', '') || '');
+		const parsed = raw ? JSON.parse(raw) : null;
+		return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+	} catch (e) { return {}; }
+}
+
+function mappingCacheWrite(map) {
+	try { setProjectValue('imda_mapping_cache', JSON.stringify(map || {})); } catch (e) { /* ignore */ }
+}
+
+function clearMappingCache() {
+	mappingCacheWrite({});
+}
+
+/** 从选中的文件路径解析出引用（models → ns:路径；items → ns:items/路径） */
+function referenceFromPickedPath(picked) {
+	const raw = String(picked == null ? '' : picked).trim().replace(/\\/g, '/');
+	if (!raw) return { error: '没有选择文件' };
+	const root = String(projectValue('imda_pack_path', '') || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
+	const rel = root && raw.toLowerCase().indexOf(root.toLowerCase()) === 0
+		? raw.slice(root.length).replace(/^\/+/, '')
+		: raw;
+	const re = /(?:^|\/)assets\/([^/]+)\/(models|items)\/(.+)\.json$/i;
+	const m = re.exec(rel) || re.exec(raw);
+	if (!m) return { error: '无法从路径解析出 assets/<命名空间>/models|items/…：\n' + raw };
+	const ns = m[1];
+	const kind = String(m[2]).toLowerCase();
+	const sub = m[3].replace(/\.json$/i, '');
+	return {
+		kind,
+		ns,
+		path: sub,
+		reference: kind === 'items' ? (ns + ':items/' + sub) : (ns + ':' + sub),
+	};
+}
+
+/* ============================== 提取 / 应用变换（位姿） ============================== */
+
+let poseClipboard = null;
+
+function poseOfNode(node) {
+	if (!node) return null;
+	if (isGroup(node)) {
+		return {
+			kind: 'group',
+			label: String(node.name || ''),
+			origin: (Array.isArray(node.origin) ? node.origin : [0, 0, 0]).map(Number),
+			rotation: (Array.isArray(node.rotation) ? node.rotation : [0, 0, 0]).map(Number),
+		};
+	}
+	if (isLocator(node)) {
+		return {
+			kind: 'locator',
+			label: String(node.name || ''),
+			origin: (Array.isArray(node.position) ? node.position : [0, 0, 0]).map(Number),
+			rotation: (Array.isArray(node.rotation) ? node.rotation : [0, 0, 0]).map(Number),
+		};
+	}
+	return null;
+}
+
+/** 提取选中元素的位姿（分组：origin + rotation；复调用标签：position + rotation） */
+function extractPose() {
+	const groups = selectedGroups();
+	const locators = selectedCallTags();
+	const node = groups[0] || locators[0] || null;
+	if (!node) { Blockbench.showQuickMessage('先选中一个分组或复调用标签', 2600); return null; }
+	const pose = poseOfNode(node);
+	poseClipboard = pose;
+	Blockbench.showQuickMessage('已提取变换：' + (pose.label || '') + '  origin [' + pose.origin.map(v => Math.round(Number(v) * 1000) / 1000).join(', ') + ']', 3000);
+	return pose;
+}
+
+/** 把提取的位姿应用到所有选中的分组/复调用标签（连同子树平移，保证枢轴落到同一位置） */
+function applyPose(pose) {
+	const source = pose || poseClipboard;
+	if (!source) { Blockbench.showQuickMessage('还没有提取过变换（先用「提取变换」）', 2800); return 0; }
+	const groups = selectedGroups();
+	const locators = selectedCallTags();
+	if (!groups.length && !locators.length) { Blockbench.showQuickMessage('先选中要应用的目标', 2600); return 0; }
+	const targets = source.kind === 'locator' ? locators : groups;
+	if (!targets.length) {
+		Blockbench.showMessageBox({ title: '目标类型不匹配', message: '提取的是' + (source.kind === 'locator' ? '复调用标签' : '分组') + '的变换，请选中同类型的目标。', icon: 'info' });
+		return 0;
+	}
+	const cubeList = [];
+	walkGroups(groups.length ? groups : [], g => { for (const c of (g.children || [])) if (isCube(c)) cubeList.push(c); });
+	try { Undo.initEdit({ groups: groups.slice(), elements: cubeList }); } catch (e) { /* ignore */ }
+	let applied = 0;
+	for (const target of targets) {
+		try {
+			if (isGroup(target)) {
+				const old = (Array.isArray(target.origin) ? target.origin : [0, 0, 0]).map(Number);
+				const delta = [0, 1, 2].map(a => (Number(source.origin[a]) || 0) - (Number(old[a]) || 0));
+				if (Math.hypot(delta[0], delta[1], delta[2]) > 1e-9) translateGroupCoordinates(target, delta);
+				target.origin = source.origin.slice();
+				target.rotation = source.rotation.slice();
+			} else {
+				target.position = source.origin.slice();
+				target.rotation = source.rotation.slice();
+			}
+			applied++;
+		} catch (error) { console.warn('[装配] 应用变换失败', error); }
+	}
+	try { Undo.finishEdit('应用变换'); } catch (e) { /* ignore */ }
+	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+	try { Project.saved = false; } catch (e) { /* ignore */ }
+	simInvalidate();
+	Blockbench.showQuickMessage('已把变换应用到 ' + applied + ' 个目标', 2600);
+	return applied;
+}
+
+/** 用资源管理器选一个 models/items 文件，解析成引用串写进分组 */
+function pickModelFileForGroup(group) {
+	const target = group || pickTargetGroup();
+	if (!target) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; }
+	const applyPicked = (files) => {
+		const file = files && files[0];
+		if (!file) return;
+		const picked = file.path || file.name || '';
+		const parsed = referenceFromPickedPath(picked);
+		if (!parsed || !parsed.reference) {
+			Blockbench.showMessageBox({ title: '无法解析路径', message: (parsed && parsed.error) || String(picked), icon: 'warning' });
+			return;
+		}
+		try { Undo.initEdit({ groups: [target] }); } catch (e) { /* ignore */ }
+		target.imda_model = parsed.reference;
+		try {
+			if (parsed.kind === 'items') {
+				const def = loadMappingDefinition(parsed.reference, { fresh: true });
+				if (def && def.error) Blockbench.showQuickMessage('引用已写入，但读取失败：' + def.error, 4000);
+			}
+		} catch (e) { /* ignore */ }
+		try { target.imda_type = 'model'; } catch (e) { /* ignore */ }
+		try { Undo.finishEdit('设置引用模型'); } catch (e) { /* ignore */ }
+		try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+		try { Project.saved = false; } catch (e) { /* ignore */ }
+		simInvalidate();
+		Blockbench.showQuickMessage('引用已设为 ' + parsed.reference + '（' + (parsed.kind === 'items' ? '物品映射' : '模型') + '）', 3500);
+	};
+	try {
+		const result = Blockbench.import({ type: 'JSON', extensions: ['json'], readtype: 'text' }, applyPicked);
+		if (result && typeof result.then === 'function') result.then(applyPicked).catch(() => { /* 用户取消 */ });
+	} catch (e) { console.warn('[装配] 选择文件失败', e); }
+}
+
+/* ============================== 更新所有调用 ============================== */
+/** 刷新所有复调用标签与外部物品映射引用：清缓存、重解析、重排分支名并汇总问题 */
+function refreshAllCalls() {
+	const groups = [];
+	walkGroups((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : [], g => groups.push(g));
+	const groupByUuid = new Map();
+	for (const g of groups) { try { if (g.uuid) groupByUuid.set(g.uuid, g); } catch (e) { /* ignore */ } }
+
+	let callTags = 0, brokenCalls = 0, modelRefs = 0, mappingRefs = 0, mappingErrors = 0, relabeled = 0;
+	const problems = [];
+	const visit = (nodes) => {
+		for (const node of (nodes || [])) {
+			if (isLocator(node)) {
+				const target = String(node.imda_call_target || '').trim();
+				if (!target) continue;
+				callTags++;
+				if (target.indexOf(':') < 0 && !groupByUuid.has(target)) {
+					brokenCalls++;
+					problems.push('复调用目标不存在：' + (node.name || '') + ' → ' + target);
+				}
+			} else if (isGroup(node)) {
+				const model = String(node.imda_model || '').trim();
+				if (model) {
+					modelRefs++;
+					if (parseMappingReference(model)) {
+						mappingRefs++;
+						const def = loadMappingDefinition(model, { fresh: true });
+						if (!def || def.error) { mappingErrors++; problems.push('物品映射引用失败：' + (node.name || '') + ' → ' + model + '（' + ((def && def.error) || '未知') + '）'); }
+					}
+				}
+				visit(node.children);
+			}
+		}
+	};
+	visit((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []);
+	for (const g of groups) relabeled += syncBranchLabels(g);
+	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+	simInvalidate();
+	try { Project.saved = true; } catch (e) { /* ignore */ }
+	const summary = '复调用标签 ' + callTags + '（失效 ' + brokenCalls + '）· 引用模型 ' + modelRefs
+		+ '（其中物品映射 ' + mappingRefs + '，失败 ' + mappingErrors + '）· 刷新分支名 ' + relabeled;
+	if (problems.length) {
+		Blockbench.showMessageBox({
+			title: '更新所有调用：发现 ' + problems.length + ' 个问题',
+			message: summary + '\n\n' + problems.slice(0, 20).join('\n') + (problems.length > 20 ? '\n…' : ''),
+			icon: 'warning',
+		});
+	} else {
+		Blockbench.showQuickMessage('已更新所有调用：' + summary, 4000);
+	}
+	return { callTags, brokenCalls, modelRefs, mappingRefs, mappingErrors, relabeled, problems };
 }
 
 /* ============================== 模拟输入面板 ============================== */
@@ -4628,6 +4896,7 @@ P(ModelProject, 'number', 'imda_extra_composite_layers', { label: '调试：额�
 	P(ModelProject, 'number', 'imda_swap_animation_scale', { label: 'swap_animation_scale（切换动画速度倍率）', default: 1, min: 0, step: 0.05 });
 	P(ModelProject, 'boolean', 'imda_hide_unavailable', { label: '隐藏当前条件下不可用的分组', default: true });
 	P(ModelProject, 'string', 'imda_pack_path', { label: '资源包工程路径（pack.mcmeta 所在目录）', default: '' });
+	P(ModelProject, 'string', 'imda_mapping_cache', { default: '', exposed: false });
 	P(ModelProject, 'string', 'imda_pack_version', {
 		label: '目标 Minecraft 版本（pack.mcmeta 格式）',
 		default: DEFAULT_PACK_VERSION,
@@ -4703,32 +4972,109 @@ function cleanOwnMenu(menu) {
 
 let menuAttached = false;
 let locatorMenuAttached = false;
+let cubeMenuAttached = false;
+let menuActions = {};
+
+/** 右键菜单用的动作副本：共用 click，但带自己的显示条件（不同节点类型出现不同项） */
+function menuVariant(base, id, condition) {
+	if (!base) return null;
+	return new Action(id, {
+		name: base.name,
+		description: base.description,
+		icon: base.icon,
+		category: base.category,
+		condition,
+		click: function () { return typeof base.click === 'function' ? base.click.apply(base, arguments) : undefined; },
+	});
+}
+
+function isImdaFormat() {
+	try { return typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID; } catch (e) { return false; }
+}
+function pickTargetLocator() {
+	try { if (typeof Locator !== 'undefined' && Locator.selected && Locator.selected.length) return Locator.selected[0]; } catch (e) { /* ignore */ }
+	try { const hit = (Outliner.selected || []).filter(isLocator); if (hit.length) return hit[0]; } catch (e) { /* ignore */ }
+	return null;
+}
+function isCallTagNode(node) {
+	return !!node && isLocator(node) && !!String(node.imda_call_target || '').trim();
+}
+/** 分组类型判定（range_dispatch / condition / select / model / composite / inline …） */
+function targetGroupTypeIn(types) {
+	const g = pickTargetGroup();
+	if (!g) return false;
+	const type = String(g.imda_type || 'composite').replace(/^minecraft:/, '');
+	return types.indexOf(type) >= 0;
+}
+
 function attachGroupMenu() {
 	const addSeparator = (menu) => {
 		try { if (typeof MenuSeparator !== 'undefined') menu.addAction(new MenuSeparator('imda_menu_sep')); } catch (e) { /* ignore */ }
 	};
+	const cleanByPrefix = (menu) => {
+		try {
+			if (!Array.isArray(menu.structure)) return;
+			menu.structure = menu.structure.filter(item => {
+				const id = typeof item === 'string' ? item : (item && item.id) || '';
+				return !String(id).startsWith('imda_');
+			});
+		} catch (e) { /* ignore */ }
+	};
+	// 分组右键：按分组类型给不同项
 	try {
-		if (!menuAttached && actions.props && typeof Group !== 'undefined' && Group.prototype && Group.prototype.menu && typeof Group.prototype.menu.addAction === 'function') {
-			const menu = Group.prototype.menu;
-			addSeparator(menu);
-			if (actions.createModel) menu.addAction(actions.createModel);
-			if (actions.call) menu.addAction(actions.call);
-			menu.addAction(actions.props);
-			menuAttached = true;
-			console.log('[装配] 已加入分组右键菜单');
+		const menu = (typeof Group !== 'undefined' && Group.prototype) ? Group.prototype.menu : null;
+		if (menu && typeof menu.addAction === 'function' && actions.props) {
+			if (!menu._imdaV143) {
+				cleanByPrefix(menu);
+				menuActions.props = menuVariant(actions.props, 'imda_menu_props', () => isImdaFormat() && !!pickTargetGroup());
+				menuActions.pickModel = menuVariant(actions.pickModelFile, 'imda_menu_pick_model', () => isImdaFormat() && targetGroupTypeIn(['model']));
+				menuActions.importModel = menuVariant(actions.import, 'imda_menu_import_model', () => isImdaFormat() && targetGroupTypeIn(['model']));
+				menuActions.createModel = menuVariant(actions.createModel, 'imda_menu_create_model', () => isImdaFormat() && targetGroupTypeIn(['composite', 'inline']));
+				menuActions.call = menuVariant(actions.call, 'imda_menu_call', () => isImdaFormat() && targetGroupTypeIn(['composite', 'inline']));
+				menuActions.convertCall = menuVariant(actions.convertCall, 'imda_menu_convert_call', () => isImdaFormat() && selectedGroups().length > 0);
+				menuActions.pivot = menuVariant(actions.pivot, 'imda_menu_pivot', () => isImdaFormat() && !!pickTargetGroup());
+				menuActions.extractPose = menuVariant(actions.extractPose, 'imda_menu_extract_pose', () => isImdaFormat() && !!pickTargetGroup());
+				menuActions.applyPose = menuVariant(actions.applyPose, 'imda_menu_apply_pose', () => isImdaFormat() && !!pickTargetGroup());
+				addSeparator(menu);
+				[menuActions.props, menuActions.createModel, menuActions.pickModel, menuActions.importModel,
+					menuActions.call, menuActions.convertCall, null, menuActions.extractPose, menuActions.applyPose,
+					null, menuActions.pivot].forEach(item => { if (item) menu.addAction(item); else addSeparator(menu); });
+				menu._imdaV143 = true;
+				menuAttached = true;
+				console.log('[装配] 已加入分组右键菜单（按类型条件显示）');
+			}
 		}
 	} catch (error) { /* ignore */ }
+	// 复调用标签右键：只有真正的复调用标签才显示实例化/编辑
 	try {
-		if (!locatorMenuAttached && typeof Locator !== 'undefined' && Locator.prototype && Locator.prototype.menu && typeof Locator.prototype.menu.addAction === 'function' && actions.editCall) {
-			const menu = Locator.prototype.menu;
-			try {
-				if (Array.isArray(menu.structure)) menu.structure = menu.structure.filter(item => item !== actions.editCall && item !== actions.instantiateThis && !(item && item.id === 'imda_menu_sep'));
-			} catch (e) { /* ignore */ }
+		const menu = (typeof Locator !== 'undefined' && Locator.prototype) ? Locator.prototype.menu : null;
+		if (menu && typeof menu.addAction === 'function' && actions.editCall) {
+			if (!menu._imdaV143) {
+				cleanByPrefix(menu);
+				menuActions.instantiateThis = menuVariant(actions.instantiateThis, 'imda_menu_instantiate_this', () => isImdaFormat() && isCallTagNode(pickTargetLocator()));
+				menuActions.editCall = menuVariant(actions.editCall, 'imda_menu_edit_call', () => isImdaFormat() && isCallTagNode(pickTargetLocator()));
+				menuActions.extractPoseLoc = menuVariant(actions.extractPose, 'imda_menu_extract_pose_loc', () => isImdaFormat() && !!pickTargetLocator());
+				menuActions.applyPoseLoc = menuVariant(actions.applyPose, 'imda_menu_apply_pose_loc', () => isImdaFormat() && !!pickTargetLocator());
+				addSeparator(menu);
+				menuActions.instantiateThis && menu.addAction(menuActions.instantiateThis);
+				menuActions.editCall && menu.addAction(menuActions.editCall);
+				menu.addAction(menuActions.extractPoseLoc);
+				menu.addAction(menuActions.applyPoseLoc);
+				menu._imdaV143 = true;
+				locatorMenuAttached = true;
+				console.log('[装配] 已重排复调用标签右键菜单（按目标条件显示）');
+			}
+		}
+	} catch (error) { /* ignore */ }
+	// 方块右键：位姿提取/应用（方块也能作为来源）
+	try {
+		const menu = (typeof Cube !== 'undefined' && Cube.prototype) ? Cube.prototype.menu : null;
+		if (menu && typeof menu.addAction === 'function' && !cubeMenuAttached) {
+			cleanByPrefix(menu);
 			addSeparator(menu);
-			if (actions.instantiateThis) menu.addAction(actions.instantiateThis);
-			menu.addAction(actions.editCall);
-			locatorMenuAttached = true;
-			console.log('[装配] 已重排复调用标签右键菜单');
+			menu.addAction(menuVariant(actions.extractPose, 'imda_menu_extract_pose_cube', () => isImdaFormat() && selectedGroups().length > 0));
+			menu.addAction(menuVariant(actions.applyPose, 'imda_menu_apply_pose_cube', () => isImdaFormat() && selectedGroups().length > 0));
+			cubeMenuAttached = true;
 		}
 	} catch (error) { /* ignore */ }
 }
@@ -4856,6 +5202,10 @@ Plugin.register('item_model_definition_assembly', {
 		actions.batchToggle = new Action('imda_batch_toggle', { name: '开关：批量选组时取消元素选择', description: '切换“同时选中多个分组时自动取消方块/定位点选择”', icon: 'select_all', category: 'tools', click: () => { if (!immBatchSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !batchGroupsOnlyEnabled(); setBatchGroupsOnly(next); try { if (typeof immBatchSetting.save === 'function') immBatchSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('批量选择时取消单个元素：' + (next ? '开' : '关'), 2200); } });
 		actions.editCall = new Action('imda_edit_call', { name: '编辑复调用标签…', description: '修改选中的复调用 Locator 指向的分组或模型 id', icon: 'edit', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && Locator.selected && Locator.selected.length > 0), click: () => { const locator = (Locator.selected && Locator.selected[0]) || null; if (!locator) { Blockbench.showMessageBox({ title: '请先选中复调用标签', message: '在 outliner 里选中一个 Locator（复调用标签）。', icon: 'info' }); return; } editCallTag(locator); } });
 		actions.repairCalls = new Action('imda_repair_calls', { name: '修复失效的复调用目标…', description: '扫描所有目标 UUID 已不存在的复调用标签，统一改成指定分组', icon: 'build', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID) && invalidCallTags().length > 0, click: repairCallTargetsDialog });
+		actions.refreshCalls = new Action('imda_refresh_calls', { name: '更新所有调用', description: '重新读取所有复调用目标与外部物品映射引用（清缓存、重排分支名、列出失效项）', icon: 'refresh', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => refreshAllCalls() });
+		actions.pickModelFile = new Action('imda_pick_model_file', { name: '选择引用模型 / 物品映射文件…', description: '用资源管理器选 assets/<命名空间>/models/…（模型引用）或 assets/<命名空间>/items/…（物品映射引用），自动解析并写入该分组的「引用模型」', icon: 'folder_open', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID) && !!pickTargetGroup(), click: () => pickModelFileForGroup(pickTargetGroup()) });
+		actions.extractPose = new Action('imda_extract_pose', { name: '提取变换', description: '记录选中分组 / 复调用标签的位姿（origin + rotation），供「应用变换」使用', icon: 'content_copy', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID) && (selectedGroups().length > 0 || selectedCallTags().length > 0), click: () => extractPose() });
+		actions.applyPose = new Action('imda_apply_pose', { name: '应用变换', description: '把提取到的位姿套用到所有选中的同类元素（子树一起平移，枢轴落到同一位置）', icon: 'content_paste', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID) && (selectedGroups().length > 0 || selectedCallTags().length > 0), click: () => applyPose() });
 
 		addMenu(actions.zip, 'file.export');
 		addMenu(actions.merge, 'file.export');
@@ -4871,12 +5221,17 @@ Plugin.register('item_model_definition_assembly', {
 		toolSep('imda_group_assembly', '[ 模型装配 ] - 结构');
 		tool(actions.props);
 		tool(actions.import);
+		tool(actions.pickModelFile);
 		tool(actions.createModel);
 		tool(actions.sequence);
+		toolSep('imda_group_pose', '变换');
+		tool(actions.extractPose);
+		tool(actions.applyPose);
 		toolSep('imda_group_calls', '复调用');
 		tool(actions.call);
 		tool(actions.convertCall);
 		tool(actions.editCall);
+		tool(actions.refreshCalls);
 		tool(actions.repairCalls);
 		tool(actions.instantiateCalls);
 		tool(actions.instantiateSelected);
@@ -4912,7 +5267,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, applyPivotFix, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

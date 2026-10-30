@@ -2,6 +2,13 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.69.0
+- **引用其他物品模型映射**：`imda_model` 支持写成 `<命名空间>:items/<路径>`（对应 `assets/<命名空间>/items/<路径>.json`）。导出时读取该映射文件的 `model` 定义并内联为 `composite` 包裹，外层仍保留本分组的 `transformation`、`node_name`、tints 逻辑；读取失败会 warn 并退回普通模型引用。
+- **工具 → 更新所有调用**：清空映射缓存、重扫全部复调用标签与 `imda_model` 引用、重排分支名，并汇总「失效复调用 / 映射读取失败 / 分支名刷新数」；有问题时弹窗列出。
+- **右键菜单按条件拆分**：分组右键按 `imda_type` 显示不同项（model → 选择引用文件 / 导入引用模型；composite·inline → 从分组创建模型 / 复调用 / 转化标签）；复调用标签右键只在 `imda_call_target` 非空时显示「实例化 / 编辑复调用」；方块右键增加位姿项。菜单项都带 `condition`，不满足就不显示。
+- **提取变换 / 应用变换**：提取选中分组（`origin`+`rotation`）或复调用标签（`position`+`rotation`）的位姿，再套用到所有选中的同类元素；分组会连同子树一起平移，枢轴落到同一位置，可撤销。
+- **引用模型支持资源管理器选择**：分组属性里新增「从资源包选择引用…」（`type: 'file'`，支持拖放），选中 `assets/<ns>/models|items/*.json` 后自动解析路径写成引用（`models` → `<ns>:路径`，`items` → `<ns>:items/路径`），并提供独立菜单项「选择引用模型 / 物品映射文件…」。
+- 单测 268 项（新增：映射引用解析、路径→引用解析、提取/应用变换、更新所有调用的统计）。
 ## 0.68.117
 - **修「选中分组时 gizmo / 枢轴标记不在中心」**。实测结论（assembly.bbmodel）：
   - Blockbench 的 `Group.select()` 会把子元素一起选中；多选时 gizmo 取 `getSelectionCenter()` = 被选元素 `getWorldCenter()` 的**包围盒中心**（本格式 `centered_grid=false` 再 +8），而 `getWorldCenter()` 本身就是方块渲染包围盒的中心 —— 所以**大 gizmo 本来就在几何中心**，偏的是画在 `group.origin` 上的枢轴标记。

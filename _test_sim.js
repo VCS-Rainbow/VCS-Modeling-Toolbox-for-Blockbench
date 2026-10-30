@@ -1062,6 +1062,57 @@ eq('枢轴归位后分组 origin 落在内容中心', pvRoot.origin, [4, 3, 5]);
 eq('枢轴归位不改方块 origin', pvCube.origin, [0, 0, 0]);
 eq('枢轴归位不改方块 from', pvCube.from, [2, 1, 3]);
 eq('枢轴归位不改方块 to', pvCube.to, [6, 5, 7]);
+/* ---------- 物品映射引用解析 ---------- */
+console.log('\n[物品映射引用]');
+const mr1 = api.parseMappingReference('sqsp:items/foo/bar');
+eq('解析 ns:items/路径', mr1 && (mr1.ns + '|' + mr1.path), 'sqsp|foo/bar');
+eq('普通模型引用不算映射', api.parseMappingReference('sqsp:item/foo'), null);
+eq('去掉 .json 后缀', api.parseMappingReference('sqsp:items/foo.json').path, 'foo');
+const rp1 = api.referenceFromPickedPath('C:\\pack\\assets\\sqsp\\models\\item\\gun.json');
+eq('models 路径 → 模型引用', rp1.reference, 'sqsp:item/gun');
+eq('models 路径 kind', rp1.kind, 'models');
+const rp2 = api.referenceFromPickedPath('C:/pack/assets/sqsp/items/foo/bar.json');
+eq('items 路径 → 映射引用', rp2.reference, 'sqsp:items/foo/bar');
+eq('items 路径 kind', rp2.kind, 'items');
+eq('无法解析的路径给错误', !!api.referenceFromPickedPath('C:/tmp/x.json').error, true);
+
+/* ---------- 提取 / 应用变换 ---------- */
+console.log('\n[提取应用变换]');
+const poseA = new global.Group({ name: 'poseA', imda_type: 'composite', origin: [8, 8, 8], rotation: [10, 20, 30] });
+poseA.addTo();
+const poseACube = new global.Cube({ name: 'poseACube', from: [0, 0, 0], to: [4, 4, 4], origin: [2, 2, 2], rotation: [0, 0, 0] });
+poseACube.addTo(poseA); poseACube.init();
+const poseB = new global.Group({ name: 'poseB', imda_type: 'composite', origin: [0, 0, 0], rotation: [0, 0, 0] });
+poseB.addTo();
+const poseBCube = new global.Cube({ name: 'poseBCube', from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
+poseBCube.addTo(poseB); poseBCube.init();
+global.Group.all = [poseA, poseB];
+global.Outliner.root.length = 0; global.Outliner.root.push(poseA, poseB);
+global.Group.selected = [poseA];
+global.Outliner.selected.length = 0; global.Outliner.selected.push(poseA);
+const pose = api.extractPose();
+eq('提取 origin', pose && pose.origin, [8, 8, 8]);
+eq('提取 rotation', pose && pose.rotation, [10, 20, 30]);
+global.Group.selected = [poseB];
+global.Outliner.selected.length = 0; global.Outliner.selected.push(poseB);
+api.applyPose(pose);
+eq('应用后 origin 一致', poseB.origin, [8, 8, 8]);
+eq('应用后 rotation 一致', poseB.rotation, [10, 20, 30]);
+eq('应用后子树随枢轴平移', poseBCube.from, [8, 8, 8]);
+eq('应用后方块 origin 同步平移', poseBCube.origin, [9, 9, 9]);
+
+/* ---------- 更新所有调用（无引用时不应报错） ---------- */
+console.log('\n[更新所有调用]');
+const callRoot2 = new global.Group({ name: 'refreshRoot', imda_type: 'composite' });
+callRoot2.addTo();
+const callLoc2 = new global.Locator({ name: '调用 目标', position: [0, 0, 0], rotation: [0, 0, 0] });
+callLoc2.imda_call_target = 'ffffffff-dead-beef-0000-000000000000';
+callLoc2.addTo(callRoot2);
+global.Outliner.root.length = 0; global.Outliner.root.push(callRoot2);
+global.Group.all = [callRoot2];
+const refresh = api.refreshAllCalls();
+eq('统计到 1 个复调用标签', refresh.callTags, 1);
+eq('识别出失效目标', refresh.brokenCalls, 1);
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);
