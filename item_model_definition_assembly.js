@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.69.3';
+const VERSION = '0.69.4';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -4224,23 +4224,61 @@ function simLockGroup(group, on) {
 	}
 }
 
+/** 递归遍历分组下所有方块（视图联动必须覆盖嵌套子分组，否则 sac_slots 这类嵌套分支不会变） */
+function simEachCubeDeep(node, fn) {
+	for (const child of (node.children || [])) {
+		if (isCube(child)) fn(child);
+		else if (isGroup(child)) simEachCubeDeep(child, fn);
+	}
+}
+
+/** 递归遍历分组下所有子分组 */
+function simEachGroupDeep(node, fn) {
+	for (const child of (node.children || [])) {
+		if (!isGroup(child)) continue;
+		fn(child);
+		simEachGroupDeep(child, fn);
+	}
+}
+
 function simRestoreGroup(group) {
-	for (const child of (group.children || [])) if (isCube(child)) simGhostCube(child, false);
+	simEachCubeDeep(group, cube => simGhostCube(cube, false));
 	simHideGroup(group, false);
+	simEachGroupDeep(group, child => simHideGroup(child, false));
 	simLockGroup(group, false);
 }
 
 function simViewEntries(items) {
 	const map = sim.groupNodes;
 	if (!map) return [];
-	const hits = new Map();
+	const hitGroups = new Set();
+	const mappedGroups = new Set();
 	for (const item of items || []) {
 		const group = map.get(item && item.node);
 		if (!group) continue;
-		hits.set(group, !!hits.get(group) || !!(item && item.hit));
+		mappedGroups.add(group);
+		if (item.hit) hitGroups.add(group);
+	}
+	const state = new Map();
+	const mark = (group, active) => { if (!group) return; state.set(group, !!state.get(group) || !!active); };
+	// 1) 映射里出现过的分组
+	for (const group of mappedGroups) mark(group, hitGroups.has(group));
+	// 2) 分支容器的**每个**直属子分组都参与（含没有产出节点的空分支）；
+	//    命中与否看该子分支自身或它的任意后代是否有命中节点。
+	for (const group of mappedGroups) {
+		const parent = group.parent;
+		if (!parent || !isGroup(parent)) continue;
+		const type = String(parent.imda_type || '').replace(/^minecraft:/, '');
+		if (type !== 'range_dispatch' && type !== 'condition' && type !== 'select') continue;
+		for (const child of (parent.children || [])) {
+			if (!isGroup(child)) continue;
+			let active = hitGroups.has(child);
+			if (!active) simEachGroupDeep(child, node => { if (hitGroups.has(node)) active = true; });
+			mark(child, active);
+		}
 	}
 	const entries = [];
-	for (const [group, active] of hits) entries.push({ group, active });
+	for (const [group, active] of state) entries.push({ group, active });
 	return entries;
 }
 
@@ -4264,10 +4302,14 @@ function simApplyGroupVisual(entries, mode) {
 		sim.viewTouched.add(group);
 		if (baseMode === 'ghost') {
 			simHideGroup(group, false);
-			for (const child of (group.children || [])) if (isCube(child)) simGhostCube(child, !entry.active);
+			simEachGroupDeep(group, child => simHideGroup(child, false));
+			// 递归到所有后代方块：嵌套子分组里的方块也要变半透明
+			simEachCubeDeep(group, cube => simGhostCube(cube, !entry.active));
 		} else if (baseMode === 'hide') {
-			for (const child of (group.children || [])) if (isCube(child)) simGhostCube(child, false);
+			simEachCubeDeep(group, cube => simGhostCube(cube, false));
 			simHideGroup(group, !entry.active);
+			// 递归隐藏所有后代分组（Blockbench 每个分组有独立 mesh，只隐藏父级不会隐藏子级）
+			simEachGroupDeep(group, child => simHideGroup(child, !entry.active));
 		}
 		// 锁定时只锁未活跃分支；切回普通模式会恢复原有锁定状态
 		if (lock && !entry.active) simLockGroup(group, true);
@@ -4324,7 +4366,10 @@ function buildSimPanel(show_panel) {
 	if (typeof Panel === 'undefined' || typeof document === 'undefined') return null;
 	sim_panel = new Panel('imda_sim_panel', { name: '模拟输入', icon: 'play_circle', condition: { formats: [FORMAT_ID] }, default_position: { slot: 'right_bar', float: false }, resizable: true, growable: true });
 	const root = document.createElement('div');
-	root.style.cssText = 'padding:8px;display:flex;flex-direction:column;gap:4px;font-size:12px;overflow:auto;height:100%';
+	root.style.cssText = 'padding:8px;display:flex;flex-direction:column;gap:4px;font-size:12px;overflow:hidden;height:100%';
+	// 控制条固定在顶部，行与结果放进可滚动区：滚到任何位置都能点「运行 / 停止 / 刷新」
+	const scrollBody = document.createElement('div');
+	scrollBody.style.cssText = 'display:flex;flex-direction:column;gap:4px;flex:1 1 auto;overflow:auto;min-height:0';
 	const mk = (tag, props, style) => { const el = document.createElement(tag); Object.assign(el, props || {}); if (style) el.style.cssText = style; return el; };
 	const cell = (labelText, inputEl, width) => { const wrap = mk('label', {}, 'display:flex;flex-direction:column;gap:2px;font-size:10px;opacity:.75;white-space:nowrap;min-width:0;flex:1 1 0' + (width ? (';flex:0 0 ' + width) : '') + ';overflow:hidden'); wrap.appendChild(mk('span', { textContent: labelText })); wrap.appendChild(inputEl); return wrap; };
 	const SPECS = [
@@ -4469,14 +4514,14 @@ function buildSimPanel(show_panel) {
 		}
 		box.appendChild(header);
 		box.appendChild(body);
-		root.appendChild(box);
+		scrollBody.appendChild(box);
 		row.els = { enable, state: stateEl, toggle: rowToggle, body };
 		enable.addEventListener('change', () => { row.enabled = enable.checked; refreshRowState(); simUpdateRunUi(); simTick(); });
 		refreshRowState();
 		setRowOpen(true);
 		sim_ui.rows[key] = row;
 	}
-	const controlRow = mk('div', {}, 'display:flex;align-items:center;gap:8px;margin-top:4px');
+	const controlRow = mk('div', {}, 'display:flex;align-items:center;gap:8px;flex:0 0 auto;padding:2px 0 6px;border-bottom:1px solid rgba(128,128,128,.3)');
 	const runBtn = mk('button', { textContent: '▶ 运行' }, 'padding:4px 10px;');
 	const statusEl = mk('span', { textContent: '已停止' }, 'font-size:10px;opacity:.75');
 	controlRow.appendChild(runBtn);
@@ -4494,7 +4539,9 @@ function buildSimPanel(show_panel) {
 	sim_ui.status = statusEl;
 	runBtn.addEventListener('click', () => toggleSim());
 	refreshBtn.addEventListener('click', () => { simInvalidate(); simTick(); });
-	root.appendChild(controlRow); root.appendChild(out);
+	root.appendChild(controlRow);
+	root.appendChild(scrollBody);
+	scrollBody.appendChild(out);
 	simUpdateRunUi();
 	sim_panel.node.innerHTML = '';
 	sim_panel.node.appendChild(root);
@@ -5036,9 +5083,10 @@ function attachGroupMenu() {
 				menuActions.extractPose = menuVariant(actions.extractPose, 'imda_menu_extract_pose', () => isImdaFormat() && !!pickTargetGroup());
 				menuActions.applyPose = menuVariant(actions.applyPose, 'imda_menu_apply_pose', () => isImdaFormat() && !!pickTargetGroup());
 				addSeparator(menu);
-				[menuActions.props, menuActions.createModel, menuActions.pickModel, menuActions.importModel,
+				// 顺序：结构动作 → 位姿 → 枢轴 → 属性（属性固定在最下面）
+				[menuActions.createModel, menuActions.pickModel, menuActions.importModel,
 					menuActions.call, menuActions.convertCall, null, menuActions.extractPose, menuActions.applyPose,
-					null, menuActions.pivot].forEach(item => { if (item) menu.addAction(item); else addSeparator(menu); });
+					null, menuActions.pivot, null, menuActions.props].forEach(item => { if (item) menu.addAction(item); else addSeparator(menu); });
 				menuAttached = true;
 				console.log('[装配] 已加入分组右键菜单（按类型条件显示）');
 			}

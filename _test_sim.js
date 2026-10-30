@@ -1113,6 +1113,55 @@ global.Group.all = [callRoot2];
 const refresh = api.refreshAllCalls();
 eq('统计到 1 个复调用标签', refresh.callTags, 1);
 eq('识别出失效目标', refresh.brokenCalls, 1);
+/* ---------- 视图联动：嵌套子分组也要参与 ---------- */
+console.log('\n[视图联动嵌套]');
+const vrRoot = new global.Group({ name: 'vrRoot', imda_type: 'composite', origin: [8, 8, 8] });
+vrRoot.addTo();
+const vrRange = new global.Group({ name: 'vrRange', imda_type: 'range_dispatch', imda_property: 'minecraft:custom_model_data', imda_index: 0, origin: [8, 8, 8] });
+vrRange.addTo(vrRoot);
+// branchA：只有空壳（没有方块/节点），branchB：内部还嵌了一层
+const vrBranchA = new global.Group({ name: 'branchA', imda_type: 'composite', imda_threshold: 0, origin: [8, 8, 8] });
+vrBranchA.addTo(vrRange);
+const vrBranchB = new global.Group({ name: 'branchB', imda_type: 'composite', imda_threshold: 1, origin: [8, 8, 8] });
+vrBranchB.addTo(vrRange);
+const vrInner = new global.Group({ name: 'branchB_inner', imda_type: 'inline', origin: [8, 8, 8] });
+vrInner.addTo(vrBranchB);
+const vrCubeA = new global.Cube({ name: 'cubeA', from: [0,0,0], to: [4,4,4], origin: [2,2,2] });
+vrCubeA.addTo(vrBranchA); vrCubeA.init();
+const vrCubeB = new global.Cube({ name: 'cubeB', from: [4,0,0], to: [8,4,4], origin: [6,2,2] });
+vrCubeB.addTo(vrInner); vrCubeB.init();
+global.Group.all = [vrRoot, vrRange, vrBranchA, vrBranchB, vrInner];
+global.Outliner.root.length = 0; global.Outliner.root.push(vrRoot);
+// mock 出最小 mesh / material，供视图联动读写
+const mkMesh = () => ({ visible: true, material: { type: 'ShaderMaterial', opacity: 1, clone() { return { type: 'ClonedMaterial', opacity: 1, dispose() { } }; }, dispose() { } } });
+for (const vg of [vrRoot, vrRange, vrBranchA, vrBranchB, vrInner]) vg.mesh = mkMesh();
+vrCubeA.mesh = mkMesh(); vrCubeB.mesh = mkMesh();
+// 映射：branchB 有节点、branchA 没有（模拟空分支）
+const nodeA = { type: 'minecraft:composite', node_name: 'branchA' };
+const nodeB = { type: 'minecraft:model', model: 'x:y' };
+const vrMap = new Map();
+vrMap.set(nodeA, vrBranchA);
+vrMap.set(nodeB, vrBranchB);
+global.__IMM_TEST__.api.getSimState().groupNodes = vrMap;
+const vrItems = [{ node: nodeA, hit: false }, { node: nodeB, hit: true }];
+const vrEntries = api.simViewEntries(vrItems);
+const byName = {};
+for (const e of vrEntries) byName[e.group.name] = e.active;
+eq('空分支 branchA 也进入联动', byName.branchA, false);
+eq('命中分支 branchB 为活跃', byName.branchB, true);
+// 半透明：嵌套在 branchB_inner 里的方块也要被覆盖（用材质记录验证）
+api.simSetViewMode('ghost');
+api.simApplyGroupVisual(vrEntries, 'ghost');
+const ghostA = !!(vrCubeA.mesh && vrCubeA.mesh.__immGhost);
+const ghostB = !!(vrCubeB.mesh && vrCubeB.mesh.__immGhost);
+eq('未命中分支的方块变半透明', ghostA, true);
+eq('命中分支的嵌套方块不变', ghostB, false);
+api.simApplyGroupVisual(vrEntries, 'hide');
+const visA = vrBranchA.mesh ? vrBranchA.mesh.visible : null;
+const visInnerB = vrInner.mesh ? vrInner.mesh.visible : null;
+eq('未命中分支隐藏', visA, false);
+eq('命中分支的嵌套分组保持可见', visInnerB, true);
+api.simSetViewMode('off');
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);

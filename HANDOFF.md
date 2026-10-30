@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-30 更新 · 当前版本 **0.69.0**
+> 生成时间：2026-10-30 更新 · 当前版本 **0.69.4**
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 > 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉「导出阈值被子级格式覆盖」，0.68.115 修掉「实例化后 export=false 导致整条分支不导出」，0.68.116 修掉「撤销不删除新建节点」的 3 处问题，0.68.117 修掉「枢轴归位把方块挪走」并说明 gizmo 位置规则。
 > **调试入口已升级：可用 `_bbcdp.js` 从终端直连软件内 Console + 全部 Blockbench 事件，见 `_BBCDP.md` 与 0.0.2。**
@@ -184,6 +184,16 @@ Blockbench 的方块网格是「`mesh.position = origin`，顶点相对 origin �
 **测试**：单测 268 项（新增 16 项：映射引用解析、路径→引用、位姿提取/应用、更新所有调用统计）。真机验证（`_bbcdp.js`）：
 导出 `refModel`（`imda_model = test:items/probe` + 预置项目缓存）→
 `{"type":"minecraft:composite","node_name":"refModel","transformation":{…},"models":[{"type":"minecraft:composite","models":[{"type":"minecraft:model","model":"test:item/probe_part"}]}]}`。
+### 0.0.7 0.69.4（右键菜单顺序 / 模拟面板固定控制条 / 嵌套分支视图联动）
+
+1. **右键菜单**：`imda_menu_props`（编辑分组映射属性）移到最末：结构动作 → 位姿 → 枢轴 → 属性。
+2. **模拟输入面板**：`root` 改 `overflow:hidden` flex 列，内部拆成 **固定 controlRow（运行/停止、刷新、视图模式、状态）+ 可滚动 scrollBody（输入行 + 结果）**。之前控制条在滚动流里，必须滚到底才能点停止。
+3. **视图联动（半透明 / 完全隐藏）修复**（两个根因）：
+   - 只处理**直属**子级：原 `simApplyGroupVisual` 只对 `group.children` 的 cube 调 `simGhostCube`、只隐藏分组自身 mesh。`sac_slots` 这种「分支 → 内层 inline 分组 → 方块」的结构完全不受影响。现新增 `simEachCubeDeep` / `simEachGroupDeep` 递归处理全部后代，`simRestoreGroup` 同样递归恢复。
+   - 只处理「映射里有节点」的分支：`simViewEntries` 原来只遍历 `sim.groupNodes`，空分支永远不参与。现额外枚举 `range_dispatch` / `condition` / `select` 容器的**每个直属子分组**，命中判定 = 该分支自身或任意后代有命中节点。
+4. 单测 274 项（+6：空分支纳入、嵌套方块半透明、嵌套分组隐藏/恢复）。
+
+**真机验证（0.69.4）**：`vSlots`(range) → `slot0`(平铺) / `slot1`(内嵌 `slot1_inner`)，值 0 时 `slot0` 可见、`slot1` 与 `slot1_inner` 均 `visible=false`；菜单 ids 末尾为 `imda_menu_props`；面板 root 子节点为 [controlRow, scrollBody]。
 ### 0.0 0.68.113 本次改动
 
 1. `instantiateCallTags` 的撤销 aspects 改为：
