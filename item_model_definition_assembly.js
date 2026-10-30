@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.69.4';
+const VERSION = '0.69.6';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -4252,17 +4252,20 @@ function simViewEntries(items) {
 	const map = sim.groupNodes;
 	if (!map) return [];
 	const hitGroups = new Set();
-	const mappedGroups = new Set();
+	const mappedGroups = new Set();   // 仅用于找「分支容器」
+	const itemGroups = new Set();     // 真正产出 item 的分组（才进 entries 第 1 类）
+	try { for (const group of map.values()) if (group) mappedGroups.add(group); } catch (e) { /* ignore */ }
 	for (const item of items || []) {
 		const group = map.get(item && item.node);
 		if (!group) continue;
 		mappedGroups.add(group);
+		itemGroups.add(group);
 		if (item.hit) hitGroups.add(group);
 	}
 	const state = new Map();
 	const mark = (group, active) => { if (!group) return; state.set(group, !!state.get(group) || !!active); };
-	// 1) 映射里出现过的分组
-	for (const group of mappedGroups) mark(group, hitGroups.has(group));
+	// 1) 只有真正产出 item 的分组按命中状态进入（其余分组不参与，避免把整棵树都标成不活跃）
+	for (const group of itemGroups) mark(group, hitGroups.has(group));
 	// 2) 分支容器的**每个**直属子分组都参与（含没有产出节点的空分支）；
 	//    命中与否看该子分支自身或它的任意后代是否有命中节点。
 	for (const group of mappedGroups) {
@@ -4270,12 +4273,17 @@ function simViewEntries(items) {
 		if (!parent || !isGroup(parent)) continue;
 		const type = String(parent.imda_type || '').replace(/^minecraft:/, '');
 		if (type !== 'range_dispatch' && type !== 'condition' && type !== 'select') continue;
+		const branches = [];
 		for (const child of (parent.children || [])) {
 			if (!isGroup(child)) continue;
 			let active = hitGroups.has(child);
 			if (!active) simEachGroupDeep(child, node => { if (hitGroups.has(node)) active = true; });
-			mark(child, active);
+			branches.push({ child, active });
 		}
+		// fail-open：如果一个容器下没有任何分支命中（数据没建好 / 分支全是空壳），
+		// 不要把所有分支都隐藏掉，保持原样更安全。
+		const anyActive = branches.some(b => b.active);
+		for (const item of branches) mark(item.child, anyActive ? item.active : true);
 	}
 	const entries = [];
 	for (const [group, active] of state) entries.push({ group, active });
