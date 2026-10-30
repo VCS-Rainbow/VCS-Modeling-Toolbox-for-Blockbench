@@ -75,6 +75,8 @@ const opts = {
     json: false,
     stdin: false,
     replay: false,
+    reloadPlugin: null,
+    testHook: false,
 };
 
 for (let i = 0; i < argv.length; i++) {
@@ -82,7 +84,7 @@ for (let i = 0; i < argv.length; i++) {
     const [k, ...rest] = raw.split('=');
     let val = rest.length ? rest.join('=') : null;
     // 支持空格分隔：--eval "CODE" / --port 9222 / --exe "路径"
-    const takesValue = ['--port', '--host', '--eval', '--eval-file', '--event-filter', '--out', '--exe'];
+    const takesValue = ['--port', '--host', '--eval', '--eval-file', '--event-filter', '--out', '--exe', '--reload-plugin'];
     if (val === null && k === '--eval' && i + 1 < argv.length && !argv[i + 1].startsWith('--')) {
         // 代码里通常含空格：把后续直到下一个 --flag 的参数全部拼进来，
         // 这样不论 shell 是否把整段代码当成一个参数都能工作
@@ -108,6 +110,8 @@ for (let i = 0; i < argv.length; i++) {
         case '--json': opts.json = true; break;
         case '--stdin': opts.stdin = true; break;
         case '--replay': opts.replay = true; break;
+        case '--reload-plugin': opts.reloadPlugin = val || 'item_model_definition_assembly'; break;
+        case '--hook': opts.testHook = true; break;
         case '--snapshot': opts.evals.push(SNAPSHOT_EXPR); break;
         case '--help': case '-h': printHelp(); process.exit(0); break;
         default:
@@ -136,6 +140,8 @@ function printHelp() {
   --list-targets           只列出 CDP target 后退出
   --exe=<path>             Blockbench.exe 路径（配合 --launch）
   --stdin                  从标准输入逐行读 JS 求值（交互/管道），隐含 --watch
+  --reload-plugin[=id]     重载插件（默认 item_model_definition_assembly），无需重启 Blockbench
+  --hook                   重载前先设置 __IMM_TEST__ 测试钩子
   --replay                 附加时也输出接入前的 console 历史
   --json                   事件以 JSONL 输出
 `);
@@ -474,6 +480,23 @@ function fmtStackTrace(stack) {
         log('[eval]', typeof text === 'string' ? text : JSON.stringify(text));
     }
 
+    // --reload-plugin：只重载插件（不重启 Blockbench）。用于“复制新文件到 plugins 目录”之后。
+    if (opts.reloadPlugin) {
+        const id = JSON.stringify(opts.reloadPlugin);
+        const expr = `(async () => {
+            try {
+                ${opts.testHook ? 'globalThis.__IMM_TEST__ = globalThis.__IMM_TEST__ || {};' : ''}
+                const pid = ${id};
+                let p = Plugins.all.find(x => x.id === pid);
+                if (!p) return 'plugin-not-found: ' + pid;
+                const before = p.version;
+                await p.reload();
+                p = Plugins.all.find(x => x.id === pid);
+                return JSON.stringify({ id: pid, before, version: p && p.version, disabled: !!(p && p.disabled), hook: !!globalThis.__IMM_TEST__ });
+            } catch (e) { return 'reload-error: ' + ((e && e.message) || e); }
+        })()`;
+        await evaluateExpr(expr);
+    }
     for (const expr of opts.evals) await evaluateExpr(expr);
 
     // 交互式：从 stdin 逐行读 JS 求值（可直接在终端输入，也可由编辑器/脚本管道喂入）

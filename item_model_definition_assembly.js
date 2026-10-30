@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.69.0';
+const VERSION = '0.69.3';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -5024,7 +5024,7 @@ function attachGroupMenu() {
 	try {
 		const menu = (typeof Group !== 'undefined' && Group.prototype) ? Group.prototype.menu : null;
 		if (menu && typeof menu.addAction === 'function' && actions.props) {
-			if (!menu._imdaV143) {
+			{
 				cleanByPrefix(menu);
 				menuActions.props = menuVariant(actions.props, 'imda_menu_props', () => isImdaFormat() && !!pickTargetGroup());
 				menuActions.pickModel = menuVariant(actions.pickModelFile, 'imda_menu_pick_model', () => isImdaFormat() && targetGroupTypeIn(['model']));
@@ -5039,7 +5039,6 @@ function attachGroupMenu() {
 				[menuActions.props, menuActions.createModel, menuActions.pickModel, menuActions.importModel,
 					menuActions.call, menuActions.convertCall, null, menuActions.extractPose, menuActions.applyPose,
 					null, menuActions.pivot].forEach(item => { if (item) menu.addAction(item); else addSeparator(menu); });
-				menu._imdaV143 = true;
 				menuAttached = true;
 				console.log('[装配] 已加入分组右键菜单（按类型条件显示）');
 			}
@@ -5049,7 +5048,7 @@ function attachGroupMenu() {
 	try {
 		const menu = (typeof Locator !== 'undefined' && Locator.prototype) ? Locator.prototype.menu : null;
 		if (menu && typeof menu.addAction === 'function' && actions.editCall) {
-			if (!menu._imdaV143) {
+			{
 				cleanByPrefix(menu);
 				menuActions.instantiateThis = menuVariant(actions.instantiateThis, 'imda_menu_instantiate_this', () => isImdaFormat() && isCallTagNode(pickTargetLocator()));
 				menuActions.editCall = menuVariant(actions.editCall, 'imda_menu_edit_call', () => isImdaFormat() && isCallTagNode(pickTargetLocator()));
@@ -5060,7 +5059,6 @@ function attachGroupMenu() {
 				menuActions.editCall && menu.addAction(menuActions.editCall);
 				menu.addAction(menuActions.extractPoseLoc);
 				menu.addAction(menuActions.applyPoseLoc);
-				menu._imdaV143 = true;
 				locatorMenuAttached = true;
 				console.log('[装配] 已重排复调用标签右键菜单（按目标条件显示）');
 			}
@@ -5069,11 +5067,13 @@ function attachGroupMenu() {
 	// 方块右键：位姿提取/应用（方块也能作为来源）
 	try {
 		const menu = (typeof Cube !== 'undefined' && Cube.prototype) ? Cube.prototype.menu : null;
-		if (menu && typeof menu.addAction === 'function' && !cubeMenuAttached) {
+		if (menu && typeof menu.addAction === 'function') {
 			cleanByPrefix(menu);
 			addSeparator(menu);
-			menu.addAction(menuVariant(actions.extractPose, 'imda_menu_extract_pose_cube', () => isImdaFormat() && selectedGroups().length > 0));
-			menu.addAction(menuVariant(actions.applyPose, 'imda_menu_apply_pose_cube', () => isImdaFormat() && selectedGroups().length > 0));
+			menuActions.extractPoseCube = menuVariant(actions.extractPose, 'imda_menu_extract_pose_cube', () => isImdaFormat() && selectedGroups().length > 0);
+			menuActions.applyPoseCube = menuVariant(actions.applyPose, 'imda_menu_apply_pose_cube', () => isImdaFormat() && selectedGroups().length > 0);
+			menu.addAction(menuActions.extractPoseCube);
+			menu.addAction(menuActions.applyPoseCube);
 			cubeMenuAttached = true;
 		}
 	} catch (error) { /* ignore */ }
@@ -5275,6 +5275,18 @@ Plugin.register('item_model_definition_assembly', {
 		}
 	},
 	onunload() {
+		try {
+			Object.keys(menuActions || {}).forEach(key => { const act = menuActions[key]; try { if (act && typeof act.delete === 'function') act.delete(); } catch (e) { /* ignore */ } });
+			menuActions = {};
+		} catch (e) { /* ignore */ }
+		try {
+			for (const proto of [typeof Group !== 'undefined' ? Group : null, typeof Locator !== 'undefined' ? Locator : null, typeof Cube !== 'undefined' ? Cube : null]) {
+				const menu = proto && proto.prototype && proto.prototype.menu;
+				if (menu && Array.isArray(menu.structure)) {
+					menu.structure = menu.structure.filter(item => { const id = typeof item === 'string' ? item : (item && item.id) || ''; return !String(id).startsWith('imda_'); });
+				}
+			}
+		} catch (menuError) { /* ignore */ }
 		try { if (sim.timer) { clearInterval(sim.timer); sim.timer = null; } } catch (e) { /* ignore */ }
 		try { if (sim.tickTimer) { clearTimeout(sim.tickTimer); sim.tickTimer = null; } } catch (e) { /* ignore */ }
 		try { simStopViewLoop(); } catch (e) { /* ignore */ }

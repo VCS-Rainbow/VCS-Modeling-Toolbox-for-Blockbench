@@ -2,6 +2,12 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.69.3
+- 修「重载插件后右键菜单重复注册」：`menuVariant()` 生成的 Action 之前没被释放，重载会报 `imda_menu_* has a duplicate ID`。现在 `onunload` 里统一 `delete()` 掉 `menuActions` 里的全部菜单动作，并清理 Group/Locator/Cube 三个 `prototype.menu` 里的 `imda_` 项；菜单也改为「每次先清理再重建」，不再依赖挂在 prototype 上的持久标记。
+## 0.69.2
+- 菜单动作释放补全（menuActions.delete + 清 structure）。
+## 0.69.1
+- 右键菜单守卫改为每次重建，避免重载后残留。
 ## 0.69.0
 - **引用其他物品模型映射**：`imda_model` 支持写成 `<命名空间>:items/<路径>`（对应 `assets/<命名空间>/items/<路径>.json`）。导出时读取该映射文件的 `model` 定义并内联为 `composite` 包裹，外层仍保留本分组的 `transformation`、`node_name`、tints 逻辑；读取失败会 warn 并退回普通模型引用。
 - **工具 → 更新所有调用**：清空映射缓存、重扫全部复调用标签与 `imda_model` 引用、重排分支名，并汇总「失效复调用 / 映射读取失败 / 分支名刷新数」；有问题时弹窗列出。
