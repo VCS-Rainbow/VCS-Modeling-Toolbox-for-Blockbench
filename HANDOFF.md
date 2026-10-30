@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-30 更新 · 当前版本 **0.69.4**
+> 生成时间：2026-10-31 更新 · 当前版本 **0.69.11**
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 > 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉「导出阈值被子级格式覆盖」，0.68.115 修掉「实例化后 export=false 导致整条分支不导出」，0.68.116 修掉「撤销不删除新建节点」的 3 处问题，0.68.117 修掉「枢轴归位把方块挪走」并说明 gizmo 位置规则。
 > **调试入口已升级：可用 `_bbcdp.js` 从终端直连软件内 Console + 全部 Blockbench 事件，见 `_BBCDP.md` 与 0.0.2。**
@@ -194,7 +194,34 @@ Blockbench 的方块网格是「`mesh.position = origin`，顶点相对 origin �
 4. 单测 274 项（+6：空分支纳入、嵌套方块半透明、嵌套分组隐藏/恢复）。
 
 **真机验证（0.69.4）**：`vSlots`(range) → `slot0`(平铺) / `slot1`(内嵌 `slot1_inner`)，值 0 时 `slot0` 可见、`slot1` 与 `slot1_inner` 均 `visible=false`；菜单 ids 末尾为 `imda_menu_props`；面板 root 子节点为 [controlRow, scrollBody]。
-### 0.0.8 测试纪律（2026-10-30 事故）
+### 0.0.8 模拟面板复选框语义 + 步长 0（0.69.7 → 0.69.11，2026-10-31）
+
+**用户诉求（原话）**：「我不希望模拟输入改值的时候自动打开循环」；「复选框不勾的时候，值也应当存在」。
+
+**最终语义（0.69.11）**：
+
+| 控件 | 作用 | 不影响 |
+| --- | --- | --- |
+| 大类复选框（`row.enabled`） | 这一类要不要跟着「▶ 运行」自动变化 | 值是否存在、是否参与求值 |
+| 槽复选框（`slot.enabled`） | 这一个槽要不要自动变化；取消后槽名标「（不自动）」 | 值是否存在（原样保留）、是否参与求值 |
+
+改动点：
+
+1. `simTick()`：删掉 `if (!slot.enabled) continue;`——**所有槽的手动值都写进 `inputs`**。角标同理，不再跳过未勾选的槽。
+2. `ensureEnabled()` 整个删除。改值/改索引不再自动勾上大类或槽复选框，也不会 `setInterval`。
+3. `readSlot()`：`slot.step = Number(step.value) || 0.5` → 只有留空/非法才回退 0.5，**步长 0 保留 0**（原来 0 被当假值，所以「设 0 无效」）。`openSimulator()` 里 `num(result.step) || 0.5` 同样修正。
+4. `refreshSlotState()`：不再把整个槽降到 `.5` 透明度（会让人以为“禁用了”），只改槽名文字。
+5. `slot.els` 增加只读镜像 `slotValue` / `slotStep` / `slotIndex`，方便 CDP 探针与单测断言“存下来的值”。
+
+**真机验证（0.69.11，CDP `--eval-file`）**：
+- 两复选框全不勾 + 改值为 5 → `slotValue="5"`、`val.value="5"`、`inputs.floats[0]=5`；`running=false`。
+- 勾上/取消大类或槽 → `slotValue` 与输入框始终 `"5"`；槽取消后 label=`槽 1（不自动）`、opacity=`1`。
+- 步长 `0` → `slotStep=0`；留空 → `0.5`；`0.25` → `0.25`。
+- 步长 0 + 运行 1.2s → 值恒为 `3`（不动），计时器确实在跑；步长 0.5 → 值从 `0` 变到 `1`。
+- 全程 `Project.saved === false`（未保存工程）。
+
+单测 283 项（新增 9 项）。
+### 0.0.9 测试纪律（2026-10-30 事故）
 
 **事故**：为清理模拟测试用的临时分组，脚本执行了 `for (node of Outliner.root) node.remove()` + `Outliner.root.length = 0`，而当时用户正开着 `assembly.bbmodel`，**把用户工程的内存态清空**（`cubes` 85 → 0）。磁盘文件未损坏（最后写入 22:42，事故在 23:0x），通过 `Codecs.project.load` 从磁盘重载恢复（85 方块 / 61 分组 / 12 根节点）。
 
@@ -387,11 +414,12 @@ Blockbench 的方块网格是「`mesh.position = origin`，顶点相对 origin �
 - 结构（0.40.0）：**大类标题行**（折叠箭头 + 复选框 + 名称/提示 +「未启用」）→ 大类 body（默认展开）→ **每个槽一行**（折叠箭头 + **槽复选框** + 槽号 + 索引 + 值 + 命中角标）→ 槽 body（默认折叠）：自动变化控制器 + 关联分组。
 - 折叠用 `<div>` + 箭头按钮控制 `style.display`，**不要用 `<details>` 包输入**（0.36.x 曾把名称/索引/值移进折叠 body，`<summary>` 里只剩「索引 0/1/2」）。
 - **「未活跃」也不能用 `innerHTML` 里的原生 `<details>`**（0.40.0 修）：面板重渲染点不开。改成自绘按钮 + `data-usage-toggle` / `data-usage-body`，事件委托挂在 usageEl 上，展开状态存在 `sim.usageOpen`，`innerHTML` 重建后保持。
-- 两个开关：**大类复选框**（`row.enabled`）与**槽复选框**（`slot.enabled`，默认开）。两者都开才参与求值；自动变化只挑 `row.enabled && row.kind === 'number' && slot.enabled`。改值/改索引会自动勾上槽和大类。
+- 两个复选框（0.69.11 起语义已澄清）：**大类复选框**（`row.enabled`）= 这一类要不要自动变化；**槽复选框**（`slot.enabled`，默认开）= 这一个槽要不要自动变化。**两者都不影响值是否存在、也不影响求值**——`simTick` 里所有槽的手动值一律写入 `inputs`。自动变化只挑 `row.enabled && row.kind === 'number' && slot.enabled`。**改值/改索引不会勾任何复选框，也不会启动循环**（`ensureEnabled()` 已删除）。
 - 运行状态：`simUpdateRunUi()` 维护按钮文案（▶ 运行 / ■ 停止）+ 高亮 + 右侧「已停止 / 运行中 · N 个自动槽」；没有数值槽时只弹提示、不进入运行态。
 - 改值即时重算（`input` 事件，**40ms 防抖** `simScheduleTick`）。
 - **性能**：`sim.mapping` 缓存 `buildMapping()`、`sim.usage` 缓存 `collectInputUsage()`；结构/属性变化时 `simInvalidate()` 置脏（组事件、分组属性确认、分支改名都会调）。`createExporter().buildMapping()` 很重，**绝不能在每次输入时重建**。另有「⟳ 刷新」按钮兜底。
-- **行首复选框 = 自动变化开关（0.50.0）**：`row.enabled` 只影响 `simAutoSlots()`；`simTick` 里所有 `slot.enabled` 的槽都参与求值（手动值不再被行复选框挡掉）。`colors` 自动用 `slot.presets` 轮换（`SIM_COLOR_PRESETS`），角标显示关联组数。
+- **行首复选框 = 自动变化开关（0.50.0）**：`row.enabled` 只影响 `simAutoSlots()`；`simTick` 里所有槽都参与求值。`colors` 自动用 `slot.presets` 轮换（`SIM_COLOR_PRESETS`），角标显示关联组数。
+- **步长 0（0.69.11）**：`readSlot()` 原写法 `Number(step.value) || 0.5` 把 0 当假值，所以「步长设 0 无效」。现改为只有留空/非法才回退 0.5。`openSimulator()` 里同理。
 - **colors 预览着色（0.48.0）**：`simApplyTints()` 在每个 tick 后遍历分组内方块，取第一个 `face.tint >= 0` 的 tintindex 作为 `colors[index]` 下标，用 `MeshBasicMaterial(map, color)` 替换运行时材质；`simRestoreTints()` 在清空/关闭/切项目/卸载时恢复。幽灵态优先，不叠加。
 - 关联分组：容器（如 `bone7`）在上、直属子分支全列出；活跃子分支加粗标蓝（容器始终灰色、无 `[!]`）。
 - 活跃判定：`activeIndex = max{ k | k ≤ 当前值 }`（k 来自子分组名 `[k]` 前缀）。
@@ -447,6 +475,14 @@ Blockbench 的方块网格是「`mesh.position = origin`，顶点相对 origin �
 0.68.88  实验：groups aspects / 覆盖日志（已回退）
 0.68.87  实验：initEdit groups aspect（已回退）
 0.68.86  实验：覆盖改到 init 后（已回退）
+0.69.11 复选框只管自动变化（不勾值也在、也照样求值）；改值不再自动开循环；步长 0 保留
+0.69.10 复选框不再冲掉值（readSlot 忽略空输入；勾选不回写输入框）
+0.69.9 分支活跃判定改用 branchActive（内层 condition 不满足时不再误判整支不活跃）
+0.69.8 求值结果带 branch，复调用克隆的分支也能正确隐藏/半透明
+0.69.7 去掉 fail-open：严格按条件隐藏，修「只有第 5 支有内容时不轮换」
+0.69.6 分支容器从全部映射分组枚举（空分支也参与联动）
+0.69.4 菜单属性置底；模拟面板控制条固定；视图联动递归嵌套分组/空分支
+0.69.3 重载插件不再重复注册右键菜单
 0.69.0 引用 items/*.json 映射（内联+项目缓存）、更新所有调用、右键菜单条件化、提取/应用变换、引用文件选择器
 0.68.117 枢轴归位不再动方块枢轴（会把方块挪走）；导入时把方块 origin 设为几何中心
 0.68.116 撤销审计：复调用/时间轴/导入引用模型的新建节点进 finish aspects；规范化与属性删除合并撤销

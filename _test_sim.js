@@ -216,22 +216,52 @@ eq('值 0 → 命中 low', /✔ ns:item\/low/.test(simUi.out.textContent), true)
 eq('槽展开后有活跃项/关联分组', /range/.test(slot0.els.usage.innerHTML), true);
 eq('未活跃项用自绘折叠按钮（不是 details）', /data-usage-toggle/.test(slot0.els.usage.innerHTML) && !/<details>/.test(slot0.els.usage.innerHTML), true);
 
-/* ---------- 槽级开关 ---------- */
-console.log('\n[槽级开关]');
+/* ---------- 复选框只是「要不要自动变化」，不影响值 ---------- */
+console.log('\n[复选框语义]');
 const slot1 = floatsRow.slots[1];
-slot0.els.val.value = '5';
+slot0.els.val.value = '2';
 slot0.els.val.fire('input');
-slot1.els.idx.value = '0';
+slot1.els.idx.value = '0';            // 两个槽同下标：后写的槽 2 生效
 slot1.els.idx.fire('input');
 slot1.els.val.value = '0';
 slot1.els.val.fire('input');
 api.simTick();
-eq('两个槽都启用时按顺序写入（后写的 0 生效 → low）', /✔ ns:item\/low/.test(simUi.out.textContent), true);
+eq('两个槽都勾时后写的槽 2 生效（0 → low）', /✔ ns:item\/low/.test(simUi.out.textContent), true);
 slot1.els.enable.checked = false;
 slot1.els.enable.fire('change');
 api.simTick();
-eq('关掉槽 2 后只剩槽 1 的值（5 → high）', /✔ ns:item\/high/.test(simUi.out.textContent), true);
-eq('关掉的槽不再显示命中角标', slot1.els.badge.textContent, '');
+eq('槽 2 不勾时值仍保留', { input: slot1.els.val.value, stored: slot1.els.slotValue }, { input: '0', stored: '0' });
+eq('槽 2 不勾也不变淡（只是不自动）', slot1.els.body.parentElement.style.opacity, '1');
+eq('槽 2 不勾时槽名标注「不自动」', /不自动/.test(slot1.els.enable.parentElement.textContent), true);
+eq('槽 2 不勾时值照样参与求值（仍是 0 → low，而不是槽 1 的 2 → high）', /✔ ns:item\/low/.test(simUi.out.textContent), true);
+slot1.els.enable.checked = true;
+slot1.els.enable.fire('change');
+slot1.els.idx.value = '1';            // 挪到另一个下标，避免继续覆盖 floats[0]
+slot1.els.idx.fire('input');
+// 改值不能把自动变化打开（用户明确要求）
+floatsRow.els.enable.checked = false;
+floatsRow.els.enable.fire('change');
+slot0.els.enable.checked = false;
+slot0.els.enable.fire('change');
+slot0.els.val.value = '2';
+slot0.els.val.fire('input');
+eq('改值不会自动勾上槽复选框', slot0.els.enable.checked, false);
+eq('改值不会自动勾上大类复选框（不打开循环）', floatsRow.enabled, false);
+eq('改值不会启动自动计时器', api.getSimState().timer, null);
+api.simTick();
+eq('复选框都不勾时手动值仍然生效（2 → high）', /✔ ns:item\/high/.test(simUi.out.textContent), true);
+
+/* ---------- 步长 0 应该真的不动 ---------- */
+console.log('\n[步长]');
+slot0.els.step.value = '0';
+slot0.els.step.fire('change');
+eq('步长填 0 保留 0（不再被当成空值回退 0.5）', slot0.els.slotStep, 0);
+slot0.els.step.value = '';
+slot0.els.step.fire('change');
+eq('步长留空才回退默认 0.5', slot0.els.slotStep, 0.5);
+slot0.els.step.value = '0.25';
+slot0.els.step.fire('change');
+eq('步长填 0.25 正常读入', slot0.els.slotStep, 0.25);
 
 /* ---------- 运行状态 ---------- */
 console.log('\n[运行状态]');

@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.69.6';
+const VERSION = '0.69.11';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -4256,11 +4256,15 @@ function simViewEntries(items) {
 	const itemGroups = new Set();     // 真正产出 item 的分组（才进 entries 第 1 类）
 	try { for (const group of map.values()) if (group) mappedGroups.add(group); } catch (e) { /* ignore */ }
 	for (const item of items || []) {
-		const group = map.get(item && item.node);
+		// 优先用 branch（分支节点）定位分组：复调用克隆的 item 节点属于源分组，
+		// 直接用 item.node 会把命中算到源分组上，分支本身永远判不出 active。
+		const branchGroup = item && item.branch ? map.get(item.branch) : null;
+		const group = branchGroup || map.get(item && item.node);
 		if (!group) continue;
 		mappedGroups.add(group);
 		itemGroups.add(group);
-		if (item.hit) hitGroups.add(group);
+		// 分支分组用 branchActive（“这一支被选中”）判定；普通分组才用 hit（“真的会被渲染”）。
+		if (branchGroup ? item.branchActive : item.hit) hitGroups.add(group);
 	}
 	const state = new Map();
 	const mark = (group, active) => { if (!group) return; state.set(group, !!state.get(group) || !!active); };
@@ -4280,10 +4284,9 @@ function simViewEntries(items) {
 			if (!active) simEachGroupDeep(child, node => { if (hitGroups.has(node)) active = true; });
 			branches.push({ child, active });
 		}
-		// fail-open：如果一个容器下没有任何分支命中（数据没建好 / 分支全是空壳），
-		// 不要把所有分支都隐藏掉，保持原样更安全。
-		const anyActive = branches.some(b => b.active);
-		for (const item of branches) mark(item.child, anyActive ? item.active : true);
+		// 严格按条件：不满足条件的分支一律隐藏 / 半透明。
+		// 不做 fail-open —— 否则「只有第 5 支有内容」的容器在切到其它值时整块保持可见，看起来就是"不轮换"。
+		for (const item of branches) mark(item.child, item.active);
 	}
 	const entries = [];
 	for (const [group, active] of state) entries.push({ group, active });
@@ -4406,7 +4409,7 @@ function buildSimPanel(show_panel) {
 		enableWrap.appendChild(mk('span', { textContent: label }, 'font-weight:600;font-size:11px'));
 		if (hint) enableWrap.appendChild(mk('span', { textContent: hint }, 'font-size:10px;opacity:.55'));
 		const stateEl = mk('span', { textContent: '自动' }, 'font-size:10px;color:#7fd0ff');
-		stateEl.title = '勾选后参与自动变化（点上方「运行」生效）；不勾选仍会用手动值参与求值';
+		stateEl.title = '勾选后这一类的数值槽会自动变化（点上方「运行」生效）；不勾选只是不自动变化，手动值照样参与求值';
 		header.appendChild(rowToggle);
 		header.appendChild(enableWrap);
 		header.appendChild(stateEl);
@@ -4429,6 +4432,7 @@ function buildSimPanel(show_panel) {
 			const slotToggle = mk('button', { textContent: '▸', title: '展开自动变化 / 关联分组' }, 'border:none;background:transparent;cursor:pointer;padding:0;font-size:11px;line-height:1;width:12px;opacity:.7');
 			const slotEnable = mk('input', { type: 'checkbox' });
 			slotEnable.checked = true;
+			slotEnable.title = '这个槽要不要参与自动变化（点上方「运行」后生效）；不影响值的存在，也不影响手动值参与求值';
 			const slotName = mk('span', { textContent: multi ? ('槽 ' + (slotIndex + 1)) : '取值' }, 'font-size:10px;opacity:.65;min-width:26px');
 			const idx = mk('input', { type: 'number', value: String(slotIndex) }, 'width:44px');
 			const val = mk('input', { type: (kind === 'text' || kind === 'bool') ? 'text' : 'number', value: slot.value }, 'width:72px');
@@ -4486,36 +4490,44 @@ function buildSimPanel(show_panel) {
 			const readSlot = () => {
 				slot.enabled = slotEnable.checked;
 				slot.index = Number(idx.value) || 0;
-				slot.value = val.value;
+				// 空输入不要覆盖已记录的值：勾选/取消勾选时不应该把值“弄没”
+				const text = String(val.value == null ? '' : val.value).trim();
+				if (text !== '') slot.value = text;
 				slot.period = Math.max(50, (Number(period.value) || 0.2) * 1000);
 				if (slot.key === 'colors' || key === 'colors') {
 					const list = String(presets.value || '').split(/[,\s;]+/).map(t => t.trim()).filter(Boolean).map(t => Number(t)).filter(v => isFinite(v));
 					slot.presets = list.length ? list : [Number(val.value) || 0];
 				}
-				slot.step = Number(step.value) || 0.5;
+				// 步长允许 0（= 自动变化时数值不动）；只有留空/非法才回退默认 0.5
+				const stepText = String(step.value == null ? '' : step.value).trim();
+				slot.step = (stepText === '' || !isFinite(Number(stepText))) ? 0.5 : Number(stepText);
 				slot.rule = rule.value;
 				slot.min = Number(minI.value) || 0;
 				slot.max = Number(maxI.value) || 4;
 			};
-			const refreshSlotState = () => { slotBox.style.opacity = slot.enabled ? '1' : '.5'; };
+			// 复选框 = 「要不要自动变化」，与值是否存在无关：不勾也不变淡、值照常参与求值，
+			// 只在槽名后面标一个「不自动」提醒。
+			const refreshSlotState = () => {
+				slotName.textContent = (multi ? ('槽 ' + (slotIndex + 1)) : '取值') + (slot.enabled ? '' : '（不自动）');
+				slotBox.style.opacity = '1';
+			};
 			const setSlotOpen = (open) => {
 				slot.open = open;
 				slotBody.style.display = open ? 'flex' : 'none';
 				slotToggle.textContent = open ? '▾' : '▸';
 			};
 			slotToggle.addEventListener('click', (event) => { if (event && event.preventDefault) event.preventDefault(); setSlotOpen(!slot.open); });
-			// 改值（或索引）说明就是想用这个槽：自动勾上槽和大类，避免“改了没反应”
-			const ensureEnabled = () => {
-				if (slotEnable.checked) return;
-				slotEnable.checked = true;
-				readSlot();
-				refreshSlotState();
-			};
-			val.addEventListener('input', () => { ensureEnabled(); readSlot(); simScheduleTick(); });
-			val.addEventListener('change', () => { ensureEnabled(); readSlot(); simScheduleTick(); });
-			idx.addEventListener('input', () => { ensureEnabled(); readSlot(); simScheduleTick(); });
-			[slotEnable, period, step, rule, minI, maxI, presets].forEach(el => el.addEventListener('change', () => { readSlot(); refreshSlotState(); simUpdateRunUi(); simTick(); }));
-			slot.els = { toggle: slotToggle, body: slotBody, enable: slotEnable, idx, val, badge, usage: usageEl, period, step, rule, min: minI, max: maxI, presets };
+			// 改值 / 改索引【不】碰任何复选框：复选框只是「要不要自动变化」，
+			// 手动输入的值无论如何都参与求值，所以不需要替用户勾上什么。
+			val.addEventListener('input', () => { readSlot(); simScheduleTick(); });
+			val.addEventListener('change', () => { readSlot(); simScheduleTick(); });
+			idx.addEventListener('input', () => { readSlot(); simScheduleTick(); });
+			// 勾选/取消勾选只切换「要不要自动变化」，不回写输入框内容，也不影响求值
+			slotEnable.addEventListener('change', () => { slot.enabled = slotEnable.checked; refreshSlotState(); simUpdateRunUi(); simTick(); });
+			[period, step, rule, minI, maxI, presets].forEach(el => el.addEventListener('change', () => { readSlot(); refreshSlotState(); simUpdateRunUi(); simTick(); }));
+			slot.els = { toggle: slotToggle, body: slotBody, enable: slotEnable, idx, val, badge, usage: usageEl, period, step, rule, min: minI, max: maxI, presets,
+				// 只读镜像：方便测试/调试确认“存下来的值”，不参与逻辑
+				get slotValue() { return slot.value; }, get slotStep() { return slot.step; }, get slotIndex() { return slot.index; } };
 			refreshSlotState();
 			setSlotOpen(false);
 			row.slots.push(slot);
@@ -4710,7 +4722,9 @@ function simEvaluate(node, inputs) {
 		}
 		for (const entry of node.entries || []) {
 			const isBest = best === entry;
-			for (const item of simEvaluate(entry.model, inputs)) result.push({ node: item.node, hit: item.hit && isBest });
+			// branch = 该 item 所属的分支节点。复调用克隆出来的 item 节点登记在源分组上，
+			// 只看 node→group 会丢掉「当前命中的是哪个分支」，视图联动就无法按分支切换。
+			for (const item of simEvaluate(entry.model, inputs)) result.push({ node: item.node, hit: item.hit && isBest, branch: entry.model, branchActive: isBest });
 		}
 		// 没有命中的阈值时才用 fallback（原实现条件写反了）
 		if (!best && node.fallback) for (const item of simEvaluate(node.fallback, inputs)) result.push(item);
@@ -4722,7 +4736,7 @@ function simEvaluate(node, inputs) {
 		for (const item of node.cases || []) {
 			const isMatch = !matched && simWhenMatches(item && item.when, value);
 			if (isMatch) matched = item;
-			for (const model of simEvaluate(item.model, inputs)) result.push({ node: model.node, hit: model.hit && isMatch });
+			for (const model of simEvaluate(item.model, inputs)) result.push({ node: model.node, hit: model.hit && isMatch, branch: item.model, branchActive: isMatch });
 		}
 		if (!matched && node.fallback) for (const item of simEvaluate(node.fallback, inputs)) result.push(item);
 		return result;
@@ -4730,8 +4744,8 @@ function simEvaluate(node, inputs) {
 	if (type === 'condition') {
 		// 被选中的那一支算命中；另一支也求值但标 hit=false（结果区与视图联动都要知道它没生效）
 		const ok = simConditionValue(node, inputs);
-		for (const item of simEvaluate(ok ? node.on_true : node.on_false, inputs)) result.push(item);
-		for (const item of simEvaluate(ok ? node.on_false : node.on_true, inputs)) result.push({ node: item.node, hit: false });
+		for (const item of simEvaluate(ok ? node.on_true : node.on_false, inputs)) result.push({ node: item.node, hit: item.hit, branch: ok ? node.on_true : node.on_false, branchActive: true });
+		for (const item of simEvaluate(ok ? node.on_false : node.on_true, inputs)) result.push({ node: item.node, hit: false, branch: ok ? node.on_false : node.on_true, branchActive: false });
 		return result;
 	}
 	if (type === 'model') { result.push({ node, hit: true }); return result; }
@@ -4760,9 +4774,9 @@ function simTick() {
 	const lines = [];
 	for (const key of Object.keys(sim_ui.rows)) {
 		const row = sim_ui.rows[key];
-		// 行复选框只管“自动变化”，手动值始终参与求值
+		// 复选框只控制「是否参与自动变化」，不控制值是否存在：
+		// 手动值一律写进 inputs 参与求值，勾不勾都一样。
 		for (const slot of row.slots) {
-			if (!slot.enabled) continue;
 			simApplySlot(inputs, key, slot);
 			lines.push(simSlotLabel(key, slot));
 		}
@@ -4776,7 +4790,6 @@ function simTick() {
 	for (const key of Object.keys(sim_ui.rows)) {
 		const row = sim_ui.rows[key];
 		for (const slot of row.slots) {
-			if (!slot.enabled) { if (slot.els) slot.els.badge.textContent = ''; continue; }
 			if (key === 'colors') {
 				const groups = simGetUsage()['colors#' + slot.index] || [];
 				if (slot.els) slot.els.badge.textContent = groups.length ? (groups.length + ' 组') : '';
@@ -4800,7 +4813,8 @@ function simAutoSlots() {
 	if (!sim_ui || !sim_ui.rows) return list;
 	for (const key of Object.keys(sim_ui.rows)) {
 		const row = sim_ui.rows[key];
-		// 行复选框 = 自动变化开关；槽复选框 = 是否参与（求值与自动都看它）
+		// 两个复选框都只是「运行开关」，不影响值是否存在 / 是否参与求值：
+		// 大类复选框 = 这一类的自动变化；槽复选框 = 这一个槽的自动变化。
 		if (!row.enabled || row.kind !== 'number') continue;
 		for (const slot of row.slots) if (slot.enabled) list.push({ key, slot });
 	}
@@ -4903,7 +4917,7 @@ function openSimulator() {
 			let value = Number(result.value);
 			let direction = 1;
 			const period = Math.max(80, num(result.period) || 800);
-			const stepValue = num(result.step) || 0.5;
+			const stepValue = (result.step == null || String(result.step).trim() === '' || !isFinite(Number(result.step))) ? 0.5 : Number(result.step);
 			const min = num(result.min);
 			const max = num(result.max);
 			sim.timer = setInterval(() => {
