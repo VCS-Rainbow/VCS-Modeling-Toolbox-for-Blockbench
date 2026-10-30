@@ -534,6 +534,30 @@ eq('隐藏并锁定：分组锁定', lockGroup.locked, true);
 api.simRestoreView();
 eq('隐藏并锁定：恢复可见', lockGroup.mesh.visible, true);
 
+/* ---------- 锁定基线要跨“插件重载”存活 ---------- */
+console.log('\n[锁定基线]');
+const reloadGroup = new global.Group({ name: 'reloadGroup', imda_type: 'composite' });
+reloadGroup.addTo();
+const reloadCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], rotation: [0, 0, 0] });
+reloadCube.addTo(reloadGroup); reloadCube.init();
+reloadGroup.mesh = { visible: true };
+reloadCube.mesh = { material: { type: 'ShaderMaterial', opacity: 1, clone() { return { type: 'ClonedMaterial', opacity: 1, dispose() { } }; }, dispose() { } } };
+api.simApplyGroupVisual([{ group: reloadGroup, active: false }], 'ghost_lock');
+eq('锁定后节点被锁', { g: !!reloadGroup.locked, c: !!reloadCube.locked }, { g: true, c: true });
+eq('基线存进 globalThis 仓库（不是挂在元素上）', (globalThis.__immLockStore ? globalThis.__immLockStore.size : 0) > 0 && !reloadGroup.__immLock, true);
+// 模拟插件重载：模块级的 viewTouched 被清空，元素上的 locked 还在
+api.getSimState().viewTouched = new Set();
+api.getSimState().viewMode = 'ghost_lock';
+api.simSetViewMode('off');
+eq('重载后切「不处理」仍能解锁（原来的 bug）', { g: !!reloadGroup.locked, c: !!reloadCube.locked }, { g: false, c: false });
+eq('重载后切「不处理」清空仓库', globalThis.__immLockStore ? globalThis.__immLockStore.size : 0, 0);
+
+/* ---------- 「不处理」必须干净 ---------- */
+console.log('\n[不处理]');
+api.simSetViewMode('off');
+eq('不处理模式下没有残留半透明', !!(reloadCube.mesh && reloadCube.mesh.__immGhost), false);
+eq('不处理模式下没有残留隐藏', !!(reloadGroup.mesh && reloadGroup.mesh.__immHidden), false);
+
 /* ---------- 批量选择守卫 ---------- */
 console.log('\n[批量选择守卫]');
 const bg1 = new global.Group({ name: 'bg1' });

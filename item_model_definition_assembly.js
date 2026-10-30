@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.69.11';
+const VERSION = '0.69.13';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -3832,6 +3832,8 @@ const sim = {
 	groupNodes: null,     // 映射节点 → 分组（随 mapping 一起缓存）
 	viewTouched: null,    // 被视图联动改过的分组集合
 	lastItems: null,      // 最近一次求值结果（周期重贴用）
+	lastTrace: null,      // 最近一次求值的分支 trace（{seen, selected}，空分支活性靠它）
+	uuidIndex: null,      // uuid → 大纲里的分组（复调用解析用，结构变了要清）
 	viewTimer: null,      // Blockbench 会重置 mesh，需要定时重贴
 	inputs: { floats: [], colors: [], strings: [], flags: [], selected: false, using_item: false, damage: 0, count: 0, time: 0 },
 };
@@ -3848,6 +3850,8 @@ function simGetMapping() {
 		sim.mapping = exporter.buildMapping();
 		sim.groupNodes = exporter.groupNodes || null;
 		sim.usage = null;
+		// 结构重建时 uuid 索引也要重来（分组可能被删除/替换）
+		sim.uuidIndex = null;
 		sim.dirty = false;
 	}
 	return sim.mapping;
@@ -4198,13 +4202,29 @@ function guardBatchSelection() {
 	} finally { guardingBatch = false; }
 }
 
+/** 锁定基线仓库：模块级变量在插件重载 / 脚本重新求值后会被重建，
+ *  而 `locked = true` 是写在元素对象上的，能活下来 → 重载后就再也解不开。
+ *  用 globalThis 保存（跨重载存活），并在每次解锁时按 uuid 找回基线。 */
+function simLockStore() {
+	const key = '__immLockStore';
+	if (!globalThis[key]) globalThis[key] = new Map();
+	return globalThis[key];
+}
+
+function nodeKey(node) {
+	if (!node) return '';
+	return String(node.uuid || node.name || '') + '|' + String(node.type || '');
+}
+
 function simLockGroup(group, on) {
 	if (!group) return;
+	const store = simLockStore();
+	const key = nodeKey(group);
 	if (on) {
-		if (group.__immLock) return;
-		let ancestor = group.parent;
+		// 已经有基线（本组或祖先）就不重复记录，避免把“已被锁”当成原始状态
+		let ancestor = group;
 		while (ancestor) {
-			if (ancestor.__immLock) return;
+			if (store.has(nodeKey(ancestor))) return;
 			ancestor = ancestor.parent;
 		}
 		const saved = [];
@@ -4215,13 +4235,24 @@ function simLockGroup(group, on) {
 			}
 		};
 		walk(group);
-		group.__immLock = saved;
+		store.set(key, saved);
 		for (const pair of saved) { try { pair[0].locked = true; } catch (e) { /* ignore */ } }
 		guardLockedSelection();
-	} else if (group.__immLock) {
-		for (const pair of group.__immLock) { try { pair[0].locked = pair[1]; } catch (e) { /* ignore */ } }
-		delete group.__immLock;
+	} else {
+		const saved = store.get(key);
+		if (!saved) return;
+		for (const pair of saved) { try { pair[0].locked = pair[1]; } catch (e) { /* ignore */ } }
+		store.delete(key);
 	}
+}
+
+/** 把基线仓库里所有还记着的锁都解开（重载后 / 卸载 / 切「不处理」时的兜底） */
+function simUnlockAll() {
+	const store = simLockStore();
+	for (const [, saved] of Array.from(store.entries())) {
+		for (const pair of saved) { try { pair[0].locked = pair[1]; } catch (e) { /* ignore */ } }
+	}
+	store.clear();
 }
 
 /** 递归遍历分组下所有方块（视图联动必须覆盖嵌套子分组，否则 sac_slots 这类嵌套分支不会变） */
@@ -4248,16 +4279,118 @@ function simRestoreGroup(group) {
 	simLockGroup(group, false);
 }
 
+/** 分组在 outliner 里的深度（用于按“祖先先、后代后”应用样式，让后代的判定覆盖祖先） */
+function simGroupDepth(group) {
+	let depth = 0;
+	let node = group;
+	while (node && node.parent && isGroup(node.parent)) { depth++; node = node.parent; }
+	return depth;
+}
+
+/** uuid → 分组（复调用标签解析目标用）。
+ *  必须优先用**大纲里真实存在**的分组：`Group.all` 里可能残留已从大纲移除的旧副本
+ *  （实例化/复制过程留下的），它们同名同 uuid 但没有几何，解析到它们等于什么也没做。 */
+function simUuidIndex() {
+	if (sim.uuidIndex) return sim.uuidIndex;
+	const index = new Map();
+	const walk = (nodes) => {
+		for (const n of nodes || []) {
+			if (!isGroup(n)) continue;
+			if (n.uuid) index.set(String(n.uuid), n);
+			walk(n.children);
+		}
+	};
+	walk((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []);
+	sim.uuidIndex = index;
+	return index;
+}
+
+function simGroupByUuid(uuid) {
+	const key = String(uuid || '').trim();
+	if (!key) return null;
+	const index = simUuidIndex();
+	if (index.has(key)) return index.get(key);
+	// 兜底：目标不在大纲里（被折叠进别的分支 / 尚未实例化），最后才看 Group.all
+	try {
+		const all = (typeof Group !== 'undefined' && Group && Group.all) ? Group.all : [];
+		for (const group of all) if (group && String(group.uuid) === key) return group;
+	} catch (e) { /* ignore */ }
+	return null;
+}
+
+/** 一个分支分组“实际显示的是什么”：
+ *  - 直属子分组（`[5]` 里直接放着 sacpack1…sacpack5）
+ *  - 直属复调用标签指向的目标分组（`[4]` 里只有 4 个标签 → 指向 sacpack1…sacpack4）
+ *  只收「直属」这一层：更深的 range/select/condition 分支由它自己那一轮处理。
+ *  现实数据里 `[4]`..`[1]` 分支**没有自己的几何**，只有一串复调用标签，
+ *  它们的模型其实挂在外面的 `[5]` 里；不顺着标签找到目标，
+ *  切到 4/3/2/1 时就没有任何东西变实，洋葱皮完全看不出来。 */
+function simBranchContent(branch) {
+	const set = new Set();
+	if (!branch || !isGroup(branch)) return set;
+	set.add(branch);
+	const targets = new Set();
+	const resolveLocator = (locator) => {
+		const target = simGroupByUuid(locator && locator.imda_call_target);
+		if (!target) return;
+		targets.add(target);
+		// target 自己也可能只是一串标签，继续展开
+		for (const child of (target.children || [])) if (isLocator(child)) resolveLocator(child);
+	};
+	for (const child of (branch.children || [])) {
+		if (isGroup(child)) set.add(child);
+		else if (isLocator(child)) resolveLocator(child);
+	}
+	// 目标分组及其直属子分组一并纳入（复调用指向的是「一串弹匣」）
+	for (const target of targets) {
+		set.add(target);
+		for (const child of (target.children || [])) if (isGroup(child)) set.add(child);
+	}
+	return set;
+}
+
+/** simViewEntries 的输入缓存：simTick 求值时会顺带记录分支容器的选中情况 */
+function simTraceEvaluate(mapping, inputs) {
+	const trace = { seen: new Set(), selected: new Set() };
+	const items = simEvaluate(mapping && mapping.model, inputs, trace);
+	return { items, trace };
+}
+
 function simViewEntries(items) {
 	const map = sim.groupNodes;
 	if (!map) return [];
+	const trace = sim.lastTrace || null;
 	const hitGroups = new Set();
 	const mappedGroups = new Set();   // 仅用于找「分支容器」
 	const itemGroups = new Set();     // 真正产出 item 的分组（才进 entries 第 1 类）
 	try { for (const group of map.values()) if (group) mappedGroups.add(group); } catch (e) { /* ignore */ }
 	for (const item of items || []) {
-		// 优先用 branch（分支节点）定位分组：复调用克隆的 item 节点属于源分组，
-		// 直接用 item.node 会把命中算到源分组上，分支本身永远判不出 active。
+		// 1) 整条分支链：`sac_slots → [5] → 调用 sacpack2 → [0] _empty2` 每一层都要有活性，
+		//    只取最内层（旧 branch）会被外层覆盖，多级嵌套就判不出“哪一支真的在显示”。
+		//    并且必须「整条链都选中」才算活跃：外层 [5] 没被选中时，内层 _empty2 虽然自己
+		//    这一档命中了，屏幕上根本看不到它，不能把它当成活跃分支。
+		const chain = Array.isArray(item && item.branches) ? item.branches : [];
+		if (chain.length) {
+			// 每一层 range/select/condition 都记录了自己有没有被选中（active）；
+			// 只有**整条链都选中**时，这个 item 才真的会显示出来（item.hit 已经是各层相与）。
+			const chainActive = chain.every(link => link && link.active);
+			for (const link of chain) {
+				const group = link && link.node ? map.get(link.node) : null;
+				if (!group) continue;
+				mappedGroups.add(group);
+				itemGroups.add(group);
+				if (chainActive) hitGroups.add(group);
+			}
+			// 叶子：只有整条链都选中、且自身 truly hit，才算“真的会被渲染”
+			const leafGroup = map.get(item && item.node);
+			if (leafGroup) {
+				mappedGroups.add(leafGroup);
+				itemGroups.add(leafGroup);
+				if (chainActive && item.hit) hitGroups.add(leafGroup);
+			}
+			continue;
+		}
+		// 2) 兜底：没有 branches 的旧结构（或克隆 item）只看 branch / node
 		const branchGroup = item && item.branch ? map.get(item.branch) : null;
 		const group = branchGroup || map.get(item && item.node);
 		if (!group) continue;
@@ -4270,33 +4403,71 @@ function simViewEntries(items) {
 	const mark = (group, active) => { if (!group) return; state.set(group, !!state.get(group) || !!active); };
 	// 1) 只有真正产出 item 的分组按命中状态进入（其余分组不参与，避免把整棵树都标成不活跃）
 	for (const group of itemGroups) mark(group, hitGroups.has(group));
-	// 2) 分支容器的**每个**直属子分组都参与（含没有产出节点的空分支）；
-	//    命中与否看该子分支自身或它的任意后代是否有命中节点。
+	// 2) 分支容器的**每个**直属子分组都参与（含没有产出 item 的空分支）。
+	//    判定优先用求值时的 trace：容器选中了哪一支，是求值器直接告诉我们的；
+	//    空分支（`[4] sac_slots #4` 里只有 4 个复调用标签）不产出 item，
+	//    光看“有没有命中节点”永远判不出它到底该不该显示。
+	const nodeOfGroup = new Map();
+	try { for (const [node, group] of map) if (group && !nodeOfGroup.has(group)) nodeOfGroup.set(group, node); } catch (e) { /* ignore */ }
+	const traceSeen = (trace && trace.seen) || null;
+	const traceSelected = (trace && trace.selected) || null;
+	const activityOf = (child) => {
+		const node = nodeOfGroup.get(child);
+		if (node && traceSeen && traceSeen.has(node)) return !!(traceSelected && traceSelected.has(node));
+		// 没有 trace（旧数据 / 未进映射的分支）时退回“自身或后代有命中节点”
+		let active = hitGroups.has(child);
+		if (!active) simEachGroupDeep(child, node2 => { if (hitGroups.has(node2)) active = true; });
+		return active;
+	};
 	for (const group of mappedGroups) {
 		const parent = group.parent;
 		if (!parent || !isGroup(parent)) continue;
 		const type = String(parent.imda_type || '').replace(/^minecraft:/, '');
 		if (type !== 'range_dispatch' && type !== 'condition' && type !== 'select') continue;
-		const branches = [];
 		for (const child of (parent.children || [])) {
 			if (!isGroup(child)) continue;
-			let active = hitGroups.has(child);
-			if (!active) simEachGroupDeep(child, node => { if (hitGroups.has(node)) active = true; });
-			branches.push({ child, active });
+			const active = activityOf(child);
+			// 分支的「内容」不只是它自己：`[4]` 里只有一串复调用标签，
+			// 真正的模型挂在标签指向的分组上（那些分组物理上位于 `[5]` 里）。
+			// 只标记分支节点本身的话，切到 4/3/2/1 时没有任何东西变实，
+			// 看上去就是「整块都变洋葱皮」——用户说的“没呈现出洋葱皮效果”。
+			// mark 是「活跃优先」（OR）：同一个分组被活跃分支引用时不会被别的分支抹成不活跃，
+			// 应用时按深度从浅到深，深层的活跃判定会覆盖祖先的整棵递归。
+			for (const target of simBranchContent(child)) mark(target, active);
 		}
-		// 严格按条件：不满足条件的分支一律隐藏 / 半透明。
-		// 不做 fail-open —— 否则「只有第 5 支有内容」的容器在切到其它值时整块保持可见，看起来就是"不轮换"。
-		for (const item of branches) mark(item.child, item.active);
 	}
 	const entries = [];
 	for (const [group, active] of state) entries.push({ group, active });
+	// 祖先先应用、后代后应用：`[5]` 是活跃的（会把 70 个方块全部恢复不透明），
+	// 若它排在 `[2] _full2`（不活跃、要半透明）之后，就会把内层的半透明又擦掉。
+	entries.sort((a, b) => simGroupDepth(a.group) - simGroupDepth(b.group));
 	return entries;
 }
 
 function simRestoreView() {
-	if (!sim.viewTouched) return;
-	for (const group of sim.viewTouched) simRestoreGroup(group);
-	sim.viewTouched.clear();
+	// 1) 按清单恢复（覆盖不在大纲里的临时分组；单测与内部调用会用到）
+	if (sim.viewTouched) {
+		for (const group of Array.from(sim.viewTouched)) {
+			try { simRestoreGroup(group); } catch (e) { /* ignore */ }
+		}
+		sim.viewTouched.clear();
+	}
+	// 2) 再全量扫一遍大纲：`__immGhost` / `__immHidden` 是挂在 mesh 上的标记，
+	//    插件重载（或 sim 对象被重建）后清单会丢，标记却还在，
+	//    于是「不活跃分支 = 不处理」看起来仍是半透明 + 锁定，且再没人去解开。
+	const groups = [];
+	const cubes = [];
+	const walk = (nodes) => {
+		for (const node of nodes || []) {
+			if (isGroup(node)) { groups.push(node); walk(node.children); }
+			else if (isCube(node)) cubes.push(node);
+		}
+	};
+	try { walk((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []); } catch (e) { /* ignore */ }
+	for (const cube of cubes) { try { simGhostCube(cube, false); } catch (e) { /* ignore */ } }
+	for (const group of groups) { try { simHideGroup(group, false); } catch (e) { /* ignore */ } }
+	// 3) 锁一律按基线仓库还原（仓库放在 globalThis，重载后还在）
+	try { simUnlockAll(); } catch (e) { /* ignore */ }
 }
 
 /** 对 [{group, active}] 应用不活跃样式；mode = off / ghost / hide */
@@ -4331,6 +4502,12 @@ function simApplyGroupVisual(entries, mode) {
 		if (seen.has(group)) continue;
 		simRestoreGroup(group);
 		sim.viewTouched.delete(group);
+	}
+	// 关掉锁定 / 切到「不处理」时也要把之前的锁全部解开：
+	// 只按 viewTouched 恢复的话，重载插件后清单是空的，锁会永久留下。
+	if (!lock) {
+		for (const group of seen) simLockGroup(group, false);
+		simUnlockAll();
 	}
 }
 
@@ -4703,15 +4880,30 @@ function simConditionValue(node, inputs) {
 	return !!inputs[prop];
 }
 
-/** 按输入求值整棵映射树，返回 [{ node, hit }]；hit=false 表示该分支没有被选中 */
-function simEvaluate(node, inputs) {
+/** 按输入求值整棵映射树，返回 [{ node, hit }]；hit=false 表示该分支没有被选中。
+ *  第三个参数 trace 可选：{ seen:Set, selected:Set } 记录“容器下出现了哪些分支节点、选中了哪些”。
+ *  空分支（只有复调用标签 / 空 composite）不产出 item，只能靠 trace 才知道它被选中了。 */
+function simEvaluate(node, inputs, trace) {
 	const result = [];
 	if (!node) return result;
+	const noteSeen = (child) => { if (trace && trace.seen && child) trace.seen.add(child); };
+	const noteSelected = (child) => {
+		if (!trace || !child) return;
+		if (trace.seen) trace.seen.add(child);
+		if (trace.selected) trace.selected.add(child);
+	};
 	const type = String(node.type || '').replace(/^minecraft:/, '');
 	if (type === 'composite') {
-		for (const child of node.models || []) result.push(...simEvaluate(child, inputs));
+		for (const child of node.models || []) result.push(...simEvaluate(child, inputs, trace));
 		return result;
 	}
+	// 每个 item 带一条「分支链」：从最外层容器到最内层，记录每一层选了哪一支、是否选中。
+	// 只记最内层的 branch 是不够的——外层 range_dispatch 包装时会把内层的 branch 覆盖掉，
+	// 视图联动就只能看到最外层分支，`[5] → 调用 sacpack2 → [0] _empty2` 这类多级结构全都判不出来。
+	const pushWithChain = (item, branchNode, branchActive) => {
+		const branches = (item.branches || []).concat([{ node: branchNode, active: !!branchActive }]);
+		result.push({ node: item.node, hit: item.hit, branch: branchNode, branchActive: !!branchActive, branches });
+	};
 	if (type === 'range_dispatch') {
 		const value = simValue(node, inputs);
 		let best = null;
@@ -4722,12 +4914,17 @@ function simEvaluate(node, inputs) {
 		}
 		for (const entry of node.entries || []) {
 			const isBest = best === entry;
-			// branch = 该 item 所属的分支节点。复调用克隆出来的 item 节点登记在源分组上，
-			// 只看 node→group 会丢掉「当前命中的是哪个分支」，视图联动就无法按分支切换。
-			for (const item of simEvaluate(entry.model, inputs)) result.push({ node: item.node, hit: item.hit && isBest, branch: entry.model, branchActive: isBest });
+			noteSeen(entry.model);
+			if (isBest) noteSelected(entry.model);
+			for (const item of simEvaluate(entry.model, inputs, trace)) {
+				pushWithChain({ node: item.node, hit: item.hit && isBest, branches: item.branches }, entry.model, isBest);
+			}
 		}
 		// 没有命中的阈值时才用 fallback（原实现条件写反了）
-		if (!best && node.fallback) for (const item of simEvaluate(node.fallback, inputs)) result.push(item);
+		if (!best && node.fallback) {
+			noteSelected(node.fallback);
+			for (const item of simEvaluate(node.fallback, inputs, trace)) pushWithChain(item, node.fallback, true);
+		}
 		return result;
 	}
 	if (type === 'select') {
@@ -4736,19 +4933,28 @@ function simEvaluate(node, inputs) {
 		for (const item of node.cases || []) {
 			const isMatch = !matched && simWhenMatches(item && item.when, value);
 			if (isMatch) matched = item;
-			for (const model of simEvaluate(item.model, inputs)) result.push({ node: model.node, hit: model.hit && isMatch, branch: item.model, branchActive: isMatch });
+			noteSeen(item.model);
+			if (isMatch) noteSelected(item.model);
+			for (const model of simEvaluate(item.model, inputs, trace)) {
+				pushWithChain({ node: model.node, hit: model.hit && isMatch, branches: model.branches }, item.model, isMatch);
+			}
 		}
-		if (!matched && node.fallback) for (const item of simEvaluate(node.fallback, inputs)) result.push(item);
+		if (!matched && node.fallback) {
+			noteSelected(node.fallback);
+			for (const item of simEvaluate(node.fallback, inputs, trace)) pushWithChain(item, node.fallback, true);
+		}
 		return result;
 	}
 	if (type === 'condition') {
 		// 被选中的那一支算命中；另一支也求值但标 hit=false（结果区与视图联动都要知道它没生效）
 		const ok = simConditionValue(node, inputs);
-		for (const item of simEvaluate(ok ? node.on_true : node.on_false, inputs)) result.push({ node: item.node, hit: item.hit, branch: ok ? node.on_true : node.on_false, branchActive: true });
-		for (const item of simEvaluate(ok ? node.on_false : node.on_true, inputs)) result.push({ node: item.node, hit: false, branch: ok ? node.on_false : node.on_true, branchActive: false });
+		noteSeen(node.on_true); noteSeen(node.on_false);
+		noteSelected(ok ? node.on_true : node.on_false);
+		for (const item of simEvaluate(ok ? node.on_true : node.on_false, inputs, trace)) pushWithChain(item, ok ? node.on_true : node.on_false, true);
+		for (const item of simEvaluate(ok ? node.on_false : node.on_true, inputs, trace)) pushWithChain({ node: item.node, hit: false, branches: item.branches }, ok ? node.on_false : node.on_true, false);
 		return result;
 	}
-	if (type === 'model') { result.push({ node, hit: true }); return result; }
+	if (type === 'model') { result.push({ node, hit: true, branches: [] }); return result; }
 	return result;
 }
 
@@ -4781,9 +4987,12 @@ function simTick() {
 			lines.push(simSlotLabel(key, slot));
 		}
 	}
-	const items = simEvaluate(mapping.model, inputs);
+	// 求值时顺带记录“每个分支容器选了哪一支”，视图联动靠它判定空分支的活性
+	const traced = simTraceEvaluate(mapping, inputs);
+	const items = traced.items;
 	const hits = items.filter(item => item.hit && item.node.model).map(item => item.node.model);
 	sim.lastItems = items;
+	sim.lastTrace = traced.trace;
 	try { simApplyView(items); } catch (error) { /* ignore */ }
 	try { simApplyTints(); } catch (error) { /* ignore */ }
 	// 每个槽单独求值一次，得到它自己的命中数（角标）
