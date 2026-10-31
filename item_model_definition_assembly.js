@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.69.13';
+const VERSION = '0.69.14';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2505,7 +2505,7 @@ function editGroupProps() {
 			imda_model: { label: '引用模型（model）', description: '语法：{"type": "minecraft:model", "model": "<命名空间>:item/<路径>"}\n作用：本节点直接引用一个 Java 版模型；\n留空则由本层方块生成模型文件。\n引用其他物品映射：写成 <命名空间>:items/<路径>（对应 assets/<命名空间>/items/<路径>.json），导出时会把目标映射的 model 内联进来。', type: 'text', value: String(group.imda_model || ''), condition: (r) => r.imda_type === 'model' },
 			imda_model_file: { label: '从资源包选择引用…', type: 'file', value: '', description: '用资源管理器选 assets/<命名空间>/models/… 或 assets/<命名空间>/items/…，会按路径自动解析并写入上一行的「引用模型」（items → ns:items/路径）。', condition: (r) => r.imda_type === 'model' },
 			imda_display_mode: { label: '强制统一显示调整', type: 'select', value: String(group.imda_display_mode || 'copy'), options: { copy: '生成模型副本', none: '不处理', overwrite: '覆盖源模型参数' }, description: '引用模型的 display 与当前“显示调整”页不一致时：\n生成副本 = 在项目里生成一份改好 display 的模型副本（默认）\n不处理 = 保持原模型\n覆盖源模型参数 = 直接改写资源包里的原模型文件', condition: (r) => r.imda_type === 'model' },
-			imda_property: { label: 'property（谓词 / 属性）', type: 'select', value: String(group.imda_property || ''), options: { '': '（未设置）', selected: 'selected', broken: 'broken', damaged: 'damaged', carried: 'carried', extended_view: 'extended_view', using_item: 'using_item', view_entity: 'view_entity', 'fishing_rod/cast': 'fishing_rod/cast', 'bundle/has_selected_item': 'bundle/has_selected_item', custom_model_data: 'custom_model_data', has_component: 'has_component', component: 'component', keybind_down: 'keybind_down', compass: 'compass（range）', count: 'count（range）', damage: 'damage（range）', time: 'time（range）', use_cycle: 'use_cycle（range）', use_duration: 'use_duration（range）', 'bundle/fullness': 'bundle/fullness（range）', cooldown: 'cooldown（range）', 'crossbow/pull': 'crossbow/pull（range）', context_dimension: 'context_dimension（select）', block_state: 'block_state（select）', local_time: 'local_time（select）' }, description: 'condition：谓词（selected / broken / custom_model_data / has_component / component / keybind_down …）；\nrange_dispatch：数值属性（custom_model_data / compass / count / damage / time / use_cycle / use_duration）', condition: (r) => r.imda_type === 'range_dispatch' || r.imda_type === 'condition' },
+			imda_property: { label: 'property（谓词 / 属性）', type: 'select', value: String(group.imda_property || '').replace(/^minecraft:/, ''), options: { '': '（未设置）', selected: 'selected', broken: 'broken', damaged: 'damaged', carried: 'carried', extended_view: 'extended_view', using_item: 'using_item', view_entity: 'view_entity', 'fishing_rod/cast': 'fishing_rod/cast', 'bundle/has_selected_item': 'bundle/has_selected_item', custom_model_data: 'custom_model_data', has_component: 'has_component', component: 'component', keybind_down: 'keybind_down', compass: 'compass（range）', count: 'count（range）', damage: 'damage（range）', time: 'time（range）', use_cycle: 'use_cycle（range）', use_duration: 'use_duration（range）', 'bundle/fullness': 'bundle/fullness（range）', cooldown: 'cooldown（range）', 'crossbow/pull': 'crossbow/pull（range）', context_dimension: 'context_dimension（select）', block_state: 'block_state（select）', local_time: 'local_time（select）' }, description: 'condition：谓词（selected / broken / custom_model_data / has_component / component / keybind_down …）；\nrange_dispatch：数值属性（custom_model_data / compass / count / damage / time / use_cycle / use_duration）', condition: (r) => r.imda_type === 'range_dispatch' || r.imda_type === 'condition' },
 			imda_component: { label: 'component（has_component 用）', type: 'text', value: String(group.imda_component || ''), description: '语法："component": "minecraft:lodestone_tracker"', condition: (r) => r.imda_property === 'has_component' },
 			imda_ignore_default: { label: 'ignore_default', type: 'checkbox', value: !!group.imda_ignore_default, description: 'has_component：组件值与默认值相同时是否视为不存在', condition: (r) => r.imda_property === 'has_component' },
 			imda_predicate: { label: 'predicate（component 用）', type: 'text', value: String(group.imda_predicate || ''), description: '语法："predicate": "minecraft:stored_enchantments"', condition: (r) => r.imda_property === 'component' },
@@ -2805,6 +2805,14 @@ function sequenceCounts(total, step, direction) {
 	return counts;
 }
 
+/** 序列生成器用的阈值格式解析：直接复用属性面板那套 evalThreshold，保证两边完全一致 */
+function sequenceFormatValue(format, index) {
+	try {
+		const exporter = createExporter();
+		return exporter.evalThreshold(format, index);
+	} catch (e) { return null; }
+}
+
 /** 生成复调用序列：满节点放本体，其余节点用 a1…ak 的复调用 */
 function generateCallSequence(options) {
 	options = options || {};
@@ -2819,14 +2827,22 @@ function generateCallSequence(options) {
 	const parent = items[0].parent || null;
 	const allSameParent = items.every(g => (g.parent || null) === parent);
 	const sequenceName = String(options.name || '').trim() || '[sequence]';
-	const property = 'minecraft:' + String(options.property || 'custom_model_data').replace(/^minecraft:/, '');
+	// imda_property 全程存「不带 minecraft: 前缀」的裸名（属性面板 select 的选项值也是裸名）。
+	// 以前这里存 'minecraft:custom_model_data'，属性面板认不出选项、回落到「（未设置）」，
+	// 看上去就是「property 没应用」，compass / count 这些条件字段也全都不显示。
+	const property = String(options.property || 'custom_model_data').replace(/^minecraft:/, '').trim() || 'custom_model_data';
+	const thresholdFormat = String(options.thresholdFormat == null ? '' : options.thresholdFormat).trim();
 	const index = num(options.index);
 	const thresholdStart = num(options.thresholdStart);
 	const thresholdStep = num(options.thresholdStep);
 	const groupsMoved = items.filter(isGroup);
 	try { Undo.initEdit({ outliner: true, groups: groupsMoved, elements: items.filter(isLocator) }); } catch (e) { /* ignore */ }
 	const container = new Group({ name: sequenceName, imda_type: type, origin: [8, 8, 8], rotation: [0, 0, 0] });
-	if (type === 'range_dispatch') { container.imda_property = property; container.imda_index = index; }
+	if (type === 'range_dispatch') {
+		container.imda_property = property;
+		container.imda_index = index;
+		container.imda_threshold_format = thresholdFormat;
+	}
 	addAndInit(container, parent);
 	const generatedGroups = [container];
 	const generatedLocators = [];
@@ -2836,7 +2852,12 @@ function generateCallSequence(options) {
 		const isBody = count === total;
 		const node = new Group({ name: sequenceName + ' #' + count, imda_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
 		generatedGroups.push(node);
-		if (type === 'range_dispatch') node.imda_threshold = thresholdStart + i * thresholdStep;
+		if (type === 'range_dispatch') {
+			// 与属性面板同一个解析器：格式优先，留空才退回 起点 + i × 步长
+			const formatted = thresholdFormat ? sequenceFormatValue(thresholdFormat, i) : null;
+			node.imda_threshold = formatted !== null ? formatted : (thresholdStart + i * thresholdStep);
+			if (thresholdFormat && formatted === null) console.warn('[装配] 无法解析分支编号格式：' + thresholdFormat + '，已回退到起点/步长');
+		}
 		addAndInit(node, container);
 		if (isBody) {
 			for (const item of items) { try { item.addTo(node); } catch (e) { /* ignore */ } }
@@ -2880,9 +2901,10 @@ function openSequenceDialog() {
 			_: '_',
 			property: { label: 'range_dispatch 来源（property）', type: 'select', value: 'custom_model_data', options: { custom_model_data: 'custom_model_data', cooldown: 'cooldown', count: 'count', damage: 'damage', time: 'time', use_cycle: 'use_cycle', use_duration: 'use_duration', compass: 'compass' } },
 			index: { label: 'custom_model_data index', type: 'number', value: 0 },
-			thresholdStart: { label: '阈值起点', type: 'number', value: 0 },
-			thresholdStep: { label: '阈值步长', type: 'number', value: 1, step: 1, min: -100, max: 100 },
-			info: { type: 'info', text: 'range_dispatch：子节点按输出顺序写入 threshold = 起点 + i × 阈值步长；composite 时忽略 property/index/阈值。满节点只放一次本体。' },
+			thresholdFormat: { label: '分支编号格式（同属性面板）', type: 'text', value: '', description: '语法与分组属性里的「分支编号格式」完全一致：i → 0,1,2；2i → 0,2,4；10+2i → 10,12,14；0,1,3 → 字面列表；2:2i → 重复 2 次。\n填了格式时它优先于下面的起点/步长（格式里也支持用 i 当序号）。' },
+			thresholdStart: { label: '阈值起点（未填格式时）', type: 'number', value: 0 },
+			thresholdStep: { label: '阈值步长（未填格式时）', type: 'number', value: 1, step: 1, min: -100, max: 100 },
+			info: { type: 'info', text: 'range_dispatch：有「分支编号格式」时按格式算 threshold，否则用 起点 + i × 步长；composite 时忽略 property/index/阈值。满节点只放一次本体。' },
 		},
 		onConfirm(result) { generateCallSequence(result); },
 	}).show();
@@ -3053,7 +3075,7 @@ function callOverridesOf(locator) {
 function callOverrideFields(source, locator) {
 	const src = source || {};
 	const ov = callOverridesOf(locator);
-	const val = (key) => String(ov[key] == null ? '' : ov[key]);
+	const val = (key) => String(ov[key] == null ? '' : ov[key]).replace(/^minecraft:/, '');
 	const srcType = String(src.imda_type || 'composite').replace(/^minecraft:/, '');
 	const parentType = String((locator && locator.parent && locator.parent.imda_type) || '').replace(/^minecraft:/, '');
 	const isRange = srcType === 'range_dispatch';
@@ -3062,7 +3084,7 @@ function callOverrideFields(source, locator) {
 	return {
 		sourceType: { label: '源映射类型（只读）', type: 'text', value: srcType, readonly: true, description: '复调用的类型始终跟随目标分组，不能单独修改。' },
 		ov_threshold: { label: '阈值覆盖（父级 range_dispatch）', type: 'text', value: val('threshold'), condition: () => parentType === 'range_dispatch', description: '留空=不覆盖；数字作为 entries[].threshold。' },
-		ov_property: { label: 'property 覆盖', type: 'select', value: val('property'), options: { '': '（不覆盖）', selected: 'selected', broken: 'broken', damaged: 'damaged', carried: 'carried', custom_model_data: 'custom_model_data', has_component: 'has_component', component: 'component', keybind_down: 'keybind_down', compass: 'compass', count: 'count', damage: 'damage', time: 'time', use_cycle: 'use_cycle', use_duration: 'use_duration', 'bundle/fullness': 'bundle/fullness', cooldown: 'cooldown', 'crossbow/pull': 'crossbow/pull' }, condition: () => isRange || isCondition, description: '留空=不覆盖；源节点：' + String(src.imda_property || '（空）') },
+		ov_property: { label: 'property 覆盖', type: 'select', value: val('property'), options: { '': '（不覆盖）', selected: 'selected', broken: 'broken', damaged: 'damaged', carried: 'carried', custom_model_data: 'custom_model_data', has_component: 'has_component', component: 'component', keybind_down: 'keybind_down', compass: 'compass', count: 'count', damage: 'damage', time: 'time', use_cycle: 'use_cycle', use_duration: 'use_duration', 'bundle/fullness': 'bundle/fullness', cooldown: 'cooldown', 'crossbow/pull': 'crossbow/pull' }, condition: () => isRange || isCondition, description: '留空=不覆盖；源节点：' + (String(src.imda_property || '').replace(/^minecraft:/, '') || '（空）') },
 		ov_component: { label: 'component 覆盖', type: 'text', value: val('component'), condition: (r) => r.ov_property === 'has_component', description: 'has_component 用；留空不覆盖。' },
 		ov_ignore_default: { label: 'ignore_default 覆盖', type: 'select', value: val('ignore_default'), options: tri, condition: (r) => r.ov_property === 'has_component', description: '留空不覆盖。' },
 		ov_predicate: { label: 'predicate 覆盖', type: 'text', value: val('predicate'), condition: (r) => r.ov_property === 'component', description: '留空不覆盖。' },
@@ -4349,6 +4371,155 @@ function simBranchContent(branch) {
 	return set;
 }
 
+/** 临时实例化的复调用副本：locator.uuid → { locator, group }。
+ *  位姿不一致时只能复制一份来“点亮”，熄灭时必须删掉、把状态还给复调用标签。 */
+const simTempCalls = new Map();
+
+function simTempCallKey(locator) {
+	return String((locator && (locator.uuid || locator.name)) || '');
+}
+
+/** 删除某个复调用标签对应的临时副本（只删我们自己建、带标记的那一份） */
+function simDropCallInstance(locator) {
+	const key = simTempCallKey(locator);
+	const record = simTempCalls.get(key);
+	if (!record) return false;
+	simTempCalls.delete(key);
+	const group = record.group;
+	if (!group || !group.__immTempCall) return false;
+	try { simRestoreGroup(group); } catch (e) { /* ignore */ }
+	try { group.remove(); } catch (e) { /* ignore */ }
+	return true;
+}
+
+/** 熄灭 / 关闭联动 / 重载兜底：把所有临时副本收掉 */
+function simDropAllCallInstances() {
+	let dropped = 0;
+	for (const key of Array.from(simTempCalls.keys())) {
+		try { if (simDropCallInstance({ uuid: key })) dropped++; } catch (e) { /* ignore */ }
+	}
+	// 兜底：标记还在、登记表丢了的（插件重载）也从大纲里摘掉
+	try {
+		const found = [];
+		const walk = (nodes) => {
+			for (const node of nodes || []) {
+				if (!isGroup(node)) continue;
+				if (node.__immTempCall) found.push(node);
+				else walk(node.children);
+			}
+		};
+		walk((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []);
+		for (const group of found) { try { group.remove(); } catch (e) { /* ignore */ } }
+		dropped += found.length;
+	} catch (e) { /* ignore */ }
+	return dropped;
+}
+
+/** 位姿不一致时的临时实例化：复制目标分组一份、摆到标签的位姿上，标记为临时。
+ *  仅在「标签所在分支被选中」且位姿不一致时调用；熄灭时由 simDropCallInstance 收回。 */
+function simEnsureCallInstance(locator, target) {
+	if (!locator || !target) return null;
+	const key = simTempCallKey(locator);
+	const existing = simTempCalls.get(key);
+	if (existing && existing.group && existing.group.__immTempCall) return existing.group;
+	let created = null;
+	try {
+		created = (typeof target.duplicate === 'function') ? target.duplicate()
+			: ((typeof target.clone === 'function') ? target.clone() : null);
+	} catch (e) { created = null; }
+	if (!created) return null;
+	try {
+		// 只做“点亮”用的视图副本：绝不参与导出，避免被误保存后污染资源包
+		created.export = false;
+		created.__immTempCall = true;
+		created.name = '临时实例 ' + String(target.name || '');
+		const oldOrigin = Array.isArray(created.origin) ? created.origin.slice() : [0, 0, 0];
+		const nextOrigin = Array.isArray(locator.position) ? locator.position.slice() : oldOrigin;
+		try { translateGroupCoordinates(created, [nextOrigin[0] - oldOrigin[0], nextOrigin[1] - oldOrigin[1], nextOrigin[2] - oldOrigin[2]]); } catch (e) { /* ignore */ }
+		created.origin = nextOrigin;
+		created.rotation = Array.isArray(locator.rotation) ? locator.rotation.slice() : (created.rotation || [0, 0, 0]);
+		created.selected = false;
+		const parent = locator.parent && isGroup(locator.parent) ? locator.parent : null;
+		// duplicate() 会把副本插到目标分组的兄弟位置；用 addTo 正规挪到标签的父级
+		// （addTo 会先把它从旧父级的 children 里摘掉，不会留两份）
+		try { if (parent) created.addTo(parent); } catch (e) { /* ignore */ }
+		created.isOpen = false;
+		simTempCalls.set(key, { locator, group: created });
+		try { if (created.preview_controller && created.preview_controller.updateTransform) created.preview_controller.updateTransform(created); } catch (e) { /* ignore */ }
+		return created;
+	} catch (e) {
+		try { if (created) created.remove(); } catch (err) { /* ignore */ }
+		return null;
+	}
+}
+
+/** 复调用标签与目标分组的位姿是否“完全相同”（枢轴点位姿对齐）。
+ *  对齐时可以**直接把源节点点亮**（不再复制一份），否则只能临时实例化/降级处理。 */
+function simPoseIsSame(locator, target) {
+	if (!locator || !target) return false;
+	const eps = 1e-4;
+	const pos = Array.isArray(locator.position) ? locator.position : null;
+	const origin = Array.isArray(target.origin) ? target.origin : null;
+	if (!pos || !origin) return false;
+	for (let a = 0; a < 3; a++) if (Math.abs(Number(pos[a]) - Number(origin[a])) > eps) return false;
+	const rotA = Array.isArray(locator.rotation) ? locator.rotation : [0, 0, 0];
+	const rotB = Array.isArray(target.rotation) ? target.rotation : [0, 0, 0];
+	for (let a = 0; a < 3; a++) if (Math.abs(Number(rotA[a]) - Number(rotB[a])) > eps) return false;
+	return true;
+}
+
+/** 把一个已命中分支里的「位姿对齐的复调用标签」的源节点点亮。
+ *  规则：源节点与标签枢轴位姿完全一致 → 不复制，直接把源分组（及其直属子分组）临时置为可见/不透明，
+ *  并且**优先级高于未命中隐藏**：同一分组即使被别的分支标成不活跃，也仍然亮着。
+ *  位姿不一致时不点亮（复制语义要实例化，等确认后再做），只记账供诊断。 */
+function simLightUpCallTargets(state, mark) {
+	const lit = [];
+	const mismatched = [];
+	if (!state || typeof mark !== 'function') return { lit, mismatched };
+	const walk = (nodes) => {
+		for (const node of (nodes || [])) {
+			if (isLocator(node)) {
+				const target = simGroupByUuid(node.imda_call_target);
+				if (!target) continue;
+				// 标签自己必须处在一个“被选中”的分支里，否则它根本不显示，点亮没有意义
+				let ancestor = node.parent;
+				let active = null;
+				while (ancestor && isGroup(ancestor)) {
+					if (state.has(ancestor)) { active = !!state.get(ancestor); break; }
+					ancestor = ancestor.parent;
+				}
+				if (active !== true) continue;
+				if (simPoseIsSame(node, target)) {
+					if (lit.indexOf(target) < 0) lit.push(target);
+				} else {
+					mismatched.push({ locator: node, target });
+				}
+				continue;
+			}
+			if (isGroup(node)) walk(node.children);
+		}
+	};
+	try { walk((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []); } catch (e) { /* ignore */ }
+	// 点亮 = 强制活跃；mark 是 OR 合并，所以天然压过“未命中的不活跃”。
+	// 只点亮目标分组本身：它内部的分支该不该亮，仍由它自己那一轮 trace 决定
+	// （deep 标记会把目标里未选中的子分支也强行点亮，洋葱皮就没了）。
+	for (const target of lit) mark(target, true);
+	// 位姿不一致的：临时实例化一份并标记点亮；熄灭时收回（只动我们自己建的副本）
+	for (const item of mismatched) {
+		const copy = simEnsureCallInstance(item.locator, item.target);
+		if (copy) mark(copy, true);
+	}
+	// 已经不再被点亮的临时副本立刻收掉，避免关掉分支后留一份“幽灵分身”
+	try {
+		for (const [key, record] of Array.from(simTempCalls.entries())) {
+			if (!record || !record.locator) continue;
+			const stillWanted = mismatched.some(item => simTempCallKey(item.locator) === key);
+			if (!stillWanted) simDropCallInstance(record.locator);
+		}
+	} catch (e) { /* ignore */ }
+	return { lit, mismatched };
+}
+
 /** simViewEntries 的输入缓存：simTick 求值时会顺带记录分支容器的选中情况 */
 function simTraceEvaluate(mapping, inputs) {
 	const trace = { seen: new Set(), selected: new Set() };
@@ -4436,6 +4607,12 @@ function simViewEntries(items) {
 			for (const target of simBranchContent(child)) mark(target, active);
 		}
 	}
+	// 3) 复调用标签「位姿完全对齐」时直接点亮源节点（点在就亮，而不是复制一份）。
+	//    OR 合并保证它压过上面因未命中得到的 inactive；熄灭时还原成普通的未命中状态。
+	try {
+		const lights = simLightUpCallTargets(state, mark);
+		sim.lastLights = lights;
+	} catch (e) { sim.lastLights = null; }
 	const entries = [];
 	for (const [group, active] of state) entries.push({ group, active });
 	// 祖先先应用、后代后应用：`[5]` 是活跃的（会把 70 个方块全部恢复不透明），
@@ -4468,6 +4645,8 @@ function simRestoreView() {
 	for (const group of groups) { try { simHideGroup(group, false); } catch (e) { /* ignore */ } }
 	// 3) 锁一律按基线仓库还原（仓库放在 globalThis，重载后还在）
 	try { simUnlockAll(); } catch (e) { /* ignore */ }
+	// 4) 临时实例化的复调用副本全部收回（熄灭 = 变回复调用标签）
+	try { simDropAllCallInstances(); } catch (e) { /* ignore */ }
 }
 
 /** 对 [{group, active}] 应用不活跃样式；mode = off / ghost / hide */
@@ -5546,7 +5725,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

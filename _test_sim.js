@@ -1216,6 +1216,111 @@ const visInnerB = vrInner.mesh ? vrInner.mesh.visible : null;
 eq('未命中分支隐藏', visA, false);
 eq('命中分支的嵌套分组保持可见', visInnerB, true);
 api.simSetViewMode('off');
+
+/* ---------- 复调用序列：property / 阈值格式在创建时就写对 ---------- */
+console.log('\n[序列属性]');
+eq('序列阈值格式复用面板解析器 i → 0,1,2', [0, 1, 2].map(i => api.sequenceFormatValue('i', i)), [0, 1, 2]);
+eq('序列阈值格式 5-i → 5,4,3', [0, 1, 2].map(i => api.sequenceFormatValue('5-i', i)), [5, 4, 3]);
+eq('序列阈值格式 2:2i → 2,2,4', [0, 1, 2].map(i => api.sequenceFormatValue('2:2i', i)), [2, 2, 4]);
+eq('序列阈值格式字面列表', [0, 1, 2, 3].map(i => api.sequenceFormatValue('0,1,3', i)), [0, 1, 3, 4]);
+eq('空格式返回 null（回退起点/步长）', api.sequenceFormatValue('', 0), null);
+
+const seqGenA = new global.Group({ name: 'genA', imda_type: 'composite', origin: [0, 0, 0] });
+const seqGenB = new global.Group({ name: 'genB', imda_type: 'composite', origin: [1, 0, 0] });
+global.Outliner.root.length = 0; global.Outliner.root.push(seqGenA, seqGenB);
+global.Group.all = [seqGenA, seqGenB];
+global.Outliner.selected.length = 0; global.Outliner.selected.push(seqGenA, seqGenB);
+seqGenA.selected = true; seqGenB.selected = true;
+let seqUndo = null;
+const oldInit = global.Undo.initEdit, oldFinish = global.Undo.finishEdit;
+global.Undo.initEdit = (a) => { seqUndo = { init: a }; };
+global.Undo.finishEdit = () => { };
+api.generateCallSequence({ name: '[seqtest]', direction: 'decrease', nodeType: 'range_dispatch', property: 'count', index: 3, thresholdFormat: '5-i' });
+global.Undo.initEdit = oldInit; global.Undo.finishEdit = oldFinish;
+const seqContainer = global.Outliner.root.find(n => n && n.name === '[seqtest]');
+eq('序列容器已创建', !!seqContainer, true);
+eq('property 存裸名（属性面板能认出选项）', seqContainer && seqContainer.imda_property, 'count');
+eq('property 不带 minecraft: 前缀', String((seqContainer && seqContainer.imda_property) || '').indexOf('minecraft:') < 0, true);
+eq('容器写入分支编号格式', seqContainer && seqContainer.imda_threshold_format, '5-i');
+eq('容器写入 index', seqContainer && seqContainer.imda_index, 3);
+const seqNodes = (seqContainer && seqContainer.children) || [];
+eq('序列节点数（2 项递减 → 2 个节点）', seqNodes.length, 2);
+eq('阈值按格式 5-i 写入', seqNodes.map(n => n.imda_threshold), [5, 4]);
+global.Outliner.selected.length = 0;
+
+/* ---------- 位姿对齐的复调用标签：直接点亮源节点 ---------- */
+console.log('\n[点亮源节点]');
+const litTarget = new global.Group({ name: 'litTarget', imda_type: 'model', origin: [8, 8, 8], rotation: [0, 0, 0] });
+const litBranch = new global.Group({ name: 'litBranch', imda_type: 'composite', origin: [8, 8, 8] });
+const litOther = new global.Group({ name: 'litOther', imda_type: 'composite', origin: [8, 8, 8] });
+litTarget.addTo(); litBranch.addTo(); litOther.addTo();
+litTarget.uuid = 'lit-target-uuid'; litOther.uuid = 'lit-other-uuid';
+const litSame = new global.Locator({ name: '调用 litTarget', position: [8, 8, 8], rotation: [0, 0, 0] });
+litSame.imda_call_target = 'lit-target-uuid';
+litSame.addTo(litBranch);
+const litDiff = new global.Locator({ name: '调用 litOther', position: [9, 8, 8], rotation: [0, 0, 0] });
+litDiff.imda_call_target = 'lit-other-uuid';
+litDiff.addTo(litBranch);
+global.Group.all = [litTarget, litBranch, litOther];
+global.Outliner.root.length = 0; global.Outliner.root.push(litTarget, litBranch, litOther);
+eq('位姿完全一致判定为 true', api.simPoseIsSame(litSame, litTarget), true);
+eq('位置差 1 判定为 false', api.simPoseIsSame(litDiff, litOther), false);
+const litState = new Map();
+litState.set(litBranch, true);   // 标签所在分支被选中
+litState.set(litTarget, false);  // 目标本身被别的分支标成不活跃（模拟未命中隐藏）
+const litMark = (group, active) => { if (!group) return; litState.set(group, !!litState.get(group) || !!active); };
+const litResult = api.simLightUpCallTargets(litState, litMark);
+eq('停用了什么：只点亮对齐的目标', litResult.lit.length, 1);
+eq('点亮的是 litTarget', litResult.lit[0] === litTarget, true);
+eq('位姿不一致的进 mismatched', litResult.mismatched.length, 1);
+eq('点亮压过未命中隐藏', litState.get(litTarget), true);
+eq('位姿不一致的目标没有被点亮', litState.get(litOther) === true, false);
+
+// 标签所在分支未被选中时不点亮（熄灭状态）
+const litState2 = new Map();
+litState2.set(litBranch, false);
+litState2.set(litTarget, false);
+const litMark2 = (group, active) => { if (!group) return; litState2.set(group, !!litState2.get(group) || !!active); };
+const litResult2 = api.simLightUpCallTargets(litState2, litMark2);
+eq('分支未选中 → 不点亮', litResult2.lit.length, 0);
+eq('分支未选中 → 目标仍未活跃', litState2.get(litTarget), false);
+
+/* ---------- 位姿不一致：临时实例化，熄灭时收回 ---------- */
+console.log('\n[临时实例化]');
+const instSrc = new global.Group({ name: 'instSrc', imda_type: 'model', origin: [8, 8, 8], rotation: [0, 0, 0] });
+instSrc.uuid = 'inst-src-uuid';
+const instCube = new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], export: true });
+instCube.addTo(instSrc);
+instSrc.duplicate = function () {
+	const copy = new global.Group({ name: this.name, imda_type: this.imda_type, origin: (this.origin || [0, 0, 0]).slice(), rotation: (this.rotation || [0, 0, 0]).slice(), export: this.export });
+	copy.uuid = 'inst-copy-uuid';
+	copy.children.push(new global.Cube({ from: [0, 0, 0], to: [2, 2, 2], origin: [1, 1, 1], export: true }));
+	return copy;
+};
+const instBranch = new global.Group({ name: 'instBranch', imda_type: 'composite', origin: [8, 8, 8] });
+instBranch.addTo();
+const instCallLoc = new global.Locator({ name: '调用 instSrc', position: [12, 8, 8], rotation: [0, 0, 0] });
+instCallLoc.uuid = 'inst-loc-uuid';
+instCallLoc.imda_call_target = 'inst-src-uuid';
+instCallLoc.addTo(instBranch);
+global.Group.all = [instSrc, instBranch];
+global.Outliner.root.length = 0; global.Outliner.root.push(instSrc, instBranch);
+instBranch.mesh = { visible: true, material: { opacity: 1, clone() { return { dispose() { } }; }, dispose() { } } };
+const instState = new Map(); instState.set(instBranch, true);
+const instMark = (group, active) => { if (!group) return; instState.set(group, !!instState.get(group) || !!active); };
+const instResult = api.simLightUpCallTargets(instState, instMark);
+eq('位姿不一致时不点亮源节点', instState.get(instSrc) === true, false);
+const tempCopy = instBranch.children.find(n => n && n.__immTempCall);
+eq('位姿不一致时临时实例化一份', !!tempCopy, true);
+eq('临时副本不参与导出', tempCopy && tempCopy.export, false);
+eq('临时副本摆到标签位姿上', tempCopy && tempCopy.origin, [12, 8, 8]);
+eq('临时副本被标记点亮', instState.get(tempCopy), true);
+eq('mismatched 仍记录该标签', instResult.mismatched.length, 1);
+const dropped = api.simRestoreView();
+const afterDrop = instBranch.children.find(n => n && n.__immTempCall);
+eq('熄灭后临时副本被收回（转回复调用标签）', !!afterDrop, false);
+eq('源节点未被改动', instSrc.children.length, 1);
+global.Outliner.root.length = 0;
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);

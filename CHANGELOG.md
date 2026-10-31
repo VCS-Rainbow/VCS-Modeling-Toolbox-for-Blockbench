@@ -2,6 +2,14 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.69.14
+- **修「生成复调用序列」的 property 创建后没生效**：`generateCallSequence` 原来把 `imda_property` 写成 `'minecraft:custom_model_data'`（带前缀），而分组属性面板的 select 选项值是裸名（`custom_model_data`）→ 面板认不出选项、回落到「（未设置）」，看上去就是没应用，`compass` / `count` 这些条件字段也全都不显示。现在存裸名。
+- **序列的阈值格式跟属性面板对齐**：对话框新增「分支编号格式（同属性面板）」输入框，复用同一个 `evalThreshold()`（支持 `i` / `2i` / `10+2i` / `0,1,3` / `2:2i`），填了就优先于「起点 + i × 步长」；格式同时写进容器的 `imda_threshold_format`，创建后属性面板显示与导出一致。
+- **洋葱皮：位姿对齐时直接点亮源节点；不一致时临时实例化**：新增 `simPoseIsSame(locator, target)`（位置 + 旋转，容差 1e-4）。复调用标签所在分支被选中时：
+  - 位姿**完全一致** → `simLightUpCallTargets()` 直接把源分组标记为活跃，**优先级高于「模拟输入未命中时的隐藏」**（`mark` 是 OR 合并，天然压过 inactive）；
+  - 位姿**不一致** → `simEnsureCallInstance()` 临时复制目标分组一份、摆到标签位姿上、写入 `__immTempCall` 标记并 `export=false`（绝不进导出），熄灭时由 `simDropCallInstance()` 收回、转回复调用标签。副本登记在模块级 `simTempCalls`（`locator.uuid → {locator, group}`）；`simRestoreView()` 第 4 段会全量回收（含重载后登记表丢失、只剩标记的残留）。
+  - 诊断用 `sim.lastLights = { lit, mismatched }`。
+- 单测 318 项（新增 29 项：阈值格式解析、序列创建后 property / format / index / threshold、位姿相同/不同判定、点亮压过未命中隐藏、熄灭不点亮、临时实例化的创建/位姿/导出标记/收回/源节点不被改动）。
 ## 0.69.13
 - **修「不活跃分支 = 不处理」时仍是洋葱皮 + 锁定**（三个原因一起修）：
   - `simRestoreView()` 原来只按 `sim.viewTouched` 恢复，而这份清单是内存里的 Set；**插件重载后清空**，但 `__immGhost` / `__immHidden` / `__immLock` 是挂在 mesh / 元素上的，标记还活着 → 显示「不处理」却没人去恢复。现在除了按清单恢复，还会**全量扫一遍大纲**把残留标记清掉。

@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-31 更新 · 当前版本 **0.69.13**
+> 生成时间：2026-10-31 更新 · 当前版本 **0.69.14**
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 > 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉「导出阈值被子级格式覆盖」，0.68.115 修掉「实例化后 export=false 导致整条分支不导出」，0.68.116 修掉「撤销不删除新建节点」的 3 处问题，0.68.117 修掉「枢轴归位把方块挪走」并说明 gizmo 位置规则。
 > **调试入口已升级：可用 `_bbcdp.js` 从终端直连软件内 Console + 全部 Blockbench 事件，见 `_BBCDP.md` 与 0.0.2。**
@@ -209,6 +209,31 @@ Blockbench 的方块网格是「`mesh.position = origin`，顶点相对 origin �
 **真机验证（0.69.13）**：`ghost_lock` → 45 组锁 / 70 方块锁 / 50 半透明 / store=5；切 `off` → 全部归 0；重载插件后 `store` 仍是 5，再切 `off` 仍能全清。旧版本留下的 96 个孤立锁已用只读探针清掉（`Project.saved` 保持 `false`）。
 
 单测 289 项（+6）。
+
+### 0.0.13 复调用序列的 property 与阈值格式（0.69.14）
+
+**用户报告**：「生成复调用序列的 property 好像没有在创建时成功应用。阈值的格式参考属性设置里的就行。」
+
+- **根因**：`generateCallSequence` 把 `container.imda_property` 写成 `'minecraft:custom_model_data'`（**带前缀**），而分组属性面板的 select 选项值是**裸名**（`custom_model_data`）。面板认不出这个值 → 回落到「（未设置）」，看起来就是“没应用”；同时 `compass` / `count` / `damage` 这些条件字段的 `condition` 全部不成立，相关输入框直接不显示。导出端 `buildNode` 自己会补前缀，所以裸名才是唯一正确存法。
+- **修法**：序列生成时 `String(options.property).replace(/^minecraft:/,'')` 后存裸名。
+- **阈值格式**：对话框新增「分支编号格式（同属性面板）」输入框，直接复用 `Exporter.evalThreshold()`（`sequenceFormatValue()` 包一层），支持 `i` / `2i` / `10+2i` / `0,1,3` / `2:2i`，与属性面板定义完全一致；填了就优先于旧的「起点 + i × 步长」（两者都保留，格式留空才用起点/步长）。格式同时写进容器的 `imda_threshold_format`，创建后面板显示与导出一致。
+
+### 0.0.14 洋葱皮：位姿对齐时直接点亮源节点（0.69.14）
+
+**用户规则**：「如果引用的源节点和自身的枢轴点位姿变换完全相同，就直接临时点亮源节点，优先级高于模拟输入未命中时的隐藏。如果不一样，则可以临时实例化并标记，在熄灭时转化回复调用标签。」
+
+- 新增 `simPoseIsSame(locator, target)`：比较 `locator.position` 与 `target.origin`、`locator.rotation` 与 `target.rotation`，容差 `1e-4`。
+- 新增 `simLightUpCallTargets(state, mark)`，在 `simViewEntries()` 末尾调用（第 3 步）：
+  - 遍历大纲里的复调用 Locator，先确认它**自己所在分支被选中**（向上找第一个出现在 `state` 里的祖先，必须为 `active === true`），否则熄灭状态不点亮；
+  - 位姿相同 → 把目标分组 `mark(target, true)`。`mark` 是 **OR 合并**，所以天然压过“模拟输入未命中得到的 inactive”；
+  - 位姿不同 → `simEnsureCallInstance()` **临时实例化**一份：`target.duplicate()` 复制、`translateGroupCoordinates()` 摆到标签位姿、设 `__immTempCall` 标记 + `export=false`（**绝不进导出**）、`addTo` 到标签父级；副本同样 `mark(copy, true)`。
+  - 结果存进 `sim.lastLights = { lit, mismatched }`。
+- **熄灭 = 转回复调用标签**：`simDropCallInstance()` 先 `simRestoreGroup()` 再 `remove()`；登记表 `simTempCalls`（`locator.uuid → {locator, group}`）里的每个副本在「本轮不再需要」时立刻收掉。`simRestoreView()` 新增第 4 段 `simDropAllCallInstances()`，全量兜底（含插件重载后登记表丢了、只剩 `__immTempCall` 标记的残留）。
+- **只 mark 目标分组本身，不 deep**：目标内部的分支该不该亮仍由它自己那轮 trace 决定，deep 会把目标里未选中的子分支也强行点亮，洋葱皮就没了。
+
+**真机数据（`assembly.bbmodel` 备份解析）**：`[4] sac_slots #4` 的 4 个标签、`[3]` 的 3 个、`[2]` 的 2 个、`[1]` 的 1 个，**全部位姿相同**（`调用 sacpack1` ↔ `sacpack1` 等，位置/旋转逐轴误差 < 1e-6），所以现网这段结构全走“点亮源节点”路径，不需要实例化；临时实例化是给将来的错位数据兜底的。
+
+单测 318 项（+29）。
 
 ### 0.0.10 视图联动：多级分支（0.69.12）
 
