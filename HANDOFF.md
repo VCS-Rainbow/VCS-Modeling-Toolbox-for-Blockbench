@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-11-01 更新 · 当前版本 **0.70.2**
+> 生成时间：2026-11-01 更新 · 当前版本 **0.71.0**
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 > 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉「导出阈值被子级格式覆盖」，0.68.115 修掉「实例化后 export=false 导致整条分支不导出」，0.68.116 修掉「撤销不删除新建节点」的 3 处问题，0.68.117 修掉「枢轴归位把方块挪走」并说明 gizmo 位置规则。
 > **调试入口已升级：可用 `_bbcdp.js` 从终端直连软件内 Console + 全部 Blockbench 事件，见 `_BBCDP.md` 与 0.0.2。**
@@ -209,6 +209,25 @@ Blockbench 的方块网格是「`mesh.position = origin`，顶点相对 origin �
 **真机验证（0.69.13）**：`ghost_lock` → 45 组锁 / 70 方块锁 / 50 半透明 / store=5；切 `off` → 全部归 0；重载插件后 `store` 仍是 5，再切 `off` 仍能全清。旧版本留下的 96 个孤立锁已用只读探针清掉（`Project.saved` 保持 `false`）。
 
 单测 289 项（+6）。
+
+### 0.0.18 生成全物品模型表（0.71.0，2026-11-01）
+
+**需求**：把资源包全部 `assets/*/models/*` 与 `assets/*/items/*` 导成一张 select 表，`when` 同时含无类型路径（`sqsp:inker/jet_rifle/gun`）与带类型路径（`sqsp:models/inker/jet_rifle/gun`），任一种匹配即可选中。
+
+**实现**：
+- `scanPackEntries(options)` → 一次递归遍历 `assets/**/*.json`（相对 **root** 的路径，形如 `assets/<ns>/<folder>/…`，正则才能匹配到 `assets/` 前缀 —— 第一版把相对基准写成了 `assets` 目录，结果恒为空）。按 `models` / `items` 分流，应用黑名单，再做「映射优先」合并。
+- `buildAllItemsTree(options)` → 生成 `select` 容器 + 每个路径一个 `model` 分支。
+- `primeMappingCache(entries)` → 生成前把映射定义批量读进 `imda_mapping_cache`。**关键**：导出走 `loadMappingDefinition({readOnly:true})`，只读缓存不碰文件系统（导出路径不能弹权限框）。不预读的话，`ns:items/…` 引用会退化成 `minecraft:model` + `"model": "ns:items/…"` —— 原版 `model` 字段只能指向 `models/`，非法，整条分支失效。
+- property 两种模式：`custom_model_data`（`index` + 字符串 when）/ `component`（`component: "minecraft:custom_data"` + `{id:...}` 对象 when）。
+
+**实测（真实资源包 `Squilker Sparkle Res`，138 个 json）**：扫描 138 → 生成 135 个分支 → 导出 108KB JSON 可解析；里面 115 个 `minecraft:model`（纯模型）、19 个 `minecraft:composite`（映射已内联）、**0 个非法 items 引用**。
+
+**顺带修掉的三个真问题**：
+1. `parseMappingReference` 用 `[^\s]+` 匹配路径 → **带空格的文件名**（`jet_rifle copy.json`）被判非法，导出退化成非法引用。改成允许空格。
+2. 没有 `model` 字段的"假映射"（整份模型内容塞在 `items/` 里）会被导出成非法引用 → 现在预读阶段就识别并**跳过**，报告里说明原因。
+3. `select` 的 `when` 为空时原版会当成永不命中 → 跳过并告警；`parseWhen` 增加对象字面量支持（component 模式必需）。
+
+**测试**：`_test_all_items.js` 用**真实的临时目录树**当资源包（不是 mock fs），这样递归扫描、黑名单正则、映射优先、空格路径、无 model 字段跳过都是真跑出来的。63 项。
 
 ### 0.0.16 导出的映射文件从来没被验证过（0.70.1，2026-10-31）
 

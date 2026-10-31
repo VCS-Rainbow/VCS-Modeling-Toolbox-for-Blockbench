@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.70.2';
+const VERSION = '0.71.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -883,20 +883,33 @@ class Exporter {
 	}
 
 
-	/** select 的 when：支持 JSON 数组，或逗号分隔（数字/布尔/字符串） */
+	/** select 的 when：支持 JSON 数组（元素可为字符串/数字/布尔/对象），或逗号分隔（数字/布尔/字符串）。
+	 *  component 属性下 when 的元素是**对象**（如 `{"id": "sqsp:gun"}`），所以必须整段按 JSON 解析。 */
 	parseWhen(value) {
 		const text = String(value == null ? '' : value).trim();
 		if (!text) return [];
 		if (text.charAt(0) === '[') {
-			try { const parsed = JSON.parse(text); if (Array.isArray(parsed)) return parsed; } catch (e) { /* fallthrough */ }
+			try {
+				const parsed = JSON.parse(text);
+				if (Array.isArray(parsed)) return parsed;
+			} catch (e) { /* fallthrough */ }
+			// 手写时常常漏引号（[a, b]），退回按逗号切
 		}
-		return text.split(',').map(part => {
-			const t = part.trim();
+		// 单个对象字面量也接受：{"id": "ns:path"} → [{id:'ns:path'}]
+		if (text.charAt(0) === '{') {
+			try {
+				const parsed = JSON.parse(text);
+				if (parsed && typeof parsed === 'object') return [parsed];
+			} catch (e) { /* fallthrough */ }
+		}
+		return text.replace(/^\[|\]$/g, '').split(',').map(part => {
+			const t = part.trim().replace(/^["']|["']$/g, '');
 			if (/^-?\d+(\.\d+)?$/.test(t)) return Number(t);
 			if (t === 'true') return true;
 			if (t === 'false') return false;
+			if (t.charAt(0) === '{') { try { return JSON.parse(t); } catch (e) { /* ignore */ } }
 			return t;
-		});
+		}).filter(t => t !== '');
 	}
 
 	parseTints(value) {
@@ -1014,13 +1027,17 @@ class Exporter {
 		if (type === 'select') {
 			const prop = String(group.imda_property || 'custom_model_data').replace(/^minecraft:/, '').trim() || 'custom_model_data';
 			node.property = 'minecraft:' + prop;
+			// index 只对 custom_model_data 有意义；component 用 component 字段（组件类型 ID）。
 			if (prop === 'custom_model_data') node.index = clean(num(group.imda_index));
-			else if (prop === 'component') node.component = String(group.imda_component || '');
+			else if (prop === 'component') node.component = String(group.imda_component || 'minecraft:custom_data');
 			node.cases = [];
 			for (const child of childGroups) {
 				const childNode = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'), own_shift);
 				if (!childNode) continue;
-				node.cases.push({ when: this.parseWhen(child.imda_case_when), model: childNode });
+				const when = this.parseWhen(child.imda_case_when);
+				// when 为空说明这个 case 谁都不匹配，原版会当成永不命中，留着只会误导；跳过并告警
+				if (!when.length) { this.warn('select 分支 “' + labelOf(child) + '” 的 when 为空，已跳过。'); continue; }
+				node.cases.push({ when, model: childNode });
 			}
 			let fallback = built ? { type: 'minecraft:model', model: built.reference } : (extras[0] || null);
 			if (calls.length) fallback = this.composeWithCalls(fallback, calls);
@@ -3815,7 +3832,9 @@ function importModelReference(group) {
 /** 映射引用语法：`ns:items/路径`（对应 assets/ns/items/路径.json）；不是映射引用返回 null */
 function parseMappingReference(reference) {
 	const text = String(reference == null ? '' : reference).trim();
-	const m = /^([a-z0-9_.\-]+):items\/([^\s]+)$/i.exec(text);
+	// 路径里允许空格（资源包里 "jet_rifle copy.json" 这种很常见），
+	// 之前用 [^\s]+ 会把带空格的路径判成不合法，导出时退化成非法引用。
+	const m = /^([a-z0-9_.\-]+):items\/([^\s].*?)$/i.exec(text);
 	if (!m) return null;
 	return { ns: m[1], path: m[2].replace(/\.json$/i, '') };
 }
@@ -3888,6 +3907,290 @@ function referenceFromPickedPath(picked) {
 		path: sub,
 		reference: kind === 'items' ? (ns + ':items/' + sub) : (ns + ':' + sub),
 	};
+}
+
+/* ============================== 全物品模型表 ============================== */
+
+/** 递归列出目录下所有文件（相对 root 的 posix 路径） */
+function listFilesRecursive(fsmod, pathmod, absRoot, extFilter) {
+	const out = [];
+	const walk = (dir, depth) => {
+		if (depth > 24) return;
+		let entries = [];
+		try { entries = fsmod.readdirSync(dir, { withFileTypes: true }) || []; } catch (e) { return; }
+		for (const entry of entries) {
+			const name = String((entry && entry.name) || entry || '');
+			if (!name || name === '.' || name === '..') continue;
+			const abs = pathmod.join(dir, name);
+			let isDir = false;
+			try { isDir = entry && typeof entry.isDirectory === 'function' ? entry.isDirectory() : fsmod.statSync(abs).isDirectory(); } catch (e) { continue; }
+			if (isDir) { walk(abs, depth + 1); continue; }
+			if (extFilter && !extFilter.test(name)) continue;
+			out.push(pathmod.relative(absRoot, abs).replace(/\\/g, '/'));
+		}
+	};
+	walk(absRoot, 0);
+	return out;
+}
+
+/** 黑名单：每个正则独立匹配相对路径（posix）；返回命中的那条（用于报告） */
+function matchBlacklist(rel, patterns) {
+	for (const pattern of (patterns || [])) {
+		const text = String(pattern || '').trim();
+		if (!text) continue;
+		try {
+			if (new RegExp(text).test(rel)) return text;
+		} catch (e) { /* 无效正则跳过，由调用方统一报告 */ }
+	}
+	return null;
+}
+
+/** 扫描资源包里的模型与映射文件，返回候选条目。
+ *  entry = { kind:'model'|'items', ns, path, untyped:'ns:path', typed:'ns:models/…'|'ns:items/…', rel, abs, skip } */
+function scanPackEntries(options) {
+	const opts = options || {};
+	const root = String(projectValue('imda_pack_path', '') || '').trim();
+	if (!root) return { error: '未设置「资源包工程路径」（项目设置里填 pack.mcmeta 所在目录）' };
+	const pathmod = getPath();
+	const fsmod = getScopedFs(root);
+	if (!pathmod || !fsmod) return { error: '无法读取资源包（需要桌面版 Blockbench 且已授权该目录）' };
+	const includeModels = opts.includeModels !== false;
+	const includeItems = opts.includeItems !== false;
+	const blacklist = Array.isArray(opts.blacklist) ? opts.blacklist : [];
+	const entries = [];
+	const invalidPatterns = [];
+	for (const pattern of blacklist) {
+		const text = String(pattern || '').trim();
+		if (!text) continue;
+		try { new RegExp(text); } catch (e) { invalidPatterns.push(text); }
+	}
+
+	const collect = (kind) => {
+		const folder = (kind === 'items') ? 'items' : 'models';
+		const assetsRoot = pathmod.join(root, 'assets');
+		// 一次遍历拿到全部 assets 下的 json（相对 root 的路径，形如 assets/<ns>/<folder>/…），
+		// 再按命名空间 + 目录筛出自己这一 kind，避免对每个命名空间重复深扫。
+		let allRels = [];
+		try { allRels = listFilesRecursive(fsmod, pathmod, root, /\.json$/i); } catch (e) { return; }
+		for (const rel of allRels) {
+			const m = /^assets\/([^/]+)\/([^/]+)\/(.+)\.json$/i.exec(rel);
+			if (!m) continue;
+			if (m[2].toLowerCase() !== folder) continue;
+			const sub = m[3];
+			entries.push({
+				kind,
+				ns: m[1],
+				path: sub,
+				untyped: m[1] + ':' + sub,
+				typed: m[1] + ':' + folder + '/' + sub,
+				rel,
+				blockedBy: matchBlacklist(rel, blacklist),
+			});
+		}
+	};
+	if (includeModels) collect('model');
+	if (includeItems) collect('items');
+
+	// 同一无类型路径既有模型又有映射 → 映射优先（模型丢弃，路径并入映射的 when 列表）
+	const byUntyped = new Map();
+	for (const entry of entries) {
+		if (entry.blockedBy) continue;
+		const list = byUntyped.get(entry.untyped) || [];
+		list.push(entry);
+		byUntyped.set(entry.untyped, list);
+	}
+	const winners = [];
+	const droppedModels = [];
+	for (const [untyped, list] of byUntyped) {
+		const itemsEntry = list.find(e => e.kind === 'items');
+		const modelEntry = list.find(e => e.kind === 'model');
+		if (itemsEntry && modelEntry) {
+			// 映射优先：模型不单独成 case，只在映射的 when 列表里补无类型路径
+			droppedModels.push(modelEntry);
+			winners.push(Object.assign({}, itemsEntry, { alsoHasModel: true }));
+			continue;
+		}
+		winners.push(itemsEntry || modelEntry);
+	}
+	winners.sort((a, b) => (a.untyped < b.untyped ? -1 : a.untyped > b.untyped ? 1 : 0));
+	return {
+		entries: winners,
+		scanned: entries.length,
+		blocked: entries.filter(e => e.blockedBy),
+		droppedModels,
+		invalidPatterns,
+		root,
+	};
+}
+
+/** 批量把映射定义读进项目缓存（一次写盘），供 buildAllItemsTree 使用。
+ *  为什么必须预读：`ns:items/…` 这类引用在导出时走 `loadMappingDefinition({readOnly:true})`，
+ *  只读缓存不碰文件系统（导出路径不能弹权限框）。不预读的话导出会退化成
+ *  `minecraft:model` + `"model": "ns:items/…"` —— 原版 model 字段只能指向 models/，
+ *  这是非法引用，整条分支失效。 */
+function primeMappingCache(entries) {
+	const list = (entries || []).filter(e => e && e.kind === 'items');
+	if (!list.length) return { primed: 0, failed: [] };
+	const root = String(projectValue('imda_pack_path', '') || '').trim();
+	if (!root) return { primed: 0, failed: list.map(e => ({ entry: e, error: '未设置资源包工程路径' })) };
+	const pathmod = getPath();
+	const fsmod = getScopedFs(root);
+	if (!pathmod || !fsmod) return { primed: 0, failed: list.map(e => ({ entry: e, error: '无法读取资源包' })) };
+	const cache = mappingCacheRead();
+	const failed = [];
+	let primed = 0;
+	for (const entry of list) {
+		const key = entry.ns + ':items/' + entry.path;
+		try {
+			const json = readJSONFile(pathmod, fsmod, mappingPathOf(pathmod, root, key));
+			if (!json) { failed.push({ entry, error: '找不到文件' }); continue; }
+			if (!json.model) { failed.push({ entry, error: '该文件没有 model 字段' }); continue; }
+			cache[key] = json.model;
+			primed++;
+		} catch (e) { failed.push({ entry, error: String((e && e.message) || e) }); }
+	}
+	try { mappingCacheWrite(cache); } catch (e) { /* ignore */ }
+	return { primed, failed };
+}
+
+/** 生成「全物品模型表」：select 容器 + 每个路径一个 case 分组。
+ *  - property = custom_model_data → `"index": <index>`，when 里放路径字符串（floats/strings 需按实际数据类型匹配）
+ *  - property = component       → `"component": "minecraft:custom_data"`，when 里放 `{ id: "ns:path" }` 形态的匹配值 */
+function buildAllItemsTree(options) {
+	const opts = options || {};
+	const scan = scanPackEntries(opts);
+	if (scan.error) return scan;
+	const entries = scan.entries;
+	if (!entries.length) return { error: '没有可导入的模型或映射（检查资源包路径、黑名单与「只导入」选项）', scan };
+	const useComponent = String(opts.property || 'custom_model_data') === 'component';
+	const name = String(opts.name || '').trim() || '[all items]';
+	const index = num(opts.index);
+	// 先把所有映射定义读进缓存：导出时只读缓存，不碰文件系统
+	const priming = primeMappingCache(entries);
+	// 预读失败的映射不能建分支：导出时它拿不到定义，会退化成
+	// `minecraft:model` + `"model": "ns:items/…"`（非法引用，原版 model 字段只能指向 models/）。
+	// 直接从候选里剔除，并在报告里说明原因（典型原因：文件没有 model 字段、不是映射文件）。
+	const failedKeys = new Set((priming.failed || []).map(f => f.entry && f.entry.untyped));
+	const usable = entries.filter(e => !(e.kind === 'items' && failedKeys.has(e.untyped)));
+	const skippedMappings = (priming.failed || []).filter(f => f.entry && failedKeys.has(f.entry.untyped));
+	if (!usable.length) return { error: '没有可用的模型或映射（映射预读全部失败）', scan, priming };
+
+	const container = new Group({
+		name,
+		imda_type: 'select',
+		imda_property: useComponent ? 'component' : 'custom_model_data',
+		imda_index: useComponent ? 0 : index,
+		imda_component: useComponent ? 'minecraft:custom_data' : '',
+		origin: [8, 8, 8],
+		rotation: [0, 0, 0],
+	});
+	const created = [container];
+	for (const entry of usable) {
+		const modelRef = entry.kind === 'items'
+			? (entry.ns + ':items/' + entry.path)
+			: (entry.ns + ':' + entry.path);
+		const caseGroup = new Group({
+			name: '[' + entry.untyped + '] ' + sanitizePath(entry.path.split('/').pop(), 'case'),
+			imda_type: 'model',
+			imda_model: modelRef,
+			origin: [8, 8, 8],
+			rotation: [0, 0, 0],
+		});
+		// when 列表：无类型路径 + 带类型路径；映射优先时无类型路径只出现一次
+		const when = [];
+		const pushWhen = (value) => {
+			const key = JSON.stringify(value);
+			if (!when.some(existing => JSON.stringify(existing) === key)) when.push(value);
+		};
+		if (useComponent) {
+			// component 模式下 when 是组件值：custom_data 的 id 字段
+			pushWhen({ id: entry.untyped });
+			pushWhen({ id: entry.typed });
+		} else {
+			// custom_model_data 模式：when 是字符串列表，无类型 + 带类型都放进去
+			pushWhen(entry.untyped);
+			pushWhen(entry.typed);
+		}
+		caseGroup.imda_case_when = JSON.stringify(when);
+		caseGroup.__allItemsEntry = entry;
+		container.children.push(caseGroup);
+		created.push(caseGroup);
+	}
+	return { container, created, entries: usable, skippedMappings, scan, priming };
+}
+
+/** 对话框：生成全物品模型表 */
+function openAllItemsDialog() {
+	const root = String(projectValue('imda_pack_path', '') || '').trim();
+	if (!root) {
+		Blockbench.showMessageBox({ title: '缺少资源包工程路径', message: '请先在项目设置里指定资源包工程路径（pack.mcmeta 所在目录）。', icon: 'warning' });
+		return;
+	}
+	new Dialog({
+		id: 'imda_all_items',
+		title: '生成全物品模型表',
+		width: 640,
+		form: {
+			name: { label: '容器名称', type: 'text', value: '[all items]' },
+			property: {
+				label: '匹配依据（property）',
+				type: 'select',
+				value: 'custom_model_data',
+				options: {
+					custom_model_data: '物品模型数据（custom_model_data）',
+					component: '物品数据（custom_data.id）',
+				},
+				description: 'custom_model_data：when 放路径字符串（floats/strings 里放 ns:path）。\n物品数据：property 用 component，匹配 minecraft:custom_data 的 id 字段。',
+			},
+			index: { label: 'custom_model_data index', type: 'number', value: 0, description: '仅 custom_model_data 模式使用。' },
+			_: '_',
+			includeModels: { label: '导入模型（assets/*/models/*）', type: 'checkbox', value: true },
+			includeItems: { label: '导入映射（assets/*/items/*）', type: 'checkbox', value: true },
+			blacklist: {
+				label: '黑名单正则（每行一个）',
+				type: 'textarea',
+				value: String(projectValue('imda_all_items_blacklist', '') || ''),
+				description: '按相对路径匹配（如 assets/sqsp/models/item/debug/ 或 /_old/），命中的模型/映射会被剔除。下次打开会记住。',
+			},
+		},
+		onConfirm(result) {
+			const includeModels = !!result.includeModels;
+			const includeItems = !!result.includeItems;
+			if (!includeModels && !includeItems) {
+				Blockbench.showMessageBox({ title: '没有选择来源', message: '至少要勾选「导入模型」或「导入映射」之一。', icon: 'info' });
+				return;
+			}
+			const blacklist = String(result.blacklist || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+			try { setProjectValue('imda_all_items_blacklist', blacklist.join('\n')); } catch (e) { /* ignore */ }
+			const built = buildAllItemsTree({
+				name: result.name, property: result.property, index: result.index,
+				includeModels, includeItems, blacklist,
+			});
+			if (built.error) {
+				Blockbench.showMessageBox({ title: '无法生成', message: built.error, icon: 'warning' });
+				return;
+			}
+			try { Undo.initEdit({ outliner: true, groups: [] }); } catch (e) { /* ignore */ }
+			addAndInit(built.container, null);
+			for (const node of built.created) { try { if (node.init) node.init(); } catch (e) { /* ignore */ } }
+			try { Undo.finishEdit('生成全物品模型表', { outliner: true, groups: built.created }); } catch (e) { /* ignore */ }
+			try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+			try { Project.saved = false; } catch (e) { /* ignore */ }
+			try { simInvalidate(); } catch (e) { /* ignore */ }
+			const scan = built.scan || {};
+			const priming = built.priming || {};
+			const notes = [];
+			notes.push('已生成 ' + built.entries.length + ' 个分支');
+			if (priming.primed) notes.push('预读 ' + priming.primed + ' 个映射');
+			if (scan.blocked && scan.blocked.length) notes.push('黑名单剔除 ' + scan.blocked.length + ' 个');
+			if (scan.droppedModels && scan.droppedModels.length) notes.push('同路径映射优先，跳过 ' + scan.droppedModels.length + ' 个模型');
+			if (built.skippedMappings && built.skippedMappings.length) notes.push('映射无效跳过 ' + built.skippedMappings.length + ' 个（无 model 字段/读取失败）');
+			if (scan.invalidPatterns && scan.invalidPatterns.length) notes.push('无效正则 ' + scan.invalidPatterns.length + ' 条已忽略：' + scan.invalidPatterns.join(' / '));
+			Blockbench.showQuickMessage(notes.join('；'), 6000);
+			if (scan.invalidPatterns && scan.invalidPatterns.length) console.warn('[装配] 无效黑名单正则', scan.invalidPatterns);
+			if (built.skippedMappings && built.skippedMappings.length) console.warn('[装配] 跳过的映射', built.skippedMappings.slice(0, 20));
+		},
+	}).show();
 }
 
 /* ============================== 提取 / 应用变换（位姿） ============================== */
@@ -5610,6 +5913,7 @@ P(ModelProject, 'number', 'imda_extra_composite_layers', { label: '调试：额�
 	P(ModelProject, 'boolean', 'imda_hide_unavailable', { label: '隐藏当前条件下不可用的分组', default: true });
 	P(ModelProject, 'string', 'imda_pack_path', { label: '资源包工程路径（pack.mcmeta 所在目录）', default: '' });
 	P(ModelProject, 'string', 'imda_mapping_cache', { default: '', exposed: false });
+	P(ModelProject, 'string', 'imda_all_items_blacklist', { label: '全物品模型表：黑名单正则（每行一个）', default: '' });
 	P(ModelProject, 'string', 'imda_pack_version', {
 		label: '目标 Minecraft 版本（pack.mcmeta 格式）',
 		default: DEFAULT_PACK_VERSION,
@@ -5652,6 +5956,7 @@ P(ModelProject, 'number', 'imda_extra_composite_layers', { label: '调试：额�
 	P(Group, 'number', 'imda_range_period', { label: 'period', default: 1 });
 	P(Group, 'boolean', 'imda_range_remaining', { label: 'remaining', default: false });
 	P(Group, 'string', 'imda_component', { label: 'component', default: '' });
+	P(Group, 'string', 'imda_case_when', { label: 'select 分支的 when（JSON 数组）', default: '' });
 	P(Group, 'boolean', 'imda_align_center', { label: '引用模型导入时自动对齐到模型中点', default: false });
 	P(Group, 'boolean', 'imda_ignore_default', { label: 'ignore_default', default: false });
 	P(Group, 'string', 'imda_predicate', { label: 'predicate', default: '' });
@@ -6036,7 +6341,8 @@ Plugin.register('item_model_definition_assembly', {
 		actions.zip = new Action('imda_export_zip', { name: '导出装配资源包 (zip)', description: 'items + models + textures', icon: 'archive', category: 'file', condition, click: exportZip });
 		actions.merge = new Action('imda_merge_pack', { name: '合并到资源包…', description: '直接写入资源包并覆盖旧文件；默认快捷键 F5', icon: 'folder_open', category: 'file', condition, keybind: (typeof Keybind !== 'undefined') ? new Keybind({ key: 116 }) : undefined, click: mergeToPack });
 		actions.import = new Action('imda_import_model', { name: '导入引用模型（当前分组）', description: '按 imda_model 从资源包工程导入 Java 模型为方块', icon: 'file_download', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const g = pickTargetGroup(); if (!g) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } if (!String(g.imda_model || '').trim()) { Blockbench.showMessageBox({ title: '没有引用模型', message: '该分组没有填写 imda_model（引用模型）。', icon: 'info' }); return; } importModelReference(g); } });
-		actions.call = new Action('imda_call_group', { name: '复调用选中的分组', description: '在分组枢轴处创建复调用标签，导出时替换为目标分组', icon: 'content_copy', category: 'tools', condition, click: callSelectedGroup });
+		actions.allItems = new Action('imda_all_items', { name: '生成全物品模型表…', description: '扫描资源包全部模型与映射文件，生成一张 select 表：每个路径都能被选中（when 同时含无类型与带类型路径）', icon: 'list_alt', category: 'tools', condition: () => isImdaFormat(), click: openAllItemsDialog });
+	actions.call = new Action('imda_call_group', { name: '复调用选中的分组', description: '在分组枢轴处创建复调用标签，导出时替换为目标分组', icon: 'content_copy', category: 'tools', condition, click: callSelectedGroup });
 		actions.addCallTag = new Action('imda_add_call_tag', { name: '添加复调用标签', description: '在选中分组（或根目录）里新建一个空复调用标签，再用「编辑复调用标签」指定目标', icon: 'add', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: addEmptyCallTag });
 	actions.bakeTimeline = new Action('imda_bake_timeline', { name: '解析动画时间轴（写入帧标签，旧流程）', description: '按项目 FPS 采样当前动画，生成 range_dispatch(timeline) 分组与逐帧 Locator；导出时也会自动采样，一般不需要手动执行', icon: 'timeline', category: 'tools', condition: () => typeof Animation !== 'undefined' && Animation && (Animation.selected || (Array.isArray(Animation.all) && Animation.all.length)), click: () => bakeTimelineToCallTags() });
 	actions.removeTimeline = new Action('imda_remove_timeline', { name: '移除动画时间线复调用标签', description: '删除项目里所有 range_dispatch(timeline) 分组及其 Locator 帧标签', icon: 'delete', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner && Outliner.root.some(n => isGroup(n) && String(n.imda_type || '') === 'range_dispatch_timeline')), click: () => removeTimelineTags() });
@@ -6084,6 +6390,7 @@ Plugin.register('item_model_definition_assembly', {
 		toolSep('imda_vmt_top');
 		toolHeading('==VCS Modeling Toolbox==');
 		toolSep('imda_group_assembly', '[ 模型装配 ] - 结构');
+		tool(actions.allItems);
 		tool(actions.props);
 		tool(actions.import);
 		tool(actions.pickModelFile);
@@ -6134,7 +6441,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, scanPackEntries, buildAllItemsTree, matchBlacklist, listFilesRecursive, simStepOnce, simAdvanceSlot, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

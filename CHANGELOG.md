@@ -2,6 +2,21 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.71.0
+- **新增「生成全物品模型表」**（Tools → 结构）：扫描资源包里的全部 `assets/*/models/**/*.json` 与 `assets/*/items/**/*.json`，生成一个 `select` 容器，每个路径一个 `model` 分支。
+  - `when` 列表同时包含**无类型路径**（`sqsp:inker/jet_rifle/gun`）与**带类型路径**（`sqsp:models/inker/jet_rifle/gun` / `sqsp:items/inker/jet_rifle/gun`），任一种匹配都能选中。
+  - **映射优先**：同一路径既有模型又有映射时只保留映射分支，模型不单独成 case（其无类型路径已并入映射的 `when`，且只出现一次）。
+  - **两种匹配依据**：
+    - `custom_model_data` → `"property": "minecraft:custom_model_data"` + `"index"`，`when` 是字符串数组；
+    - 物品数据 → `"property": "minecraft:component"` + `"component": "minecraft:custom_data"`，`when` 元素是 `{"id": "ns:path"}` 对象数组。
+  - **黑名单**：多行正则，按相对路径匹配，可反复使用（存进 `imda_all_items_blacklist`）。无效正则会被单独报告并跳过，不影响其它条目。
+  - **只导入模型 / 只导入映射**：两个复选框。
+  - 生成前会把所有映射定义**预读进项目缓存**（`primeMappingCache`）：导出路径只读缓存、不碰文件系统，避免权限弹窗；读不到 `model` 字段的"假映射"会被跳过而不是导出成非法引用。
+- **修 `parseMappingReference` 不支持带空格路径**：原来是 `[^\s]+`，资源包里 `jet_rifle copy.json` 这类文件名会被判成非法引用，导出时退化成 `minecraft:model` + `"model": "ns:items/…"`（原版 model 字段只能指向 `models/`，整条分支失效）。实测真实资源包有 20 个映射条目，修好后 19 个能正确内联成 `minecraft:composite`，剩下 1 个是真的没有 `model` 字段。
+- **修 `select` 导出的两处**：`when` 为空的分支会被跳过并告警（原版会当成永不命中）；`when` 支持对象字面量（component 模式需要）。
+- 新增 `imda_case_when` 属性面板字段（原来只有导出用，界面里改不到）。
+- 新增 `_test_all_items.js`（63 项）：用**真实的临时目录树**当资源包，覆盖递归扫描、黑名单正则、无效正则、只导入、映射优先、带空格路径、无 model 字段跳过、两种 property 模式、导出 JSON 形态、`parseWhen` 兼容性。
+- 单测：`_test_sim.js` 350 + `_test_export.js` 29 + `_test_all_items.js` 63 = **442 项**。
 ## 0.70.2
 - 更正文档口径：`node_name` 是**用户要求**的字段（导出带来源分组名，方便人工复核 JSON 时对上是哪个分组），不是“应当关闭的非标准字段”。`_test_export.js` 的字段白名单继续对它单独放行并只统计数量。
 ## 0.70.1
