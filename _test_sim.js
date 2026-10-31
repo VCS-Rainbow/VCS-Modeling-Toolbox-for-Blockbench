@@ -1122,7 +1122,10 @@ const pfByName = {};
 	for (const key of ['on_true', 'on_false', 'fallback', 'model']) if (node[key]) walkPf(node[key]);
 })(pfMapping);
 console.log('PF', JSON.stringify(pfByName));
-eq('父级 5-i 覆盖子级自带格式', (pfByName.bone7 || []).join(','), '5,4,3,2,1');
+// 父级格式 5-i 生效：子分组的 imda_threshold 被同步成 5,4,3,2,1；
+// 但**导出的 entries 必须按阈值升序**——原版 range_dispatch 取「最后一个
+// threshold ≤ 当前值」，递减序会让每个值都命中最末尾那条分支。
+eq('父级 5-i 覆盖子级自带格式（导出按阈值升序）', (pfByName.bone7 || []).join(','), '1,2,3,4,5');
 
 // 阈值强制（实例化覆盖）仍然优先于父级格式
 pfChildren[0].imda_threshold_force = true;
@@ -1135,7 +1138,8 @@ const pfForcedByName = {};
 	for (const key of ['models', 'entries', 'cases']) for (const child of (node[key] || [])) walkPf2(child && child.model ? child.model : child);
 	for (const key of ['on_true', 'on_false', 'fallback', 'model']) if (node[key]) walkPf2(node[key]);
 })(pfForced);
-eq('threshold_force 仍优先', (pfForcedByName.bone7 || []).slice(0, 2).join(','), '9,4');
+// 覆盖值 9 与格式值 4,3,2,1 一起升序排列 → 1,2,3,4,9；关键是 9 仍在结果里且唯一
+eq('threshold_force 仍优先（强制值 9 生效）', (pfForcedByName.bone7 || []).join(','), '1,2,3,4,9');
 pfChildren[0].imda_threshold_force = false;
 pfChildren[0].imda_threshold = 5;
 /* ---------- 复调用选中的分组：撤销必须能删掉新建的 Locator ---------- */

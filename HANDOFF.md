@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-31 更新 · 当前版本 **0.70.0**
+> 生成时间：2026-10-31 更新 · 当前版本 **0.70.1**
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 > 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉「导出阈值被子级格式覆盖」，0.68.115 修掉「实例化后 export=false 导致整条分支不导出」，0.68.116 修掉「撤销不删除新建节点」的 3 处问题，0.68.117 修掉「枢轴归位把方块挪走」并说明 gizmo 位置规则。
 > **调试入口已升级：可用 `_bbcdp.js` 从终端直连软件内 Console + 全部 Blockbench 事件，见 `_BBCDP.md` 与 0.0.2。**
@@ -209,6 +209,51 @@ Blockbench 的方块网格是「`mesh.position = origin`，顶点相对 origin �
 **真机验证（0.69.13）**：`ghost_lock` → 45 组锁 / 70 方块锁 / 50 半透明 / store=5；切 `off` → 全部归 0；重载插件后 `store` 仍是 5，再切 `off` 仍能全清。旧版本留下的 96 个孤立锁已用只读探针清掉（`Project.saved` 保持 `false`）。
 
 单测 289 项（+6）。
+
+### 0.0.16 导出的映射文件从来没被验证过（0.70.1，2026-10-31）
+
+**用户提问**：「你有没有测试过导出的物品模型映射文件是否正常？」
+
+**诚实回答：没有。** 0.1–0.70.0 期间 350 条断言全部只验证「内存里的映射对象结构对不对」，没有一条把文件**写到磁盘**再读回来校验。而 `formatMapping` / `formatModel` 是**手写拼字符串**的格式化器（不是 `JSON.stringify`），语法错只有落盘 + `JSON.parse` 能发现。这是测试体系的真实缺口，不是小事。
+
+补上 `_test_export.js`（29 项），当场抓到两个真 bug：
+
+**Bug 1：range_dispatch 的 property 漏了 `minecraft:` 前缀**
+
+0.69.14 我把 `imda_property` 改成存裸名（属性面板选项值），但 `buildNode` 里那行是：
+
+```js
+node.property = String(group.imda_property || 'minecraft:custom_model_data');
+```
+
+只有**字段为空**时才走默认值（带前缀），非空时把 `"property": "custom_model_data"` 原样写进文件。原版只认 `minecraft:` 命名空间 ID，这个值不认识 → **整条 range_dispatch 失效**。
+→ 改成 `'minecraft:' + String(...).replace(/^minecraft:/,'').trim()`。
+
+**Bug 2：entries 阈值顺序与大纲顺序相反**
+
+Minecraft Wiki 原文（Items model definition § range_dispatch）：
+
+> Will select last entry with threshold less or equal to property value.
+
+也就是**判定顺序 = entries 数组顺序**，取「最后一个 threshold ≤ 当前值的条目」。分支编号格式 `5-i` 配上大纲里的 `[5][4][3][2][1]`，算出阈值 5,4,3,2,1 —— 原样输出时，任何值的「所有 threshold 都 ≤ 它」都会成立，于是**永远命中列表末尾那条**（threshold=1 的分支）。你工程里的 `sac_slots` 正是这个结构，5 个档位全部导错。
+→ 导出时对 `node.entries` 按阈值**升序稳定排序**（同值保持大纲顺序）。
+
+**`node_name` 的定性**：插件默认开启「输出 node_name（来源分组名）」，这是**原版未定义的非标准字段**（Wiki 的字段表里没有）。它不影响加载（原版解码器忽略未知字段），但会自动生成的映射里带着它。如果给严格校验的环境或追求干净的产出，可以在项目设置里关掉。
+
+**测试覆盖（`_test_export.js`）**：
+
+1. 落盘后逐个 `JSON.parse`（覆盖格式化器语法）；
+2. 定义树逐字段校验：类型白名单、每类允许的字段、`transformation` 四分量 + 四元数归一化 + `scale` 无 0、`model` 引用格式、`range_dispatch` 阈值严格升序、`select.when` 必须是数组、`condition` 两侧齐全；
+3. 物品模型文件：`from`/`to`/`faces`/`display` 数值分量；
+4. **纹理引用与实际导出文件对账**（引用了却没人提供就报错）；
+5. 路径命名规范 + 重复检测；
+6. **真实工程回归**：读 `assembly.bbmodel` 备份 → 完整导出 → 全部校验（只读，不写回）。
+
+> 注意 `_unlz.js` 依赖 `app.asar` 里 lz-string 模块的位置（`var ci;` … `var Lw=ci;`），Blockbench 升级后可能失效 —— 那时第 6 项会打印「跳过」而不是失败。
+
+### 0.0.17 模拟面板「步进」按钮（0.70.1）
+
+`simAdvanceSlot(item)` 从「运行」循环里抽出来，成为唯一推进规则；`simStepOnce()` 对它循环调用后 `simTick()` + `simApplyTints()`。**不启动循环、不改运行状态**，只在没有勾选任何自动槽时给一条提示。按钮名「⏭ 步进」，在「▶ 运行」右边。
 
 ### 0.0.15 独立元素类型「复调用标签」+ Shift 跨层连选（0.70.0，2026-10-31）
 

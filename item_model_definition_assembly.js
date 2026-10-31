@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.70.0';
+const VERSION = '0.70.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1031,7 +1031,10 @@ class Exporter {
 
 		if (type === 'range_dispatch') {
 			if (group.imda_tints) this.warn('分组 "' + labelOf(group) + '" 的 tints 只在 model / composite 生效，range_dispatch 已忽略。');
-			node.property = String(group.imda_property || 'minecraft:custom_model_data');
+			// imda_property 存的是裸名（属性面板的选项值），导出必须补 minecraft: 前缀；
+			// 这里以前写成 `|| 'minecraft:custom_model_data'`，只有字段为空时才带前缀，
+			// 非空时原样输出 "property": "custom_model_data" —— 原版不认，整条 range_dispatch 失效。
+			node.property = 'minecraft:' + String(group.imda_property || 'custom_model_data').replace(/^minecraft:/, '').trim().replace(/^$/, 'custom_model_data');
 			// custom_model_data 必须有 index，未填时默认 0
 			if (node.property === 'minecraft:custom_model_data' && node.index === undefined) node.index = 0;
 			const numeric = node.property.replace(/^minecraft:/, '');
@@ -1085,6 +1088,15 @@ class Exporter {
 			if (calls.length) fallback = this.composeWithCalls(fallback, calls);
 			if (fallback) { this.groupNodes.set(fallback, group); node.fallback = fallback; }
 			if (!node.entries.length && !node.fallback) return null;
+			// 原版语义：range_dispatch 取「最后一个 threshold ≤ 当前值」的条目，
+			// 也就是 entries 的顺序就是判定顺序。分支编号格式写成 `5-i` 时，大纲里
+			// 子分组是 [5][4][3][2][1]，算出的阈值就是 5,4,3,2,1（递减）；
+			// 原样输出会让「所有 threshold 都 ≤ 当前值」时永远命中最末尾那条，
+			// 每个值都选错分支。所以这里按阈值升序稳定排序（同值保持大纲顺序）。
+			node.entries = node.entries
+				.map((entry, index) => ({ entry, index }))
+				.sort((a, b) => (a.entry.threshold - b.entry.threshold) || (a.index - b.index))
+				.map(pair => pair.entry);
 			return node;
 		}
 
@@ -5110,8 +5122,10 @@ function buildSimPanel(show_panel) {
 	}
 	const controlRow = mk('div', {}, 'display:flex;align-items:center;gap:8px;flex:0 0 auto;padding:2px 0 6px;border-bottom:1px solid rgba(128,128,128,.3)');
 	const runBtn = mk('button', { textContent: '▶ 运行' }, 'padding:4px 10px;');
+	const stepBtn = mk('button', { textContent: '⏭ 步进', title: '把勾选的自动槽往前推一格（走一步、立刻求值，不启动循环）' }, 'padding:4px 10px;');
 	const statusEl = mk('span', { textContent: '已停止' }, 'font-size:10px;opacity:.75');
 	controlRow.appendChild(runBtn);
+	controlRow.appendChild(stepBtn);
 	const refreshBtn = mk('button', { textContent: '⟳ 刷新', title: '结构/属性改动没生效时点这里重建映射' }, 'padding:4px 8px;');
 	controlRow.appendChild(refreshBtn);
 	const viewSel = mk('select', {}, 'font-size:10px;margin-left:auto');
@@ -5125,6 +5139,7 @@ function buildSimPanel(show_panel) {
 	sim_ui.runBtn = runBtn;
 	sim_ui.status = statusEl;
 	runBtn.addEventListener('click', () => toggleSim());
+	stepBtn.addEventListener('click', () => simStepOnce());
 	refreshBtn.addEventListener('click', () => { simInvalidate(); simTick(); });
 	root.appendChild(controlRow);
 	root.appendChild(scrollBody);
@@ -5420,6 +5435,46 @@ function simAutoSlots() {
 	return list;
 }
 
+/** 把一个自动槽往前推一格（运行循环与「步进」按钮共用同一套推进规则）。
+ *  返回是否真的有槽被推进。 */
+function simAdvanceSlot(item) {
+	if (!item || !item.slot) return false;
+	const slot = item.slot;
+	if (item.key === 'colors') {
+		const list = (slot.presets && slot.presets.length) ? slot.presets : [Number(slot.value) || 0];
+		slot.presetIndex = ((slot.presetIndex || 0) + 1) % list.length;
+		slot.value = String(list[slot.presetIndex]);
+	} else {
+		let value = num(slot.value) + slot.step * slot.dir;
+		if (slot.rule === 'wrap') { if (value > slot.max) value = slot.min; }
+		else {
+			if (value > slot.max) { value = slot.max; slot.dir = -1; }
+			if (value < slot.min) { value = slot.min; slot.dir = 1; }
+		}
+		slot.value = String(value);
+	}
+	if (slot.els && slot.els.val) slot.els.val.value = slot.value;
+	return true;
+}
+
+/** 「步进」按钮：所有勾选的自动槽各推进一格，立刻求值。不启动循环、不改运行状态。 */
+function simStepOnce() {
+	const autos = simAutoSlots();
+	if (!autos.length) {
+		Blockbench.showQuickMessage('没有勾选要步进的大类：先勾上数值输入（如 cmdata.floats / colors）前面的复选框', 3500);
+		return 0;
+	}
+	let moved = 0;
+	for (const item of autos) { try { if (simAdvanceSlot(item)) moved++; } catch (e) { /* ignore */ } }
+	try { simTick(); } catch (e) { /* ignore */ }
+	try { simApplyTints(); } catch (e) { /* ignore */ }
+	if (moved) {
+		const label = autos.map(item => simSlotLabel(item.key, item.slot)).join('，');
+		try { Blockbench.showQuickMessage('步进：' + label, 2200); } catch (e) { /* ignore */ }
+	}
+	return moved;
+}
+
 function simUpdateRunUi() {
 	if (!sim_ui || !sim_ui.runBtn) return;
 	const running = !!sim.timer;
@@ -5453,17 +5508,7 @@ function toggleSim() {
 				if (!slot.lastTick) slot.lastTick = now;
 				if (now - slot.lastTick < slot.period) continue;
 				slot.lastTick = now;
-				if (item.key === 'colors') {
-					const list = (slot.presets && slot.presets.length) ? slot.presets : [Number(slot.value) || 0];
-					slot.presetIndex = ((slot.presetIndex || 0) + 1) % list.length;
-					slot.value = String(list[slot.presetIndex]);
-				} else {
-					let value = num(slot.value) + slot.step * slot.dir;
-					if (slot.rule === 'wrap') { if (value > slot.max) value = slot.min; }
-					else { if (value > slot.max) { value = slot.max; slot.dir = -1; } if (value < slot.min) { value = slot.min; slot.dir = 1; } }
-					slot.value = String(value);
-				}
-				if (slot.els && slot.els.val) slot.els.val.value = slot.value;
+				simAdvanceSlot(item);
 			}
 			simTick();
 		} catch (error) { /* ignore */ }

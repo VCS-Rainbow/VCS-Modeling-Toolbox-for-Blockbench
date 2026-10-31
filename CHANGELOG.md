@@ -2,6 +2,18 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.70.1
+- **修 range_dispatch 的 property 漏前缀（导出直接失效）**：0.69.14 把 `imda_property` 改成存裸名后，`buildNode` 里那行 `String(group.imda_property || 'minecraft:custom_model_data')` 只在**字段为空**时才带前缀，非空时把 `"property": "custom_model_data"` 原样写进文件 —— 原版不认这个值，整条 range_dispatch 失效。现在统一 `'minecraft:' + 裸名`。
+- **修 range_dispatch 的 entries 阈值顺序**：原版语义是「取最后一个 threshold ≤ 当前值的条目」（Minecraft Wiki 原文：*Will select last entry with threshold less or equal to property value*），也就是**判定顺序 = entries 数组顺序**。分支编号格式写成 `5-i` 时，大纲里 `[5][4][3][2][1]` 算出的阈值是 5,4,3,2,1（递减），原样输出会让每个值都命中列表末尾那条分支。现在导出时按阈值**升序稳定排序**（同值保持大纲顺序）。
+- **新增 `_test_export.js`（29 项断言）**：这是之前完全缺失的一环 —— 以前 300 多条断言只验证「内存里的映射结构」，从来没把文件**写到磁盘**再校验。现在覆盖：
+  - 落盘后逐个 `JSON.parse`（自定义格式化器 `formatMapping` / `formatModel` 是手写拼字符串，语法错只有这一步能发现）；
+  - 定义树逐字段校验（类型白名单、每类允许的字段、`transformation` 四个分量、四元数归一化、`scale` 无 0、`model` 引用格式、`range_dispatch` 阈值严格升序、`select` 的 `when` 必须是数组、`condition` 两侧齐全）；
+  - 物品模型文件（`from`/`to`/`faces`/`display` 数值分量）；
+  - 纹理引用与实际导出文件对账（引用了却没人提供 → 报错）；
+  - 路径命名规范与重复检测；
+  - **真实工程回归**：直接读 `assembly.bbmodel` 备份，跑一遍完整导出并校验（不写回任何文件）。
+- 模拟面板新增「⏭ 步进」按钮：所有勾选的自动槽各推进一格并立刻求值，**不启动循环、不改运行状态**。推进规则抽成 `simAdvanceSlot()`，与「运行」共用同一套。
+- 单测：`_test_sim.js` 350 项 + `_test_export.js` 29 项。
 ## 0.70.0
 - **新增独立元素类型「复调用标签」（`imda_call_tag`）**，不再借用 Locator：
   - `ensureCallTagType()` 用官方 `OutlinerElement.registerType()` 注册，继承 `Locator`（保留 position / rotation / visibility / locked、精灵标记、保存加载链路），因此 `instanceof Locator` 仍成立 —— 插件里所有既有复调用代码（`Locator.all` / `Locator.selected` / `isLocator()`）一行都没改。
