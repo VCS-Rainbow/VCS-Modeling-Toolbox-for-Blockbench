@@ -2,6 +2,20 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.70.0
+- **新增独立元素类型「复调用标签」（`imda_call_tag`）**，不再借用 Locator：
+  - `ensureCallTagType()` 用官方 `OutlinerElement.registerType()` 注册，继承 `Locator`（保留 position / rotation / visibility / locked、精灵标记、保存加载链路），因此 `instanceof Locator` 仍成立 —— 插件里所有既有复调用代码（`Locator.all` / `Locator.selected` / `isLocator()`）一行都没改。
+  - 自己的标题「复调用标签」、图标 `content_copy`、青色 3D 标记精灵、独立右键菜单；`unique_name: false`（同一目标会被多个分支反复调用，重名是常态）。
+  - 名字净化放宽到支持中文（`调用 sacpack1` 不会被抹掉）。
+  - 所有创建入口统一走 `newCallTag()`：复调用选中的分组、转换为复调用标签、生成复调用序列、动画时间轴帧标签。
+  - 新增 Tools 菜单「添加复调用标签」（`addEmptyCallTag()`）：Blockbench 的「添加元素」菜单是**硬编码列表**，插件无法往里插，所以只能自己给入口 —— 在选中分组（或根目录）里建一个空标签，再用「编辑复调用标签」指定目标。
+  - 旧的 Locator 型标签仍然完全可用（`isCallTag()` 两者都认）；新增 Tools 菜单「把旧复调用标签升级为独立元素…」（`upgradeLegacyCallTags()`，保留 uuid / 位姿 / 全部覆盖，可撤销）。
+- **Shift + 左键跨分组连选**（修「1~5 分组 + 6 标签，点 6 再 Shift 点 1 只选中 6 和 1」）：
+  - 根因：Blockbench 自带 Shift 连选只在**同一父级的兄弟数组**里取区间，且分组用 `Group.multi_selected.last()`、元素用 `Outliner.selected.last()` 两条独立记忆 —— 先点标签再点分组时两个 last 对不上，直接退化成普通加选。
+  - 补丁 `installOutlinerRangeSelect()` 接管 `Group#clickSelect` / `OutlinerElement#clickSelect`：改为按**大纲先序表**取闭区间，区间内分组递归选中、元素 `markAsSelected`；锚点由插件自己记录。
+  - 只在**跨父级或区间含复调用标签**时接管，同父级且无标签的情况完全交给 Blockbench 原生逻辑（原生行为本身正确）。
+  - `onunload` 恢复原 `clickSelect`。
+- 单测 350 项（新增 32 项：类型注册/标题/图标/可重名/继承关系、newCallTag 字段、旧标签兼容识别、升级保留 uuid/位姿/覆盖、先序表、正向与反向跨层连选）。
 ## 0.69.14
 - **修「生成复调用序列」的 property 创建后没生效**：`generateCallSequence` 原来把 `imda_property` 写成 `'minecraft:custom_model_data'`（带前缀），而分组属性面板的 select 选项值是裸名（`custom_model_data`）→ 面板认不出选项、回落到「（未设置）」，看上去就是没应用，`compass` / `count` 这些条件字段也全都不显示。现在存裸名。
 - **序列的阈值格式跟属性面板对齐**：对话框新增「分支编号格式（同属性面板）」输入框，复用同一个 `evalThreshold()`（支持 `i` / `2i` / `10+2i` / `0,1,3` / `2:2i`），填了就优先于「起点 + i × 步长」；格式同时写进容器的 `imda_threshold_format`，创建后属性面板显示与导出一致。

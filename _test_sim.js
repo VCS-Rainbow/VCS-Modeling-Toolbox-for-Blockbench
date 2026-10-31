@@ -32,9 +32,81 @@ global.THREE = {
 };
 global.Texture = class { constructor(o) { Object.assign(this, o); } }; Texture.all = [];
 global.Cube = class { constructor(o) { Object.assign(this, o); } addTo(parent) { if (this.parent && Array.isArray(this.parent.children)) { const old = this.parent.children.indexOf(this); if (old >= 0) this.parent.children.splice(old, 1); } if (parent) { this.parent = parent; if (Array.isArray(parent.children) && parent.children.indexOf(this) < 0) parent.children.push(this); } return this; } init() { return this; } remove() { if (this.parent && Array.isArray(this.parent.children)) { const i = this.parent.children.indexOf(this); if (i >= 0) this.parent.children.splice(i, 1); } const j = global.Outliner.root.indexOf(this); if (j >= 0) global.Outliner.root.splice(j, 1); return this; } }; global.Cube.all = [];
-global.Group = class { constructor(o) { Object.assign(this, o); this.children = []; } addTo(parent) { if (this.parent && Array.isArray(this.parent.children)) { const old = this.parent.children.indexOf(this); if (old >= 0) this.parent.children.splice(old, 1); } if (parent) { this.parent = parent; if (Array.isArray(parent.children) && parent.children.indexOf(this) < 0) parent.children.push(this); } else if (Array.isArray(global.Outliner.root) && global.Outliner.root.indexOf(this) < 0) global.Outliner.root.push(this); return this; } init() { return this; } remove() { if (this.parent && Array.isArray(this.parent.children)) { const i = this.parent.children.indexOf(this); if (i >= 0) this.parent.children.splice(i, 1); } const j = global.Outliner.root.indexOf(this); if (j >= 0) global.Outliner.root.splice(j, 1); return this; } }; global.Group.all = [];
-global.Locator = class { constructor(o) { Object.assign(this, o); this.uuid = (o && o.uuid) || ('loc-' + Math.random()); if (global.Locator.all.indexOf(this) < 0) global.Locator.all.push(this); } addTo(parent) { if (this.parent && Array.isArray(this.parent.children)) { const old = this.parent.children.indexOf(this); if (old >= 0) this.parent.children.splice(old, 1); } if (parent) { this.parent = parent; if (Array.isArray(parent.children) && parent.children.indexOf(this) < 0) parent.children.push(this); } else if (Array.isArray(global.Outliner.root) && global.Outliner.root.indexOf(this) < 0) global.Outliner.root.push(this); return this; } init() { return this; } };
+global.Group = class { constructor(o) { Object.assign(this, o); this.children = []; } addTo(parent) { if (this.parent && Array.isArray(this.parent.children)) { const old = this.parent.children.indexOf(this); if (old >= 0) this.parent.children.splice(old, 1); } if (parent) { this.parent = parent; if (Array.isArray(parent.children) && parent.children.indexOf(this) < 0) parent.children.push(this); } else if (Array.isArray(global.Outliner.root) && global.Outliner.root.indexOf(this) < 0) { this.parent = 'root'; global.Outliner.root.push(this); } return this; } init() { return this; } remove() { if (this.parent && Array.isArray(this.parent.children)) { const i = this.parent.children.indexOf(this); if (i >= 0) this.parent.children.splice(i, 1); } const j = global.Outliner.root.indexOf(this); if (j >= 0) global.Outliner.root.splice(j, 1); return this; } getParentArray() { if (!this.parent || this.parent === 'root') return global.Outliner.root; return this.parent.children; } markAsSelected() { this.selected = true; global.Outliner.selected.safePush(this); return this; } multiSelect() { this.selected = true; global.Group.multi_selected.safePush(this); return this; } unselect() { this.selected = false; global.Outliner.selected.remove(this); global.Group.multi_selected.remove(this); return this; } clickSelect() { this.nativeClicks = (this.nativeClicks || 0) + 1; } }; global.Group.all = []; global.Group.multi_selected = [];
+/* 数组扩展：Blockbench 给 Array 打了 safePush / remove / last 等补丁 */
+if (!Array.prototype.safePush) Array.prototype.safePush = function (v) { if (v != null && this.indexOf(v) < 0) this.push(v); return this; };
+if (!Array.prototype.remove) Array.prototype.remove = function (v) { const i = this.indexOf(v); if (i >= 0) this.splice(i, 1); return this; };
+if (!Array.prototype.last) Array.prototype.last = function () { return this[this.length - 1]; };
+if (!Array.prototype.empty) Array.prototype.empty = function () { this.length = 0; return this; };
+
+/* OutlinerElement 基类：Let Locator / CallTag 有统一的选中与树操作 */
+global.OutlinerElement = class OutlinerElement {
+	constructor(o) {
+		Object.assign(this, o || {});
+		if (!this.uuid) this.uuid = 'el-' + Math.random();
+	}
+	addTo(parent) {
+		if (this.parent && Array.isArray(this.parent.children)) {
+			const old = this.parent.children.indexOf(this);
+			if (old >= 0) this.parent.children.splice(old, 1);
+		}
+		if (parent) {
+			this.parent = parent;
+			if (Array.isArray(parent.children) && parent.children.indexOf(this) < 0) parent.children.push(this);
+		} else if (Array.isArray(global.Outliner.root) && global.Outliner.root.indexOf(this) < 0) {
+			this.parent = 'root';
+			global.Outliner.root.push(this);
+		}
+		return this;
+	}
+	init() { return this; }
+	remove() {
+		if (this.parent && Array.isArray(this.parent.children)) {
+			const i = this.parent.children.indexOf(this);
+			if (i >= 0) this.parent.children.splice(i, 1);
+		}
+		const j = global.Outliner.root.indexOf(this);
+		if (j >= 0) global.Outliner.root.splice(j, 1);
+		return this;
+	}
+	getParentArray() {
+		if (this.parent === 'root' || !this.parent) return global.Outliner.root;
+		return this.parent.children;
+	}
+	clickSelect() { this.nativeClicks = (this.nativeClicks || 0) + 1; }
+	markAsSelected(descendants) {
+		this.selected = true;
+		global.Outliner.selected.safePush(this);
+		if (descendants && Array.isArray(this.children)) this.children.forEach(child => child.markAsSelected && child.markAsSelected(true));
+		return this;
+	}
+	unselect() {
+		this.selected = false;
+		global.Outliner.selected.remove(this);
+		return this;
+	}
+};
+global.OutlinerElement.types = {};
+global.OutlinerElement.behavior_overrides = [];
+global.OutlinerElement.registerType = function (ctor, id) {
+	this.types[id] = ctor;
+	ctor.prototype.type = id;
+	if (!ctor.all) ctor.all = [];
+	if (!ctor.selected) ctor.selected = [];
+};
+global.OutlinerElement.ROOT = 'root';
+
+global.Locator = class Locator extends global.OutlinerElement {
+	constructor(o) {
+		super(o);
+		if (!this.uuid || !String(this.uuid).startsWith('el-') === false) this.uuid = (o && o.uuid) || ('loc-' + Math.random());
+		if (global.Locator.all.indexOf(this) < 0) global.Locator.all.push(this);
+	}
+	init() { return this; }
+};
 global.Locator.all = [];
+global.Locator.behavior = { unique_name: true, movable: true, rotatable: true };
+global.Property = class { constructor(target, type, name, options) { global.Properties.push({ target, type, name, options }); } };
 // 记录型 Undo mock：用于断言 initEdit / finishEdit 的 aspects
 global.Undo = {
 	history: [], index: 0, lastInit: null, lastFinish: null,
@@ -1321,6 +1393,111 @@ const afterDrop = instBranch.children.find(n => n && n.__immTempCall);
 eq('熄灭后临时副本被收回（转回复调用标签）', !!afterDrop, false);
 eq('源节点未被改动', instSrc.children.length, 1);
 global.Outliner.root.length = 0;
+
+/* ---------- 复调用标签：独立元素类型 ---------- */
+console.log('\n[复调用标签元素]');
+const CallTagClass = api.ensureCallTagType();
+eq('注册了独立类型', typeof CallTagClass, 'function');
+eq('类型 id', CallTagClass && CallTagClass.prototype.type, api.CALL_TAG_TYPE);
+eq('类型 id 固定为 imda_call_tag', api.CALL_TAG_TYPE, 'imda_call_tag');
+eq('已登记到 OutlinerElement.types', !!(global.OutlinerElement.types || {})[api.CALL_TAG_TYPE], true);
+eq('标题', CallTagClass && CallTagClass.prototype.title, '复调用标签');
+eq('有独立图标', !!(CallTagClass && CallTagClass.prototype.icon), true);
+eq('允许重名（同一目标会被反复调用）', CallTagClass && CallTagClass.behavior && CallTagClass.behavior.unique_name, false);
+eq('继承 Locator（既有复调用代码不用改）', (new CallTagClass({ name: 'x' })) instanceof global.Locator, true);
+
+const tagNode = api.newCallTag({ name: '调用 target', position: [8, 8, 8], rotation: [0, 0, 0], target: 'some-uuid' });
+eq('newCallTag 产出独立类型', api.isCallTagType(tagNode), true);
+eq('newCallTag 不是普通 Locator 标签', api.isLocator(tagNode) && !api.isCallTagType(tagNode), false);
+eq('newCallTag 写入目标', tagNode && tagNode.imda_call_target, 'some-uuid');
+eq('newCallTag 写入位姿', tagNode && tagNode.position, [8, 8, 8]);
+eq('isCallTag 认得新类型', api.isCallTag(tagNode), true);
+
+const plainLocator = new global.Locator({ name: '普通定位点', position: [0, 0, 0], rotation: [0, 0, 0] });
+plainLocator.imda_call_target = '';
+eq('普通定位点不算复调用标签', api.isCallTag(plainLocator), false);
+const legacyTag = new global.Locator({ name: '调用 legacy', position: [0, 0, 0], rotation: [0, 0, 0] });
+legacyTag.imda_call_target = 'legacy-target';
+eq('旧 Locator 标签仍被识别', api.isCallTag(legacyTag), true);
+eq('旧标签不是新类型', api.isCallTagType(legacyTag), false);
+
+/* ---------- 旧标签升级 ---------- */
+console.log('\n[升级旧标签]');
+const upRoot = new global.Group({ name: 'upRoot', imda_type: 'composite', origin: [8, 8, 8] });
+upRoot.addTo();
+const upLegacyA = new global.Locator({ name: '调用 A', position: [1, 2, 3], rotation: [0, 0, 0] });
+upLegacyA.imda_call_target = 'target-a';
+upLegacyA.imda_call_overrides = JSON.stringify({ threshold: '4' });
+upLegacyA.addTo(upRoot);
+const upLegacyB = new global.Locator({ name: '调用 B', position: [4, 5, 6], rotation: [0, 0, 0] });
+upLegacyB.imda_call_target = 'target-b';
+upLegacyB.addTo(upRoot);
+const upPlain = new global.Locator({ name: '普通定位点', position: [0, 0, 0], rotation: [0, 0, 0] });
+upPlain.addTo(upRoot);
+global.Outliner.root.length = 0; global.Outliner.root.push(upRoot);
+global.Group.all = [upRoot];
+const upCount = api.upgradeLegacyCallTags();
+eq('升级了 2 个旧标签', upCount, 2);
+eq('旧标签已从父级移除', upRoot.children.indexOf(upLegacyA) < 0 && upRoot.children.indexOf(upLegacyB) < 0, true);
+eq('普通定位点没被碰', upPlain.parent === upRoot, true);
+const upNewA = upRoot.children.find(n => n && api.isCallTagType(n) && n.imda_call_target === 'target-a');
+const upNewB = upRoot.children.find(n => n && api.isCallTagType(n) && n.imda_call_target === 'target-b');
+eq('新类型标签已生成', !!upNewA && !!upNewB, true);
+eq('保留 uuid', upNewA && upNewA.uuid === upLegacyA.uuid, true);
+eq('保留位姿', upNewA && upNewA.position, [1, 2, 3]);
+eq('保留覆盖', upNewA && upNewA.imda_call_overrides, JSON.stringify({ threshold: '4' }));
+eq('再跑一次没有可升级的', api.upgradeLegacyCallTags(), 0);
+
+/* ---------- Shift 连选：跨分组与标签 ---------- */
+console.log('\n[Shift 连选]');
+const rsRoot = new global.Group({ name: 'rsRoot', imda_type: 'composite' });
+rsRoot.addTo();
+// 1~5 分组 + 6 标签，与用户报告的结构一致
+const rsBranches = [];
+for (let k = 5; k >= 1; k--) {
+	const g = new global.Group({ name: 'branch' + k, imda_type: 'composite' });
+	g.addTo(rsRoot);
+	rsBranches.push(g);
+}
+const rsAnchorTag = api.newCallTag({ name: '调用 tag', position: [0, 0, 0], rotation: [0, 0, 0], target: 'rs-target' });
+rsAnchorTag.addTo(rsRoot);
+global.Outliner.root.length = 0; global.Outliner.root.push(rsRoot);
+global.Group.all = [rsRoot].concat(rsBranches);
+global.Outliner.selected.length = 0;
+global.Group.multi_selected = [];
+// 清掉其它分组选中态
+for (const g of global.Group.all) { g.selected = false; }
+
+const flat = api.outlinerFlatOrder();
+eq('先序表包含 root 与全部子节点', flat[0] === rsRoot && flat.length, 7);
+
+// 模拟：先点标签（单选），再 Shift 点 branch5（= [5] 那一档）
+rsAnchorTag.clickSelect({ which: 1 }, true);
+const anchorSet = api.getRangeSelectState().anchor;
+eq('单选后记录锚点为标签', anchorSet === rsAnchorTag, true);
+
+// 走补丁后的 clickSelect：Shift 点 branch5，应把区间内全部选中
+rsBranches[0].clickSelect({ which: 1, shiftKey: true }, true);
+const selectedGroupNames = (global.Group.multi_selected || []).map(n => n.name);
+eq('区间内分支 1..5 全部被选中', ['branch1', 'branch2', 'branch3', 'branch4', 'branch5'].every(n => selectedGroupNames.indexOf(n) >= 0), true);
+eq('锚点标签仍在选中里', global.Outliner.selected.indexOf(rsAnchorTag) >= 0, true);
+eq('Group.multi_selected 收到 5 个分组', (global.Group.multi_selected || []).length, 5);
+
+// 反向：从最上方的 branch5 单选中，再 Shift 点标签，整段都要选中
+global.Outliner.selected.length = 0;
+for (const g of global.Group.all) { g.selected = false; }
+global.Group.multi_selected = [];
+api.getRangeSelectState().anchor = null;
+rsBranches[0].clickSelect({ which: 1 }, true);           // 先点 branch5（单选）
+eq('反向：单选分支记录锚点', api.getRangeSelectState().anchor === rsBranches[0], true);
+rsAnchorTag.clickSelect({ which: 1, shiftKey: true }, true);
+const reverseNames = (global.Group.multi_selected || []).map(n => n.name);
+eq('反向：Shift 点标签也选中整段', reverseNames.indexOf('branch1') >= 0 && reverseNames.indexOf('branch5') >= 0, true);
+eq('反向：标签本身也被选中', global.Outliner.selected.indexOf(rsAnchorTag) >= 0, true);
+
+global.Outliner.root.length = 0;
+global.Outliner.selected.length = 0;
+global.Group.multi_selected = [];
 /* ---------- 汇总 ---------- */
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);

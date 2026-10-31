@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-10-31 更新 · 当前版本 **0.69.14**
+> 生成时间：2026-10-31 更新 · 当前版本 **0.70.0**
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 > 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉「导出阈值被子级格式覆盖」，0.68.115 修掉「实例化后 export=false 导致整条分支不导出」，0.68.116 修掉「撤销不删除新建节点」的 3 处问题，0.68.117 修掉「枢轴归位把方块挪走」并说明 gizmo 位置规则。
 > **调试入口已升级：可用 `_bbcdp.js` 从终端直连软件内 Console + 全部 Blockbench 事件，见 `_BBCDP.md` 与 0.0.2。**
@@ -210,7 +210,30 @@ Blockbench 的方块网格是「`mesh.position = origin`，顶点相对 origin �
 
 单测 289 项（+6）。
 
-### 0.0.13 复调用序列的 property 与阈值格式（0.69.14）
+### 0.0.15 独立元素类型「复调用标签」+ Shift 跨层连选（0.70.0，2026-10-31）
+
+**用户可以要求**：「加一个单独的『复调用标签』元素，并且使用 Shift+鼠标左键选择的时候可以直接选中」。现象：1~5 分组 + 6 标签，点 6 再 Shift 点 1，只选中 6 和 1，得再点 5 才能带上中间。
+
+**1. 新元素类型（`imda_call_tag`）**
+
+- 官方 API：`OutlinerElement.registerType(Ctor, id)`（见 [参考文档](https://web.blockbench.net/docs/classes/generated_outliner_abstract_outliner_element.OutlinerElement.html)）。它会补 `types[id]`、`prototype.type`、`behavior`、`name`/`export`/`locked`/`scope` 四个 Property、`Ctor.all`/`Ctor.selected` getter，并派发 `register_element_type` 事件。
+- **没提供的部分必须自己写**：`NodePreviewController`（否则没有 mesh，画布上不可见）、`prototype.title/icon/buttons/menu`、Property 面板输入。
+- 实现选择：**继承 `Locator`**。原因：Locator 已经有 position/rotation/visibility/locked 属性、精灵标记渲染、以及 `Format.locators` 下的保存/加载链路；继承后 `instanceof Locator` 仍成立，插件里 30 多处复调用代码零改动。
+- **「添加元素」菜单插不进去**：Blockbench 的 `add_element` Action 里 `side_menu` 是写死的 id 数组（`add_mesh` / `add_cube` / `add_locator` / …），没有注册式扩展点。所以插件自己出一个 Tools 菜单项「添加复调用标签」（`addEmptyCallTag()`）。
+- `ensureCallTagType()` 里做完整注册；`unique_name: false`（同一目标被多分支反复调用，重名是常态）；`name_regex` 放宽以支持中文名（默认净化规则会抹掉「调用」两个字）。
+- 创建入口统一走 `newCallTag()`；`upgradeLegacyCallTags()` 把旧 Locator 标签换成新类型（保留 uuid / 位姿 / 覆盖，可撤销），对应 Tools 菜单「把旧复调用标签升级为独立元素…」。
+- `.bbmodel` 风险已知：新类型写进工程后，**旧版 Blockbench（没有该插件的）会把这类节点静默丢掉**（`fromSave` 走 `OutlinerElement.types[obj.type]`，找不到就 `|| Cube` 兜底/跳过）。测试版不存在跨版本协作，接受。
+
+**2. Shift 跨层连选**
+
+- 根因（读 bundle 源码确认）：原生 `Group#select` 的 Shift 分支用 `this.getParentArray().forEach(...)`，**只在同一父级的兄弟数组里跑**；而且分组比的是 `Group.multi_selected.last()`、元素（`OutlinerElement#select`）比的是 `Outliner.selected.last()` —— 两条独立记忆。先点标签再点分组时两个 last 对不上 → 条件不成立 → 退化成普通加选（就是用户看到的「只选中 6 和 1」）。
+- 补丁 `installOutlinerRangeSelect()`：接管 `Group#clickSelect` 与 `OutlinerElement#clickSelect`。
+  - 锚点由插件自己记（`outlinerRangeSelect.anchor`），单选时重置、连选时保留。
+  - `outlinerFlatOrder()` 把大纲展平成先序表，`outlinerRangeSelectTo(target)` 取闭区间，区间内分组递归选中（`multiSelect()` + 子项 `markAsSelected`）、元素 `markAsSelected`。
+  - **只在跨父级或区间含复调用标签时接管**，同父级且无标签交给原生（原生行为本身是对的）。
+  - `onunload` 用存下来的 `__imdaOriginal` 恢复原方法。
+
+单测 350 项（+32）。
 
 **用户报告**：「生成复调用序列的 property 好像没有在创建时成功应用。阈值的格式参考属性设置里的就行。」
 

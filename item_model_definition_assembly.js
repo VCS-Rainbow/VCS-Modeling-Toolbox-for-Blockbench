@@ -18,11 +18,17 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.69.14';
+const VERSION = '0.70.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
 const MAPPING_TYPES = ['composite', 'inline', 'model', 'internal', 'range_dispatch', 'range_dispatch_timeline', 'condition', 'select', 'empty'];
+/** 复调用标签的独立元素类型 id（在 Outliner 里与方块/定位点/分组并列） */
+const CALL_TAG_TYPE = 'imda_call_tag';
+/** 复调用标签类：在 ensureCallTagType() 里赋值（依赖 Blockbench 运行时） */
+let CallTag = null;
+/** 复调用标签的 3D 标记贴图（与定位点区分色） */
+let callTagSpriteMap = null;
 const MANIFEST = '.imm-assembly-manifest.json';
 
 const BLOCK_DISPLAY = {
@@ -68,6 +74,14 @@ const labelOf = (node) => (node && node.name) ? node.name : 'unnamed';
 const isGroup = (node) => typeof Group !== 'undefined' && node instanceof Group;
 const isCube = (node) => typeof Cube !== 'undefined' && node instanceof Cube;
 const isLocator = (node) => typeof Locator !== 'undefined' && node instanceof Locator;
+/** 复调用标签：独立的元素类型（imda_call_tag），不再借用 Locator。
+ *  旧工程里的复调用标签仍是 Locator，靠 imda_call_target 识别，两者都要认。
+ *  注意 CallTag 继承 Locator，所以 `isLocator()` 对它是 true ——
+ *  现有所有复调用相关代码路径（Locator.all / Locator.selected / isLocator 判断）都能继续工作。 */
+const isCallTagType = (node) => !!node && (String(node.type || '') === CALL_TAG_TYPE || (!!CallTag && node instanceof CallTag));
+const isCallTag = (node) => isCallTagType(node) || (isLocator(node) && !!String(node.imda_call_target || '').trim());
+/** 任何“能当复调用标签用”的节点（新类型 + 旧 Locator 标签） */
+const isCallLike = (node) => isLocator(node) || isCallTagType(node);
 const num = (v) => Number(v) || 0;
 
 function sanitizePath(value, fallback) {
@@ -265,6 +279,173 @@ function migrateLegacyAll() {
 	for (const locator of ((typeof Locator !== 'undefined' && Locator.all) ? Locator.all : [])) total += migrateLegacyNode(locator);
 	for (const cube of ((typeof Cube !== 'undefined' && Cube.all) ? Cube.all : [])) total += migrateLegacyNode(cube);
 	return total;
+}
+
+/** 复调用标签元素类型：注册一次，独立于 Locator 出现在「添加元素」菜单里。
+ *
+ *  为什么继承 Locator：Locator 已经拥有 position/rotation/visibility/locked、
+ *  精灵标记渲染、以及 `Format.locators` 开关下的保存/加载链路；
+ *  继承后 `instanceof Locator` 仍成立，插件里所有既有的复调用代码
+ *  （`Locator.all` / `Locator.selected` / `isLocator()`）一行都不用改。
+ *  独立类型带来的好处：Outliner 里有自己的名字/图标/条件菜单，
+ *  并且「Shift 连选」时能被当作区间端点（见 installOutlinerRangeSelect）。 */
+function ensureCallTagType() {
+	if (CallTag) return CallTag;
+	if (typeof Locator === 'undefined' || typeof OutlinerElement === 'undefined') return null;
+	CallTag = class CallTag extends Locator {
+		constructor(data, uuid) {
+			super(data, uuid);
+			// Locator 的构造会把 name 落到 Property 默认值（'locator'），这里换成标签语义的默认名
+			if (!data || !data.name) this.name = '调用';
+		}
+		// Locator.init() 会把根级的 Locator 塞进 Group.first_selected，这里保持同样行为
+		init() {
+			if (this.parent == Outliner.ROOT && typeof Group !== 'undefined' && Group.first_selected) {
+				this.addTo(Group.first_selected);
+			}
+			return super.init();
+		}
+	};
+	CallTag.prototype.type = CALL_TAG_TYPE;
+	CallTag.prototype.title = '复调用标签';
+	CallTag.prototype.icon = 'content_copy';
+	CallTag.prototype.visibility = true;
+	// 中文名很常见（'调用 sacpack1'），放宽名字净化规则，避免读写工程时被抹掉
+	CallTag.prototype.name_regex = () => 'a-zA-Z0-9_\\- \u4e00-\u9fa5';
+	// 允许重名：同一个目标会被多个分支反复调用，名字重复是常态
+	CallTag.behavior = Object.assign({}, Locator.behavior || {}, { unique_name: false });
+	if (typeof Outliner !== 'undefined' && Outliner.buttons) {
+		CallTag.prototype.buttons = [Outliner.buttons.export, Outliner.buttons.locked, Outliner.buttons.visibility];
+	}
+	try {
+		// 继承来的 menu 是 Locator 共享的同一个对象，先克隆一份再交给插件的右键菜单流程
+		const base = (Locator.prototype && Locator.prototype.menu) || null;
+		if (base && typeof Menu !== 'undefined') {
+			const structure = Array.isArray(base.structure) ? base.structure.slice() : [];
+			CallTag.prototype.menu = new Menu(structure);
+		}
+	} catch (e) { /* ignore */ }
+	try { OutlinerElement.registerType(CallTag, CALL_TAG_TYPE); } catch (e) { console.warn('[装配] 注册复调用标签类型失败', e); return null; }
+	// 3D 标记：沿用定位点贴图，但染成青色，方便和普通定位点区分
+	try {
+		if (typeof THREE !== 'undefined' && THREE.TextureLoader) {
+			callTagSpriteMap = new THREE.TextureLoader().load('assets/locator.png');
+			if (THREE.NearestFilter) callTagSpriteMap.magFilter = callTagSpriteMap.minFilter = THREE.NearestFilter;
+		}
+	} catch (e) { /* ignore */ }
+	try {
+		if (Locator.preview_controller && typeof NodePreviewController !== 'undefined') {
+			new NodePreviewController(CallTag, {
+				setup(element) {
+					let mesh = new THREE.Object3D();
+					Project.nodes_3d[element.uuid] = mesh;
+					mesh.name = element.uuid;
+					mesh.type = element.type;
+					mesh.isElement = true;
+					mesh.visible = element.visibility;
+					mesh.rotation.order = Format.euler_order;
+					const material = new THREE.SpriteMaterial({
+						map: callTagSpriteMap,
+						alphaTest: 0.1,
+						sizeAttenuation: false,
+						color: 0x4fd1ff,
+					});
+					const sprite = new THREE.Sprite(material);
+					sprite.name = element.uuid;
+					sprite.type = element.type;
+					sprite.isElement = true;
+					sprite.no_export = true;
+					mesh.add(sprite);
+					mesh.sprite = sprite;
+					this.updateTransform(element);
+					this.dispatchEvent('setup', { element });
+				},
+				updateTransform(element) {
+					NodePreviewController.prototype.updateTransform.call(this, element);
+					this.updateWindowSize(element);
+				},
+				updateSelection(element) {
+					const { mesh } = element;
+					if (mesh && mesh.sprite) {
+						mesh.sprite.material.color.set(element.selected ? 0x4fd1ff : 0x2b8fb3);
+						mesh.sprite.material.depthTest = !element.selected;
+						mesh.renderOrder = element.selected ? 100 : 0;
+						mesh.sprite.visible = !!Canvas.show_element_markers;
+					}
+					this.dispatchEvent('update_selection', { element });
+				},
+				updateWindowSize(element) {
+					const size = 0.4 * Preview.selected.camera.fov / Preview.selected.height;
+					if (element.mesh && element.mesh.sprite) element.mesh.sprite.scale.set(size, size, size);
+				},
+			});
+		}
+	} catch (e) { console.warn('[装配] 复调用标签预览控制器注册失败', e); }
+	console.log('[装配] 已注册复调用标签元素类型 ' + CALL_TAG_TYPE);
+	return CallTag;
+}
+
+/** 新建复调用标签（所有入口统一走这里，旧工程读进来的 Locator 标签不受影响） */
+function newCallTag(data) {
+	const tag = ensureCallTagType();
+	if (!tag) {
+		// 极端兜底：Blockbench 版本不支持自定义元素类型时退回 Locator
+		return (typeof Locator !== 'undefined') ? new Locator(data) : null;
+	}
+	const {
+		name, position, rotation, ignore_inherited_scale, target, overrides,
+	} = data || {};
+	const node = new tag({
+		name: name || '调用',
+		position: Array.isArray(position) ? position.slice() : [0, 0, 0],
+		rotation: Array.isArray(rotation) ? rotation.slice() : [0, 0, 0],
+		ignore_inherited_scale: ignore_inherited_scale !== false,
+	});
+	if (target != null) node.imda_call_target = String(target);
+	if (overrides != null) node.imda_call_overrides = (typeof overrides === 'string') ? overrides : JSON.stringify(overrides);
+	return node;
+}
+
+/** 把旧工程里的 Locator 型复调用标签升级成独立类型（保留 uuid 与全部覆盖字段）。 */
+function upgradeLegacyCallTags() {
+	const tag = ensureCallTagType();
+	if (!tag) return 0;
+	const legacy = [];
+	const walk = (nodes) => {
+		for (const node of (nodes || [])) {
+			if (isGroup(node)) walk(node.children);
+			else if (isLocator(node) && !isCallTagType(node) && String(node.imda_call_target || '').trim()) legacy.push(node);
+		}
+	};
+	try { walk((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []); } catch (e) { /* ignore */ }
+	if (!legacy.length) return 0;
+	let done = 0;
+	try { Undo.initEdit({ outliner: true, elements: legacy.slice() }); } catch (e) { /* ignore */ }
+	const created = [];
+	for (const old of legacy) {
+		try {
+			const parent = old.parent && isGroup(old.parent) ? old.parent : null;
+			const siblings = parent ? parent.children : ((typeof Outliner !== 'undefined' && Outliner) ? Outliner.root : []);
+			const at = siblings.indexOf(old);
+			const node = new tag({ name: old.name, position: (old.position || [0, 0, 0]).slice(), rotation: (old.rotation || [0, 0, 0]).slice(), ignore_inherited_scale: old.ignore_inherited_scale !== false });
+			node.uuid = old.uuid;
+			node.imda_call_target = String(old.imda_call_target || '');
+			for (const key of ['imda_call_overrides', 'imda_call_threshold', 'imda_call_property', 'imda_call_index', 'imda_call_scale', 'imda_frame', 'imda_pose']) {
+				if (old[key] !== undefined) node[key] = old[key];
+			}
+			node.export = old.export !== false;
+			node.visibility = old.visibility !== false;
+			addAndInit(node, parent);
+			if (at >= 0) { const now = siblings.indexOf(node); if (now >= 0) siblings.splice(now, 1); siblings.splice(Math.min(at, siblings.length), 0, node); }
+			try { old.remove(); } catch (e) { /* ignore */ }
+			created.push(node);
+			done++;
+		} catch (error) { console.warn('[装配] 升级复调用标签失败', error); }
+	}
+	try { Undo.finishEdit('升级复调用标签为独立元素类型', { outliner: true, elements: created }); } catch (e) { /* ignore */ }
+	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+	try { Project.saved = false; } catch (e) { /* ignore */ }
+	return done;
 }
 
 /** 在 Blockbench 原生动画属性对话框里追加时间轴 range_dispatch 设置 */
@@ -1448,7 +1629,8 @@ function bakeTimelineToCallTags() {
 	const createdLocators = [];
 	for (let frame = 0; frame < sampled.poses.length; frame++) {
 		try {
-			const locator = new Locator({ name: 'frame ' + frame, position: [8, 8, 8], rotation: [0, 0, 0] });
+			const locator = newCallTag({ name: 'frame ' + frame, position: [8, 8, 8], rotation: [0, 0, 0] });
+			if (!locator) continue;
 			addAndInit(locator, timeline);
 			locator.imda_frame = frame;
 			locator.imda_pose = JSON.stringify(sampled.poses[frame]);
@@ -2634,6 +2816,32 @@ function editGroupProps() {
 }
 
 /** 从分组创建模型：烘焙组内方块、写到资源包 models/item、分组改为引用并记录居中补偿 */
+/** 在选中的分组（或根目录）里新建一个空复调用标签，之后用「编辑复调用标签」指定目标。
+ *  Blockbench 的「添加元素」菜单是硬编码列表，插件无法往里插，只能由自己给一个入口。 */
+function addEmptyCallTag() {
+	if (!ensureCallTagType()) {
+		Blockbench.showMessageBox({ title: '无法创建', message: '当前 Blockbench 版本不支持注册自定义元素类型。', icon: 'warning' });
+		return;
+	}
+	const parent = pickTargetGroup() || (Group.first_selected || null);
+	const origin = parent && Array.isArray(parent.origin) ? parent.origin.slice() : [8, 8, 8];
+	const rotation = parent && Array.isArray(parent.rotation) ? parent.rotation.slice() : [0, 0, 0];
+	try { Undo.initEdit({ outliner: true, elements: [] }); } catch (e) { /* ignore */ }
+	let tag = null;
+	try {
+		tag = newCallTag({ name: '调用', position: origin, rotation, ignore_inherited_scale: true });
+		if (tag) { addAndInit(tag, parent); try { tag.select(); } catch (e) { /* ignore */ } }
+	} catch (error) { console.error('[装配] 创建复调用标签失败', error); }
+	try { Undo.finishEdit('添加复调用标签', { outliner: true, elements: tag ? [tag] : [] }); } catch (e) { /* ignore */ }
+	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+	try { Project.saved = false; } catch (e) { /* ignore */ }
+	simInvalidate();
+	if (tag) {
+		Blockbench.showQuickMessage('已添加复调用标签，右键「编辑复调用标签…」指定目标', 4000);
+		try { if (settings && settings.create_rename && settings.create_rename.value) tag.rename(); } catch (e) { /* ignore */ }
+	}
+}
+
 function callSelectedGroup() {
 	if (typeof Locator === 'undefined') {
 		Blockbench.showMessageBox({ title: '不支持定位点', message: '当前 Blockbench 版本没有 Locator。', icon: 'warning' });
@@ -2651,7 +2859,8 @@ function callSelectedGroup() {
 	const createdLocators = [];
 	for (const group of groups) {
 		try {
-			const locator = new Locator({ name: '调用 ' + labelOf(group), position: (group.origin || [0, 0, 0]).slice(), rotation: (group.rotation || [0, 0, 0]).slice(), ignore_inherited_scale: true });
+			const locator = newCallTag({ name: '调用 ' + labelOf(group), position: (group.origin || [0, 0, 0]).slice(), rotation: (group.rotation || [0, 0, 0]).slice(), ignore_inherited_scale: true });
+			if (!locator) continue;
 			if (group.parent) locator.addTo(group.parent); else locator.addTo();
 			try { locator.init(); } catch (e) { /* ignore */ }
 			locator.imda_call_target = group.uuid;
@@ -2869,7 +3078,8 @@ function generateCallSequence(options) {
 				const position = sourceGroup ? (sourceGroup.origin || [0, 0, 0]).slice() : (Array.isArray(item.position) ? item.position.slice() : [0, 0, 0]);
 				const rotation = sourceGroup ? (sourceGroup.rotation || [0, 0, 0]).slice() : (Array.isArray(item.rotation) ? item.rotation.slice() : [0, 0, 0]);
 				const targetGroup = sourceGroup || (((typeof Group !== 'undefined' && Group.all) ? Group.all : []).find(g => g && g.uuid === String(item.imda_call_target || '').trim()) || null);
-				const locator = new Locator({ name: sourceGroup ? ('调用 ' + labelOf(sourceGroup)) : (item.name || ('调用 ' + labelOf(item))), position, rotation, ignore_inherited_scale: true });
+				const locator = newCallTag({ name: sourceGroup ? ('调用 ' + labelOf(sourceGroup)) : (item.name || ('调用 ' + labelOf(item))), position, rotation, ignore_inherited_scale: true });
+				if (!locator) continue;
 				addAndInit(locator, node);
 				generatedLocators.push(locator);
 				locator.imda_call_target = targetGroup ? targetGroup.uuid : String(item.imda_call_target || '').trim();
@@ -3041,7 +3251,8 @@ function convertSelectedGroupsToCallTags() {
 	let converted = 0;
 	for (const group of groups) {
 		try {
-			const locator = new Locator({ name: '调用 ' + labelOf(group), position: (group.origin || [0, 0, 0]).slice(), rotation: (group.rotation || [0, 0, 0]).slice(), ignore_inherited_scale: true });
+			const locator = newCallTag({ name: '调用 ' + labelOf(group), position: (group.origin || [0, 0, 0]).slice(), rotation: (group.rotation || [0, 0, 0]).slice(), ignore_inherited_scale: true });
+			if (!locator) continue;
 			addAndInit(locator, group.parent || null);
 			locator.imda_call_target = group.uuid;
 			group.export = false;
@@ -5432,6 +5643,147 @@ let locatorMenuAttached = false;
 let cubeMenuAttached = false;
 let menuActions = {};
 
+/* ============================== 大纲 Shift 连选 ============================== */
+/** Blockbench 自带 Shift 连选的两个限制，导致「1~5 分组 + 6 标签，点 6 再 Shift 点 1」
+ *  只会选中 6 和 1：
+ *  1. **只在同一父级的兄弟数组里取区间**（`getParentArray().forEach`），
+ *     而分组走 `Group.multi_selected.last()`、元素走 `Outliner.selected.last()`，
+ *     两条记忆是分开的 —— 先点标签再点分组时，两个 last 根本对不上，直接退化成普通加选。
+ *  2. 分组那条分支里 `s.multiSelect()` 会**递归选中所有后代**，标签那条不会，
+ *     混选时区间两端的行为不一致。
+ *  这个补丁改成「按大纲可视顺序取区间」：把整个大纲展平成先序列表，
+ *  用插件自己记的锚点（上一次单选/连选点到的节点）和当前节点算出闭区间，
+ *  区间内的分组与元素一律按「分组递归选中、元素 markAsSelected」处理。
+ *  只接管**跨父级或含复调用标签**的情形，其余情况完全交给 Blockbench 原生逻辑。 */
+const outlinerRangeSelect = {
+	anchor: null,       // 上一次点击落下的节点（连选起点）
+	lookup: null,       // uuid → node
+	order: null,        // 先序展平表
+	patching: false,
+	pendingFinish: false,
+};
+
+/** 大纲先序展平：只收 Group 与其子孙，顺序与 outliner 面板一致（折叠的也算，区间要跨层级） */
+function outlinerFlatOrder() {
+	const list = [];
+	const walk = (nodes) => {
+		for (const node of (nodes || [])) {
+			list.push(node);
+			if (isGroup(node)) walk(node.children);
+		}
+	};
+	try { walk((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []); } catch (e) { /* ignore */ }
+	return list;
+}
+
+function outlinerNodeSelected(node) {
+	if (!node) return false;
+	if (isGroup(node)) { try { return (Group.multi_selected || []).indexOf(node) >= 0; } catch (e) { return !!node.selected; } }
+	try { return Outliner.selected.indexOf(node) >= 0; } catch (e) { return !!node.selected; }
+}
+
+/** 区间连选：把 [from, to] 之间（按先序表）的所有分组与元素都选上。
+ *  返回真正被新选中的节点数；0 表示这个情形不该由我们接管。 */
+function outlinerRangeSelectTo(target) {
+	const order = outlinerFlatOrder();
+	const anchor = outlinerRangeSelect.anchor;
+	if (!anchor) return 0;
+	const a = order.indexOf(anchor);
+	const b = order.indexOf(target);
+	if (a < 0 || b < 0) return 0;
+	const from = Math.min(a, b);
+	const to = Math.max(a, b);
+	const touchingCallTag = order.slice(from, to + 1).some(n => isCallTagType(n));
+	// 同一父级、且区间里没有复调用标签 → 交给原生逻辑（原生行为本身是对的）
+	const sameParent = (anchor.parent || null) === (target.parent || null);
+	if (sameParent && !touchingCallTag) return 0;
+	let added = 0;
+	try { Undo.initSelection(); } catch (e) { /* ignore */ }
+	for (let i = from; i <= to; i++) {
+		const node = order[i];
+		if (!node || node.locked) continue;
+		if (isGroup(node)) {
+			if (!node.selected) added++;
+			node.selected = true;
+			try { if (typeof node.multiSelect === 'function') node.multiSelect(); } catch (e) { /* ignore */ }
+			try { (Group.multi_selected || []).safePush(node); } catch (e) { /* ignore */ }
+			for (const child of (node.children || [])) {
+				if (child.locked) continue;
+				if (!child.selected) added++;
+				try { child.markAsSelected(true); } catch (e) { /* ignore */ }
+			}
+		} else {
+			if (outlinerNodeSelected(node)) continue;
+			added++;
+			try { node.markAsSelected(true); } catch (e) { /* ignore */ }
+			try { Outliner.selected.safePush(node); } catch (e) { /* ignore */ }
+		}
+	}
+	try { updateSelection(); } catch (e) { /* ignore */ }
+	try { TickUpdates.selection = true; } catch (e) { /* ignore */ }
+	// 补一条撤销记录（原生 clickSelect 已经在 initSelection 之后被我们跳过，这里自己收尾）
+	outlinerRangeSelect.pendingFinish = true;
+	return added;
+}
+
+/** 接管 Group#clickSelect 与 OutlinerElement#clickSelect 的 Shift 分支 */
+function installOutlinerRangeSelect() {
+	if (outlinerRangeSelect.patching) return;
+	if (typeof Group === 'undefined' || typeof OutlinerElement === 'undefined') return;
+	outlinerRangeSelect.patching = true;
+	const isImda = () => { try { return Format && Format.id === FORMAT_ID; } catch (e) { return false; } };
+	/** 统一判断“这次点击要不要走区间连选” */
+	const shouldRange = (node, event, outlinerClick) => {
+		if (!isImda() || !outlinerClick || !event) return false;
+		if (!(event.shiftKey === true || (typeof Pressing !== 'undefined' && Pressing.overrides && Pressing.overrides.shift))) return false;
+		if (typeof Modes !== 'undefined' && Modes.animate) return false;
+		const anchor = outlinerRangeSelect.anchor;
+		if (!anchor || anchor === node) return false;
+		// 锚点必须还在文档里，否则按普通加选处理
+		return outlinerFlatOrder().indexOf(anchor) >= 0;
+	};
+	const wrap = (proto, label) => {
+		const original = proto && proto.clickSelect;
+		if (typeof original !== 'function' || original.__imdaRange) return;
+		const patched = function (event, outlinerClick) {
+			try {
+				if (shouldRange(this, event, outlinerClick) && outlinerRangeSelectTo(this) > 0) {
+					outlinerRangeSelect.anchor = this;
+					try { Undo.finishSelection('Select elements'); } catch (e) { /* ignore */ }
+					return this;
+				}
+			} catch (e) { /* 出错就走原生 */ }
+			const result = original.call(this, event, outlinerClick);
+			// 记录锚点：只有“单选”（不带 Shift/Ctrl）才重置锚点，连选时保留起点
+			try {
+				const multi = event && (event.shiftKey || event.ctrlKey || event.metaKey || (typeof Pressing !== 'undefined' && Pressing.overrides && (Pressing.overrides.shift || Pressing.overrides.ctrl)));
+				if (!multi) outlinerRangeSelect.anchor = this;
+				else if (!outlinerRangeSelect.anchor) outlinerRangeSelect.anchor = this;
+			} catch (e) { /* ignore */ }
+			return result;
+		};
+		patched.__imdaRange = true;
+		patched.__imdaOriginal = original;
+		proto.clickSelect = patched;
+		try { console.log('[装配] 已接管 ' + label + ' 的 Shift 连选'); } catch (e) { /* ignore */ }
+	};
+	wrap(Group.prototype, 'Group');
+	wrap(OutlinerElement.prototype, 'OutlinerElement');
+	outlinerRangeSelect.patching = false;
+}
+
+function uninstallOutlinerRangeSelect() {
+	outlinerRangeSelect.anchor = null;
+	const restore = (proto) => {
+		try {
+			const patched = proto && proto.clickSelect;
+			if (patched && patched.__imdaRange && typeof patched.__imdaOriginal === 'function') proto.clickSelect = patched.__imdaOriginal;
+		} catch (e) { /* ignore */ }
+	};
+	restore(typeof Group !== 'undefined' ? Group.prototype : null);
+	restore(typeof OutlinerElement !== 'undefined' ? OutlinerElement.prototype : null);
+}
+
 /** 右键菜单用的动作副本：共用 click，但带自己的显示条件（不同节点类型出现不同项） */
 function menuVariant(base, id, condition) {
 	if (!base) return null;
@@ -5449,12 +5801,13 @@ function isImdaFormat() {
 	try { return typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID; } catch (e) { return false; }
 }
 function pickTargetLocator() {
-	try { if (typeof Locator !== 'undefined' && Locator.selected && Locator.selected.length) return Locator.selected[0]; } catch (e) { /* ignore */ }
-	try { const hit = (Outliner.selected || []).filter(isLocator); if (hit.length) return hit[0]; } catch (e) { /* ignore */ }
+	try { if (typeof CallTag !== 'undefined' && CallTag && CallTag.selected && CallTag.selected.length) return CallTag.selected[0]; } catch (e) { /* ignore */ }
+	try { if (typeof Locator !== 'undefined' && Locator && Locator.selected && Locator.selected.length) return Locator.selected[0]; } catch (e) { /* ignore */ }
+	try { const hit = (Outliner.selected || []).filter(isCallLike); if (hit.length) return hit[0]; } catch (e) { /* ignore */ }
 	return null;
 }
 function isCallTagNode(node) {
-	return !!node && isLocator(node) && !!String(node.imda_call_target || '').trim();
+	return !!node && isCallLike(node) && !!String(node.imda_call_target || '').trim();
 }
 /** 分组类型判定（range_dispatch / condition / select / model / composite / inline …） */
 function targetGroupTypeIn(types) {
@@ -5502,25 +5855,30 @@ function attachGroupMenu() {
 			}
 		}
 	} catch (error) { /* ignore */ }
-	// 复调用标签右键：只有真正的复调用标签才显示实例化/编辑
+	// 复调用标签右键：只有真正的复调用标签才显示实例化/编辑。
+	// 新类型 CallTag 与旧 Locator 标签各有自己的 menu 对象，两个都要挂。
+	const attachCallMenu = (menu, label) => {
+		try {
+			if (!menu || typeof menu.addAction !== 'function' || !actions.editCall) return false;
+			cleanByPrefix(menu);
+			menuActions['instantiateThis:' + label] = menuVariant(actions.instantiateThis, 'imda_menu_instantiate_this', () => isImdaFormat() && isCallTagNode(pickTargetLocator()));
+			menuActions['editCall:' + label] = menuVariant(actions.editCall, 'imda_menu_edit_call', () => isImdaFormat() && isCallTagNode(pickTargetLocator()));
+			menuActions['extractPoseLoc:' + label] = menuVariant(actions.extractPose, 'imda_menu_extract_pose_loc', () => isImdaFormat() && !!pickTargetLocator());
+			menuActions['applyPoseLoc:' + label] = menuVariant(actions.applyPose, 'imda_menu_apply_pose_loc', () => isImdaFormat() && !!pickTargetLocator());
+			addSeparator(menu);
+			menu.addAction(menuActions['instantiateThis:' + label]);
+			menu.addAction(menuActions['editCall:' + label]);
+			menu.addAction(menuActions['extractPoseLoc:' + label]);
+			menu.addAction(menuActions['applyPoseLoc:' + label]);
+			console.log('[装配] 已重排' + label + '右键菜单（按目标条件显示）');
+			return true;
+		} catch (error) { return false; }
+	};
 	try {
-		const menu = (typeof Locator !== 'undefined' && Locator.prototype) ? Locator.prototype.menu : null;
-		if (menu && typeof menu.addAction === 'function' && actions.editCall) {
-			{
-				cleanByPrefix(menu);
-				menuActions.instantiateThis = menuVariant(actions.instantiateThis, 'imda_menu_instantiate_this', () => isImdaFormat() && isCallTagNode(pickTargetLocator()));
-				menuActions.editCall = menuVariant(actions.editCall, 'imda_menu_edit_call', () => isImdaFormat() && isCallTagNode(pickTargetLocator()));
-				menuActions.extractPoseLoc = menuVariant(actions.extractPose, 'imda_menu_extract_pose_loc', () => isImdaFormat() && !!pickTargetLocator());
-				menuActions.applyPoseLoc = menuVariant(actions.applyPose, 'imda_menu_apply_pose_loc', () => isImdaFormat() && !!pickTargetLocator());
-				addSeparator(menu);
-				menuActions.instantiateThis && menu.addAction(menuActions.instantiateThis);
-				menuActions.editCall && menu.addAction(menuActions.editCall);
-				menu.addAction(menuActions.extractPoseLoc);
-				menu.addAction(menuActions.applyPoseLoc);
-				locatorMenuAttached = true;
-				console.log('[装配] 已重排复调用标签右键菜单（按目标条件显示）');
-			}
-		}
+		if (attachCallMenu((typeof CallTag !== 'undefined' && CallTag && CallTag.prototype) ? CallTag.prototype.menu : null, '复调用标签')) locatorMenuAttached = true;
+	} catch (error) { /* ignore */ }
+	try {
+		if (attachCallMenu((typeof Locator !== 'undefined' && Locator.prototype) ? Locator.prototype.menu : null, '定位点')) locatorMenuAttached = true;
 	} catch (error) { /* ignore */ }
 	// 方块右键：位姿提取/应用（方块也能作为来源）
 	try {
@@ -5578,6 +5936,8 @@ Plugin.register('item_model_definition_assembly', {
 			catch (error) { console.warn('[装配] 菜单挂载失败：' + path, error); }
 		};
 		try { registerProperties(); } catch (error) { console.error('[装配] 属性注册失败', error); }
+		try { ensureCallTagType(); } catch (error) { console.error('[装配] 复调用标签类型注册失败', error); }
+		try { installOutlinerRangeSelect(); } catch (error) { console.error('[装配] 区间选择补丁失败', error); }
 		ensurePackVersion();
 
 		format_object = new ModelFormat(FORMAT_ID, {
@@ -5631,17 +5991,18 @@ Plugin.register('item_model_definition_assembly', {
 		actions.zip = new Action('imda_export_zip', { name: '导出装配资源包 (zip)', description: 'items + models + textures', icon: 'archive', category: 'file', condition, click: exportZip });
 		actions.merge = new Action('imda_merge_pack', { name: '合并到资源包…', description: '直接写入资源包并覆盖旧文件；默认快捷键 F5', icon: 'folder_open', category: 'file', condition, keybind: (typeof Keybind !== 'undefined') ? new Keybind({ key: 116 }) : undefined, click: mergeToPack });
 		actions.import = new Action('imda_import_model', { name: '导入引用模型（当前分组）', description: '按 imda_model 从资源包工程导入 Java 模型为方块', icon: 'file_download', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const g = pickTargetGroup(); if (!g) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } if (!String(g.imda_model || '').trim()) { Blockbench.showMessageBox({ title: '没有引用模型', message: '该分组没有填写 imda_model（引用模型）。', icon: 'info' }); return; } importModelReference(g); } });
-		actions.call = new Action('imda_call_group', { name: '复调用选中的分组', description: '在分组枢轴处创建复调用标签（Locator），导出时替换为目标分组', icon: 'content_copy', category: 'tools', condition, click: callSelectedGroup });
+		actions.call = new Action('imda_call_group', { name: '复调用选中的分组', description: '在分组枢轴处创建复调用标签，导出时替换为目标分组', icon: 'content_copy', category: 'tools', condition, click: callSelectedGroup });
+		actions.addCallTag = new Action('imda_add_call_tag', { name: '添加复调用标签', description: '在选中分组（或根目录）里新建一个空复调用标签，再用「编辑复调用标签」指定目标', icon: 'add', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: addEmptyCallTag });
 	actions.bakeTimeline = new Action('imda_bake_timeline', { name: '解析动画时间轴（写入帧标签，旧流程）', description: '按项目 FPS 采样当前动画，生成 range_dispatch(timeline) 分组与逐帧 Locator；导出时也会自动采样，一般不需要手动执行', icon: 'timeline', category: 'tools', condition: () => typeof Animation !== 'undefined' && Animation && (Animation.selected || (Array.isArray(Animation.all) && Animation.all.length)), click: () => bakeTimelineToCallTags() });
 	actions.removeTimeline = new Action('imda_remove_timeline', { name: '移除动画时间线复调用标签', description: '删除项目里所有 range_dispatch(timeline) 分组及其 Locator 帧标签', icon: 'delete', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner && Outliner.root.some(n => isGroup(n) && String(n.imda_type || '') === 'range_dispatch_timeline')), click: () => removeTimelineTags() });
 	actions.instantiateCalls = new Action('imda_instantiate_calls', { name: '实例化所有复调用标签', description: '把复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => !!(typeof Outliner !== 'undefined' && Outliner), click: () => instantiateCallTags() });
-		actions.instantiateSelected = new Action('imda_instantiate_selected_calls', { name: '实例化选中的复调用标签', description: '把当前选中的复调用 Locator 替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && Locator.selected && Locator.selected.some(l => String(l.imda_call_target || '').trim())), click: () => instantiateCallTags(selectedCallTags()) });
+		actions.instantiateSelected = new Action('imda_instantiate_selected_calls', { name: '实例化选中的复调用标签', description: '把当前选中的复调用标签替换为真实的分组/模型节点（可撤销）', icon: 'content_copy', category: 'tools', condition: () => selectedCallTags().length > 0, click: () => instantiateCallTags(selectedCallTags()) });
 		actions.instantiateThis = new Action('imda_instantiate_this_call', {
 			name: '实例化同组复调用标签',
-			description: '把当前选中的复调用 Locator，以及同一父分组下的其他复调用 Locator 一起替换为真实分组（可撤销）',
+			description: '把当前选中的复调用标签，以及同一父分组下的其他复调用标签一起替换为真实分组（可撤销）',
 			icon: 'content_copy',
 			category: 'tools',
-			condition: () => (typeof Locator !== 'undefined' && Locator && selectedCallTags().length > 0),
+			condition: () => selectedCallTags().length > 0,
 			click: () => instantiateCallTags(expandCallTagSiblings(selectedCallTags())),
 		});
 	actions.animationTimeline = new Action('imda_animation_timeline', { name: '时间轴属性…', description: '设置该动画导出时间轴使用的 range_dispatch property 与 index', icon: 'timeline', category: 'animation', condition: () => typeof Animation !== 'undefined' && !!Animation.selected, click: () => showAnimationTimelineDialog() });
@@ -5658,7 +6019,8 @@ Plugin.register('item_model_definition_assembly', {
 		actions.props = new Action('imda_group_props', { name: '编辑分组映射属性…', description: '映射类型 / 引用模型 / property 等', icon: 'tune', category: 'tools', condition, click: editGroupProps });
 		actions.boxToggle = new Action('imda_box_toggle', { name: '开关：框选方块时改选所属分组', description: '切换“一次选中多个方块时自动改为选中其父分组”', icon: 'select_all', category: 'tools', click: () => { if (!immBoxSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !boxGroupsEnabled(); setBoxSelectGroups(next); try { if (typeof immBoxSetting.save === 'function') immBoxSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('框选方块改选所属分组：' + (next ? '开' : '关') + (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID ? '（装配格式内强制开启）' : ''), 2600); } });
 		actions.batchToggle = new Action('imda_batch_toggle', { name: '开关：批量选组时取消元素选择', description: '切换“同时选中多个分组时自动取消方块/定位点选择”', icon: 'select_all', category: 'tools', click: () => { if (!immBatchSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !batchGroupsOnlyEnabled(); setBatchGroupsOnly(next); try { if (typeof immBatchSetting.save === 'function') immBatchSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('批量选择时取消单个元素：' + (next ? '开' : '关'), 2200); } });
-		actions.editCall = new Action('imda_edit_call', { name: '编辑复调用标签…', description: '修改选中的复调用 Locator 指向的分组或模型 id', icon: 'edit', category: 'tools', condition: () => (typeof Locator !== 'undefined' && Locator && Locator.selected && Locator.selected.length > 0), click: () => { const locator = (Locator.selected && Locator.selected[0]) || null; if (!locator) { Blockbench.showMessageBox({ title: '请先选中复调用标签', message: '在 outliner 里选中一个 Locator（复调用标签）。', icon: 'info' }); return; } editCallTag(locator); } });
+		actions.editCall = new Action('imda_edit_call', { name: '编辑复调用标签…', description: '修改选中的复调用标签指向的分组或模型 id', icon: 'edit', category: 'tools', condition: () => !!pickTargetLocator(), click: () => { const locator = pickTargetLocator(); if (!locator) { Blockbench.showMessageBox({ title: '请先选中复调用标签', message: '在 outliner 里选中一个复调用标签。', icon: 'info' }); return; } editCallTag(locator); } });
+		actions.upgradeCalls = new Action('imda_upgrade_calls', { name: '把旧复调用标签升级为独立元素…', description: '把旧工程里用 Locator 表示的复调用标签换成独立的「复调用标签」元素类型（保留 uuid 与全部覆盖，可撤销）', icon: 'upgrade', category: 'tools', condition: () => { try { return isImdaFormat() && ((typeof Locator !== 'undefined' && Locator.all) ? Locator.all.some(l => l && String(l.imda_call_target || '').trim() && !isCallTagType(l)) : false); } catch (e) { return false; } }, click: () => { const done = upgradeLegacyCallTags(); simInvalidate(); Menu.update(); Blockbench.showQuickMessage(done ? ('已升级 ' + done + ' 个复调用标签') : '没有需要升级的复调用标签', 3000); } });
 		actions.repairCalls = new Action('imda_repair_calls', { name: '修复失效的复调用目标…', description: '扫描所有目标 UUID 已不存在的复调用标签，统一改成指定分组', icon: 'build', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID) && invalidCallTags().length > 0, click: repairCallTargetsDialog });
 		actions.refreshCalls = new Action('imda_refresh_calls', { name: '更新所有调用', description: '重新读取所有复调用目标与外部物品映射引用（清缓存、重排分支名、列出失效项）', icon: 'refresh', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => refreshAllCalls() });
 		actions.pickModelFile = new Action('imda_pick_model_file', { name: '选择引用模型 / 物品映射文件…', description: '用资源管理器选 assets/<命名空间>/models/…（模型引用）或 assets/<命名空间>/items/…（物品映射引用），自动解析并写入该分组的「引用模型」', icon: 'folder_open', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID) && !!pickTargetGroup(), click: () => pickModelFileForGroup(pickTargetGroup()) });
@@ -5686,6 +6048,7 @@ Plugin.register('item_model_definition_assembly', {
 		tool(actions.extractPose);
 		tool(actions.applyPose);
 		toolSep('imda_group_calls', '复调用');
+		tool(actions.addCallTag);
 		tool(actions.call);
 		tool(actions.convertCall);
 		tool(actions.editCall);
@@ -5693,6 +6056,7 @@ Plugin.register('item_model_definition_assembly', {
 		tool(actions.repairCalls);
 		tool(actions.instantiateCalls);
 		tool(actions.instantiateSelected);
+		tool(actions.upgradeCalls);
 		toolSep('imda_group_debug', '调试');
 		tool(actions.check);
 		tool(actions.normalize);
@@ -5725,7 +6089,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
@@ -5738,13 +6102,14 @@ Plugin.register('item_model_definition_assembly', {
 			menuActions = {};
 		} catch (e) { /* ignore */ }
 		try {
-			for (const proto of [typeof Group !== 'undefined' ? Group : null, typeof Locator !== 'undefined' ? Locator : null, typeof Cube !== 'undefined' ? Cube : null]) {
+			for (const proto of [typeof Group !== 'undefined' ? Group : null, typeof Locator !== 'undefined' ? Locator : null, typeof CallTag !== 'undefined' && CallTag ? CallTag : null, typeof Cube !== 'undefined' ? Cube : null]) {
 				const menu = proto && proto.prototype && proto.prototype.menu;
 				if (menu && Array.isArray(menu.structure)) {
 					menu.structure = menu.structure.filter(item => { const id = typeof item === 'string' ? item : (item && item.id) || ''; return !String(id).startsWith('imda_'); });
 				}
 			}
 		} catch (menuError) { /* ignore */ }
+		try { uninstallOutlinerRangeSelect(); } catch (e) { /* ignore */ }
 		try { if (sim.timer) { clearInterval(sim.timer); sim.timer = null; } } catch (e) { /* ignore */ }
 		try { if (sim.tickTimer) { clearTimeout(sim.tickTimer); sim.tickTimer = null; } } catch (e) { /* ignore */ }
 		try { simStopViewLoop(); } catch (e) { /* ignore */ }
@@ -5760,6 +6125,12 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		if (codec_object) { try { codec_object.delete(); } catch (e) { /* ignore */ } codec_object = null; }
 		if (format_object) { try { format_object.delete(); } catch (e) { /* ignore */ } format_object = null; }
+		// 自定义元素类型不删（Blockbench 没有 unregisterType）；但要把 CallTag 的静态引用清掉，
+		// 让下一次 onload 重新注册，避免判定用的是旧闭包里的类。
+		// 注意：`OutlinerElement.types['imda_call_tag']` 指向的仍是旧类，重载后由 ensureCallTagType 覆盖。
+		try { if (typeof OutlinerElement !== 'undefined' && OutlinerElement.types && CallTag && OutlinerElement.types[CALL_TAG_TYPE] === CallTag) delete OutlinerElement.types[CALL_TAG_TYPE]; } catch (e) { /* ignore */ }
+		CallTag = null;
+		callTagSpriteMap = null;
 	},
 });
 
