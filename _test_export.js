@@ -226,7 +226,9 @@ const vecOk = (v, n) => Array.isArray(v) && v.length === n && v.every(x => typeo
 // transformation 是**所有** items model 类型共有的顶层字段（原版文档明确写了 composite /
 // condition / select / range_dispatch 会与子项组合），只有 empty 和 bundle/selected_item 不支持。
 const COMMON = ['type', 'transformation'];
-const NONSTANDARD = ['node_name']; // 插件自加的字段，原版文档里没有，单独统计
+// node_name 是用户要求的字段：导出带来源分组名，方便人工复核 JSON 时对上是哪个分组。
+// 原版解码器忽略未知字段，不影响加载，所以校验时单独放行并只统计数量。
+const NONSTANDARD = ['node_name'];
 const nonstandardSeen = [];
 const walkDef = (node, at) => {
 	if (!node || typeof node !== 'object') { problems.push(at + ' 不是对象'); return; }
@@ -292,8 +294,8 @@ const walkDef = (node, at) => {
 };
 if (mapping && mapping.model) walkDef(mapping.model, 'model');
 ok('定义树全部合法（类型/字段/引用/阈值顺序）', problems.length === 0, problems.slice(0, 8));
-// node_name 不是原版字段：记录下来，提醒用户它默认是开启的
-console.log('  · 非标准字段 node_name 出现 ' + nonstandardSeen.length + ' 次（插件自加的调试字段，原版文档未定义）');
+// node_name 是用户要求的调试字段（方便人工复核导出结果），不算问题，只报数量
+console.log('  · node_name（人工复核用，按设计保留）出现 ' + nonstandardSeen.length + ' 次');
 
 // 占位字段绝不能漏到文件里
 const mappingText = mappingFile ? String(mappingFile.data) : '';
@@ -498,7 +500,7 @@ if (fs.existsSync(backups)) {
 				};
 				if (realMapping && realMapping.model) walkReal(realMapping.model, 'model');
 				ok('真实工程：定义树合法', realProblems.length === 0, realProblems.slice(0, 6));
-				console.log('  · 真实工程 node_name 出现 ' + realNonstandard.length + ' 次；文件总数 ' + realFiles.length);
+				console.log('  · 真实工程 node_name（人工复核用）' + realNonstandard.length + ' 次；文件总数 ' + realFiles.length);
 			} finally {
 				global.Outliner.root.length = 0;
 				savedRoot.forEach(n => global.Outliner.root.push(n));

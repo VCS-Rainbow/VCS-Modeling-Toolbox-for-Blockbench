@@ -2,6 +2,8 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.70.2
+- 更正文档口径：`node_name` 是**用户要求**的字段（导出带来源分组名，方便人工复核 JSON 时对上是哪个分组），不是“应当关闭的非标准字段”。`_test_export.js` 的字段白名单继续对它单独放行并只统计数量。
 ## 0.70.1
 - **修 range_dispatch 的 property 漏前缀（导出直接失效）**：0.69.14 把 `imda_property` 改成存裸名后，`buildNode` 里那行 `String(group.imda_property || 'minecraft:custom_model_data')` 只在**字段为空**时才带前缀，非空时把 `"property": "custom_model_data"` 原样写进文件 —— 原版不认这个值，整条 range_dispatch 失效。现在统一 `'minecraft:' + 裸名`。
 - **修 range_dispatch 的 entries 阈值顺序**：原版语义是「取最后一个 threshold ≤ 当前值的条目」（Minecraft Wiki 原文：*Will select last entry with threshold less or equal to property value*），也就是**判定顺序 = entries 数组顺序**。分支编号格式写成 `5-i` 时，大纲里 `[5][4][3][2][1]` 算出的阈值是 5,4,3,2,1（递减），原样输出会让每个值都命中列表末尾那条分支。现在导出时按阈值**升序稳定排序**（同值保持大纲顺序）。
