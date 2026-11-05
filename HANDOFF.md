@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-11-01 更新 · 当前版本 **0.71.0**
+> 生成时间：2026-11-05 更新 · 当前版本 **0.71.1**
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 > 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉「导出阈值被子级格式覆盖」，0.68.115 修掉「实例化后 export=false 导致整条分支不导出」，0.68.116 修掉「撤销不删除新建节点」的 3 处问题，0.68.117 修掉「枢轴归位把方块挪走」并说明 gizmo 位置规则。
 > **调试入口已升级：可用 `_bbcdp.js` 从终端直连软件内 Console + 全部 Blockbench 事件，见 `_BBCDP.md` 与 0.0.2。**
@@ -209,6 +209,36 @@ Blockbench 的方块网格是「`mesh.position = origin`，顶点相对 origin �
 **真机验证（0.69.13）**：`ghost_lock` → 45 组锁 / 70 方块锁 / 50 半透明 / store=5；切 `off` → 全部归 0；重载插件后 `store` 仍是 5，再切 `off` 仍能全清。旧版本留下的 96 个孤立锁已用只读探针清掉（`Project.saved` 保持 `false`）。
 
 单测 289 项（+6）。
+
+### 0.0.19 「生成全物品模型表」把分支跑成根级节点（0.71.1，2026-11-05）
+
+**现象**（用户报告）：除了 `[all items]` 容器内的节点，大纲最上层还有很多和它们重复的引用节点。
+
+**根因**：`new Group()` 的 `parent` 默认就是 `'root'`。第一版只写了 `container.children.push(caseGroup)`，**没有把 `parent` 改成 `container`**。紧接着对话框里对 `built.created` 逐个调 `caseGroup.init()`，而真实 Blockbench 的 `OutlinerNode.init()`（bundle 里 `init(): this { OutlinerNode.uuids[this.uuid] = this; if (!this.parent || (this.parent === 'root' && Outliner.root.indexOf(this) === -1)) { this.addTo('root') } return this }`）看到 `parent === 'root'` 且不在 `Outliner.root` 里，就自己 `addTo('root')` —— 于是每个 case 同时在容器 children 和根目录里。
+
+**改法**：
+```js
+// 建树时（buildAllItemsTree 内）
+caseGroup.addTo(container);   // 而不是 container.children.push(caseGroup)
+// 挂载时（openAllItemsDialog → onConfirm）
+addAndInit(built.container, null);              // 容器先进大纲
+for (const node of built.created) {             // 再 init 子节点
+    if (node === built.container) continue;
+    node.init();                                 // 此时 parent 已指向容器，不会再 addTo('root')
+}
+```
+
+**为什么原来的测试没抓到**：`_test_all_items.js` 的 mock 有两处失真 ——
+1. `addTo(p)` 把 `'root'` 当普通父对象处理（真实实现把字符串 `'root'` 当根），传 `'root'` 会抛错或走错分支；
+2. `init()` 直接 `return this`，**没有复刻上面那段 `addTo('root')` 副作用**。
+
+两处都补齐后，回归脚本能明确区分：旧方式 5 个 case 跑到根目录（根节点 6 个），新方式只有容器 1 个（根节点 1 个）。
+
+**真机验证**（真实资源包 134 个分支）：`Outliner.root.length === 1`、根节点只有 `[real all]`、混进根目录的 case 数 0、`parent` 不指向容器的 case 数 0、导出 319KB JSON 可解析。
+
+**教训**：`new Group()` / `new Locator()` 的 `parent` 默认是 `'root'`。任何"把新节点塞进某个父级"的地方，都要用 `addTo(parent)` 而不是只 `children.push()`，否则后面对它调 `init()` 就会把它顶到根目录。全插件 `children.push` 只有两处（`sortBranchChildren` 重排已有子节点、`collectInputUsage` 的纯数据对象），都不新建节点，安全。
+
+**已有工程的修复**：新增 Tools →「清理大纲重复节点」（`repairOutlinerDuplicates()`）。判据是"同一个对象既在某个分组的 `children` 里、又在 `Outliner.root` 里" —— 这种状态只可能是 bug 造成的，删掉根目录那份、保留容器里的原件。删容器再重新生成也可以（`Group.remove()` 会连带删子节点），但那样会丢掉对表的手工改动。生成表时也会先自动清一次，避免出现两套。
 
 ### 0.0.18 生成全物品模型表（0.71.0，2026-11-01）
 

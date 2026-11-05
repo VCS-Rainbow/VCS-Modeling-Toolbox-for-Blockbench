@@ -77,11 +77,37 @@ if (!Array.prototype.empty) Array.prototype.empty = function () { this.length = 
 global.Texture = class { constructor(o) { Object.assign(this, o); } }; Texture.all = [];
 global.Cube = class { constructor(o) { Object.assign(this, o); this.faces = this.faces || {}; } addTo(p) { if (p) { this.parent = p; p.children.push(this); } return this; } init() { return this; } remove() { return this; } getParentArray() { return this.parent ? this.parent.children : global.Outliner.root; } }; Cube.all = [];
 global.OutlinerElement = class {
-	constructor(o) { Object.assign(this, o || {}); if (!this.uuid) this.uuid = 'el-' + Math.random(); }
-	addTo(p) { if (p) { this.parent = p; if (p.children.indexOf(this) < 0) p.children.push(this); } else if (global.Outliner.root.indexOf(this) < 0) { this.parent = 'root'; global.Outliner.root.push(this); } return this; }
-	init() { return this; }
-	remove() { if (this.parent && this.parent.children) { const i = this.parent.children.indexOf(this); if (i >= 0) this.parent.children.splice(i, 1); } const j = global.Outliner.root.indexOf(this); if (j >= 0) global.Outliner.root.splice(j, 1); return this; }
-	getParentArray() { return this.parent && this.parent.children ? this.parent.children : global.Outliner.root; }
+	constructor(o) { Object.assign(this, o || {}); if (!this.uuid) this.uuid = 'el-' + Math.random(); if (!('parent' in this)) this.parent = 'root'; }
+	addTo(p) {
+		// 真实 Blockbench 的 addTo 接受 'root'（字符串）或父节点；'root' 时进 Outliner.root
+		if (this.parent && this.parent !== 'root' && Array.isArray(this.parent.children)) { const i = this.parent.children.indexOf(this); if (i >= 0) this.parent.children.splice(i, 1); }
+		if (p && p !== 'root' && Array.isArray(p.children)) {
+			this.parent = p;
+			if (p.children.indexOf(this) < 0) p.children.push(this);
+		} else {
+			this.parent = 'root';
+			if (global.Outliner.root.indexOf(this) < 0) global.Outliner.root.push(this);
+		}
+		return this;
+	}
+	/** 忠实复刻真实 Blockbench 的 OutlinerNode.init()：没有 parent，或者
+	 *  parent==='root' 但不在 Outliner.root 里 → 自己 addTo('root')。
+	 *  这条副作用正是「每个 case 都跑成根级节点」那个 bug 的根源，
+	 *  mock 必须一致，否则测不出来。 */
+	init() {
+		global.OutlinerNode = global.OutlinerNode || {};
+		global.OutlinerNode.uuids = global.OutlinerNode.uuids || {};
+		global.OutlinerNode.uuids[this.uuid] = this;
+		if (!this.parent || (this.parent === 'root' && global.Outliner.root.indexOf(this) === -1)) this.addTo('root');
+		return this;
+	}
+	remove() {
+		if (this.parent && this.parent !== 'root' && Array.isArray(this.parent.children)) { const i = this.parent.children.indexOf(this); if (i >= 0) this.parent.children.splice(i, 1); }
+		const j = global.Outliner.root.indexOf(this); if (j >= 0) global.Outliner.root.splice(j, 1);
+		this.parent = null;
+		return this;
+	}
+	getParentArray() { return (this.parent === 'root' || !this.parent) ? global.Outliner.root : this.parent.children; }
 	markAsSelected() { this.selected = true; global.Outliner.selected.safePush(this); return this; }
 	unselect() { this.selected = false; global.Outliner.selected.remove(this); return this; }
 	clickSelect() { }
@@ -89,6 +115,13 @@ global.OutlinerElement = class {
 global.OutlinerElement.types = {}; global.OutlinerElement.behavior_overrides = [];
 global.OutlinerElement.registerType = function (c, id) { this.types[id] = c; c.prototype.type = id; if (!c.all) c.all = []; if (!c.selected) c.selected = []; };
 global.Group = class extends global.OutlinerElement { constructor(o) { super(o); this.children = []; if (!this.uuid) this.uuid = 'grp-' + Math.random(); } }; Group.all = []; Group.multi_selected = [];
+// 复刻插件里的 addAndInit（先 add 后 init）
+global.immAddAndInit = function (node, parent) {
+	if (!node) return node;
+	if (parent) node.addTo(parent); else node.addTo();
+	node.init();
+	return node;
+};
 global.Locator = class extends global.OutlinerElement { constructor(o) { super(o); if (!o || !o.uuid) this.uuid = 'loc-' + Math.random(); Locator.all.safePush(this); } }; Locator.all = [];
 Locator.behavior = { unique_name: true, movable: true, rotatable: true };
 global.Menu = class { constructor(s) { this.structure = Array.isArray(s) ? s.slice() : []; } addAction(a) { this.structure.push(a); } };
@@ -211,6 +244,58 @@ eq('带空格的无类型路径在 when 里', spaceWhen.indexOf('sqsp:inker/jet_
 eq('带空格的带类型路径在 when 里', spaceWhen.indexOf('sqsp:models/inker/jet_rifle/gun copy') >= 0, true);
 const spaceItemsCase = built.container.children.find(c => c.imda_model === 'sqsp:items/inker/jet_rifle/copy test');
 ok('带空格映射路径解析成功（未被误判为非法）', !!spaceItemsCase);
+
+/* ---------- 回归：生成后根目录不能多出 case 节点 ----------
+ * 背景：`new Group()` 的 parent 默认是 'root'，如果只把 case push 进
+ * container.children 而不 addTo(container)，随后调用 case.init() 时，
+ * 真实 Blockbench 的 OutlinerNode.init() 会命中
+ * `parent === 'root' && Outliner.root 里没有它` → 自己 addTo('root')，
+ * 于是每个 case 既在容器里、又成了根目录下的一级节点。 */
+console.log('\n[回归：根目录只有一个容器]');
+global.Outliner.root.length = 0;
+global.OutlinerNode = global.OutlinerNode || {};
+global.OutlinerNode.uuids = {};
+const attachBuilt = api.buildAllItemsTree({ name: '[attach]', property: 'custom_model_data', index: 0 });
+// 完全复刻对话框 onConfirm 的挂载顺序
+global.immAddAndInit(attachBuilt.container, null);
+for (const node of attachBuilt.created) {
+	if (node === attachBuilt.container) continue;
+	try { if (node.init) node.init(); } catch (e) { }
+}
+eq('根目录只有 1 个节点', global.Outliner.root.length, 1);
+ok('根目录那个就是容器', global.Outliner.root[0] === attachBuilt.container);
+eq('容器仍是根级', attachBuilt.container.parent, 'root');
+eq('case 的 parent 都指向容器',
+	attachBuilt.container.children.every(c => c.parent === attachBuilt.container), true);
+eq('没有 case 混进根目录',
+	attachBuilt.container.children.filter(c => global.Outliner.root.indexOf(c) >= 0).length, 0);
+eq('子节点都登记了 uuid',
+	attachBuilt.container.children.every(c => global.OutlinerNode.uuids[c.uuid] === c), true);
+
+/* ---------- 清理重复根节点（修已有工程的遗留） ---------- */
+console.log('\n[清理重复根节点]');
+// 手工构造 0.71.0 会留下的坏状态：case 同时在容器 children 和根目录里
+global.Outliner.root.length = 0;
+const brokenContainer = new global.Group({ name: '[broken]', imda_type: 'select' });
+brokenContainer.addTo(); brokenContainer.init();
+const orphans = [];
+for (let i = 0; i < 3; i++) {
+	const c = new global.Group({ name: 'orphan' + i, imda_type: 'model' });
+	brokenContainer.children.push(c);   // 只进 children，parent 仍是 'root'
+	c.init();                            // 触发 addTo('root')
+	orphans.push(c);
+}
+const legitTop = new global.Group({ name: 'legit_top' });
+legitTop.addTo(); legitTop.init();
+eq('坏状态：根目录有 5 个节点（容器 + 3 个重复 + 1 个正常）', global.Outliner.root.length, 5);
+const repaired = api.repairOutlinerDuplicates();
+eq('清理掉 3 个重复节点', repaired.removed, 3);
+eq('根目录只剩容器和正常节点', global.Outliner.root.length, 2);
+ok('容器还在根目录', global.Outliner.root.indexOf(brokenContainer) >= 0);
+ok('正常节点没被误删', global.Outliner.root.indexOf(legitTop) >= 0);
+ok('重复节点仍留在容器 children 里', brokenContainer.children.length === 3);
+eq('再跑一次没有可清理的', api.repairOutlinerDuplicates().removed, 0);
+global.Outliner.root.length = 0;
 
 /* ---------- 无效映射必须被跳过 ---------- */
 console.log('\n[无效映射]');

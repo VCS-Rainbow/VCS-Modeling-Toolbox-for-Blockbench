@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.71.0';
+const VERSION = '0.71.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -4113,10 +4113,53 @@ function buildAllItemsTree(options) {
 		}
 		caseGroup.imda_case_when = JSON.stringify(when);
 		caseGroup.__allItemsEntry = entry;
-		container.children.push(caseGroup);
+		// 必须用 addTo 而不是直接 push：`new Group()` 的 parent 默认是 'root'，
+		// 只 push 进 children 不改 parent 的话，后面调 caseGroup.init() 会命中
+		// `parent === 'root' && Outliner.root 里没有它` → 自己 addTo('root')，
+		// 结果每个 case 既在容器 children 里、又成了根目录下的一级节点。
+		// 这里只 addTo 不 init：容器还没挂进大纲，提前 init 子节点会找不到父级 mesh。
+		caseGroup.addTo(container);
 		created.push(caseGroup);
 	}
 	return { container, created, entries: usable, skippedMappings, scan, priming };
+}
+
+/** 清理大纲里的重复节点：同一个对象既在某个分组的 children 里、又在 Outliner.root 里。
+ *  这是 0.71.0「生成全物品模型表」留下的痕迹 —— 当时 case 分组只 push 进 children、
+ *  没改 parent，随后 init() 把它们又 addTo('root') 了一遍。修复后不会再产生，
+ *  但已经生成的工程需要清一次（删掉根目录那份，保留容器里的）。 */
+function repairOutlinerDuplicates() {
+	const roots = (typeof Outliner !== 'undefined' && Outliner.root) ? Outliner.root : null;
+	if (!roots) return { removed: 0 };
+	const nested = new Set();
+	const visit = (node) => {
+		if (!node || !Array.isArray(node.children)) return;
+		for (const child of node.children) {
+			if (!child) continue;
+			nested.add(child);
+			visit(child);
+		}
+	};
+	for (const node of roots) visit(node);
+	let removed = 0;
+	for (const node of roots.slice()) {
+		if (!nested.has(node)) continue;
+		const at = roots.indexOf(node);
+		if (at >= 0) { roots.splice(at, 1); removed++; }
+	}
+	if (removed) {
+		try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+		try { Project.saved = false; } catch (e) { /* ignore */ }
+	}
+	return { removed };
+}
+
+function repairOutlinerDuplicatesAction() {
+	try { Undo.initEdit({ outliner: true }); } catch (e) { /* ignore */ }
+	const result = repairOutlinerDuplicates();
+	try { Undo.finishEdit('清理大纲重复节点', { outliner: true }); } catch (e) { /* ignore */ }
+	if (result.removed) Blockbench.showQuickMessage('已清理 ' + result.removed + ' 个重复挂在根目录的节点', 4000);
+	else Blockbench.showQuickMessage('大纲里没有重复节点', 3000);
 }
 
 /** 对话框：生成全物品模型表 */
@@ -4171,8 +4214,15 @@ function openAllItemsDialog() {
 				return;
 			}
 			try { Undo.initEdit({ outliner: true, groups: [] }); } catch (e) { /* ignore */ }
+			// 顺手清掉旧版本可能留下的重复根节点，避免生成后大纲里出现两套
+			try { repairOutlinerDuplicates(); } catch (e) { /* ignore */ }
+			// 顺序很重要：先把容器挂进大纲（容器 parent = 'root'，init 才能建出 mesh），
+			// 再 init 子节点（它们 parent 已指向容器，init 不会再把自己塞进根目录）。
 			addAndInit(built.container, null);
-			for (const node of built.created) { try { if (node.init) node.init(); } catch (e) { /* ignore */ } }
+			for (const node of built.created) {
+				if (node === built.container) continue;
+				try { if (node.init) node.init(); } catch (e) { /* ignore */ }
+			}
 			try { Undo.finishEdit('生成全物品模型表', { outliner: true, groups: built.created }); } catch (e) { /* ignore */ }
 			try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 			try { Project.saved = false; } catch (e) { /* ignore */ }
@@ -6342,6 +6392,7 @@ Plugin.register('item_model_definition_assembly', {
 		actions.merge = new Action('imda_merge_pack', { name: '合并到资源包…', description: '直接写入资源包并覆盖旧文件；默认快捷键 F5', icon: 'folder_open', category: 'file', condition, keybind: (typeof Keybind !== 'undefined') ? new Keybind({ key: 116 }) : undefined, click: mergeToPack });
 		actions.import = new Action('imda_import_model', { name: '导入引用模型（当前分组）', description: '按 imda_model 从资源包工程导入 Java 模型为方块', icon: 'file_download', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => { const g = pickTargetGroup(); if (!g) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } if (!String(g.imda_model || '').trim()) { Blockbench.showMessageBox({ title: '没有引用模型', message: '该分组没有填写 imda_model（引用模型）。', icon: 'info' }); return; } importModelReference(g); } });
 		actions.allItems = new Action('imda_all_items', { name: '生成全物品模型表…', description: '扫描资源包全部模型与映射文件，生成一张 select 表：每个路径都能被选中（when 同时含无类型与带类型路径）', icon: 'list_alt', category: 'tools', condition: () => isImdaFormat(), click: openAllItemsDialog });
+	actions.repairOutliner = new Action('imda_repair_outliner', { name: '清理大纲重复节点', description: '删掉同时挂在某个分组里、又挂在根目录下的重复节点（0.71.0 生成表的遗留）', icon: 'cleaning_services', category: 'tools', condition: () => isImdaFormat(), click: repairOutlinerDuplicatesAction });
 	actions.call = new Action('imda_call_group', { name: '复调用选中的分组', description: '在分组枢轴处创建复调用标签，导出时替换为目标分组', icon: 'content_copy', category: 'tools', condition, click: callSelectedGroup });
 		actions.addCallTag = new Action('imda_add_call_tag', { name: '添加复调用标签', description: '在选中分组（或根目录）里新建一个空复调用标签，再用「编辑复调用标签」指定目标', icon: 'add', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: addEmptyCallTag });
 	actions.bakeTimeline = new Action('imda_bake_timeline', { name: '解析动画时间轴（写入帧标签，旧流程）', description: '按项目 FPS 采样当前动画，生成 range_dispatch(timeline) 分组与逐帧 Locator；导出时也会自动采样，一般不需要手动执行', icon: 'timeline', category: 'tools', condition: () => typeof Animation !== 'undefined' && Animation && (Animation.selected || (Array.isArray(Animation.all) && Animation.all.length)), click: () => bakeTimelineToCallTags() });
@@ -6391,6 +6442,7 @@ Plugin.register('item_model_definition_assembly', {
 		toolHeading('==VCS Modeling Toolbox==');
 		toolSep('imda_group_assembly', '[ 模型装配 ] - 结构');
 		tool(actions.allItems);
+		tool(actions.repairOutliner);
 		tool(actions.props);
 		tool(actions.import);
 		tool(actions.pickModelFile);
@@ -6441,7 +6493,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, scanPackEntries, buildAllItemsTree, matchBlacklist, listFilesRecursive, simStepOnce, simAdvanceSlot, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, scanPackEntries, buildAllItemsTree, matchBlacklist, listFilesRecursive, simStepOnce, simAdvanceSlot, primeMappingCache, repairOutlinerDuplicates, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

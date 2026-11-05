@@ -2,6 +2,16 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.71.1
+- **修「生成全物品模型表」把每个分支都跑成根级节点**：`new Group()` 的 `parent` 默认是 `'root'`，原来只把 case 分组 `push` 进 `container.children` 而没有改 `parent`；随后调用 `caseGroup.init()` 时，真实 Blockbench 的 `OutlinerNode.init()` 有一段
+  ```js
+  if (!this.parent || (this.parent === 'root' && Outliner.root.indexOf(this) === -1)) this.addTo('root')
+  ```
+  于是每个 case 既在容器 children 里、又被自己塞进根目录 —— 表现就是「除了 [all items] 容器，最上层还有一大堆引用节点」。
+  - 改法：case 分组改用 `caseGroup.addTo(container)`（`addTo` 会同时改 `parent` 并加入 children）；容器先 `addAndInit` 进大纲，**再** init 子节点（此时它们 `parent` 已指向容器，不会再触发那段判断）。
+  - 同时修掉 `_test_all_items.js` 里 mock 的两处失真（`addTo` 不认 `'root'` 字符串、`init()` 没复刻上面那段副作用），并加了回归断言：生成后 `Outliner.root.length === 1`、没有 case 混进根目录、每个 case 的 `parent` 指向容器。
+- 单测：`_test_sim.js` 350 + `_test_export.js` 29 + `_test_all_items.js` 76 = **455 项**。
+- 新增 Tools →「清理大纲重复节点」：删掉"同时挂在某个分组 children 里、又挂在根目录下"的重复节点。已经用 0.71.0 生成过表的工程，用这个一次性清掉遗留的重复分支（容器里的原件保留）。生成表时也会自动先清一次。
 ## 0.71.0
 - **新增「生成全物品模型表」**（Tools → 结构）：扫描资源包里的全部 `assets/*/models/**/*.json` 与 `assets/*/items/**/*.json`，生成一个 `select` 容器，每个路径一个 `model` 分支。
   - `when` 列表同时包含**无类型路径**（`sqsp:inker/jet_rifle/gun`）与**带类型路径**（`sqsp:models/inker/jet_rifle/gun` / `sqsp:items/inker/jet_rifle/gun`），任一种匹配都能选中。
