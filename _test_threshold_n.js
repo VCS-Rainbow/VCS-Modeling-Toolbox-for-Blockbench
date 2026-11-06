@@ -106,7 +106,8 @@ eq('ni\uff08n=5\uff09', [0, 1, 2].map(i => ex.evalThreshold('ni', i, 5)), [0, 5,
 eq('\u5b57\u9762 n', [0, 1, 2].map(i => ex.evalThreshold('n', i, 7)), [7, 7, 7]);
 eq('2n', [0, 1, 2].map(i => ex.evalThreshold('2n', i, 3)), [6, 6, 6]);
 eq('n+i', [0, 1, 2].map(i => ex.evalThreshold('n+i', i, 10)), [10, 11, 12]);
-eq('ni\uff08n \u7f3a\u7701=0\uff09', [0, 1, 2].map(i => ex.evalThreshold('ni', i)), [0, 0, 0]);
+eq('ni\uff08n \u7f3a\u7701=1\uff09', [0, 1, 2].map(i => ex.evalThreshold('ni', i)), [0, 1, 2]);
+eq('n \u663e\u5f0f\u4e3a 0 \u65f6\u7528 0', [0, 1, 2].map(i => ex.evalThreshold('ni', i, 0)), [0, 0, 0]);
 eq('n*i \u663e\u5f0f\u5199\u6cd5', [0, 1, 2].map(i => ex.evalThreshold('n*i', i, 4)), [0, 4, 8]);
 eq('5-i \u4ecd\u7136\u6b63\u5e38', [0, 1, 2].map(i => ex.evalThreshold('5-i', i)), [5, 4, 3]);
 eq('10+2i \u4ecd\u7136\u6b63\u5e38', [0, 1, 2].map(i => ex.evalThreshold('10+2i', i)), [10, 12, 14]);
@@ -135,6 +136,16 @@ if (outer) {
 	ok('\u7b2c 6 \u4e2a\u5206\u652f\u662f\u5d4c\u5957 range_dispatch', !!inner && inner.type === 'minecraft:range_dispatch');
 	eq('\u5d4c\u5957\u5206\u652f\u7684\u9608\u503c\uff08ni\uff0cn=5\uff09= 0,5,10', inner && inner.entries.map(e => e.threshold), [0, 5, 10]);
 }
+
+// 顶层 range_dispatch（上层没有编号）用 ni → n 默认 1 → 0,1,2
+global.Outliner.root.length = 0;
+const topN = new global.Group({ name: 'topN', imda_type: 'range_dispatch', imda_property: 'custom_model_data', imda_index: 0, imda_threshold_format: 'ni' });
+for (let k = 0; k < 3; k++) global.immAddAndInit(leaf('t' + k, 'ns:t' + k), topN);
+global.immAddAndInit(topN, null);
+const m2 = api.createExporter().buildMapping();
+const topNode = m2.model.models.find(n => n && n.type === 'minecraft:range_dispatch');
+ok('\u627e\u5230\u9876\u5c42 range_dispatch', !!topNode);
+eq('\u9876\u5c42 ni\uff08n \u9ed8\u8ba4 1\uff09= 0,1,2', topNode && topNode.entries.map(e => e.threshold), [0, 1, 2]);
 
 if (fail) { console.log('\n\u5931\u8d25 ' + fail + ' \u9879'); process.exit(1); }
 console.log('\n\u901a\u8fc7 ' + pass + ' / ' + (pass + fail));

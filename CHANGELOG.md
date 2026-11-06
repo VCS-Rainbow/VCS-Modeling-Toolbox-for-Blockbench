@@ -2,6 +2,13 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.73.2
+- **编号格式的变量 `n` 缺省值改为 1**（原来缺省 0）：当本分支上层没有编号（例如顶层 range_dispatch）时，`ni` 现在等价于 `i`（0,1,2），而不是全是 0。
+  - `evalThreshold` 里 `n` 缺失/非数字时按 1。
+  - `syncBranchLabels` 刷新名字时改用 `branchSelfNumber(group)`：只有分组确实挂在 `range_dispatch` 下才算有编号（取其 `imda_threshold`），否则视为“无编号”→ 1，保证界面显示和导出结果一致。
+  - 真·0 号分支（`imda_threshold=0` 且在 range_dispatch 下）仍然用 0。
+  - `_test_threshold_n.js` 17 项（新增“缺省=1”“显式 0 用 0”“顶层 ni=0,1,2”）。
+- 单测合计：17 + 25 + 76 + 350 + 29 = **497 项**。
 ## 0.73.1
 - **修「编辑分组映射属性…」改完 Ctrl+Z 撤不干净（看起来像撤不掉）**：
   - 旧实现 `Undo.initEdit({ groups: targets })` 只快照**目标分组本身**，而 `getChildlessCopy` 不含子节点。可改映射类型时 `syncBranchLabels` 会给子分支加 `[n]` 前缀、`sortBranchChildren` 会重排子节点——这些都没进撤销记录。于是撤销后父分组的属性回去了、子分支的名字/顺序却还在，观感就是“属性没撤回”。
