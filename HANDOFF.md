@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-11-06 更新 · 当前版本 **0.73.0**
+> 生成时间：2026-11-06 更新 · 当前版本 **0.73.1**
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 > 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉「导出阈值被子级格式覆盖」，0.68.115 修掉「实例化后 export=false 导致整条分支不导出」，0.68.116 修掉「撤销不删除新建节点」的 3 处问题，0.68.117 修掉「枢轴归位把方块挪走」并说明 gizmo 位置规则。
 > **调试入口已升级：可用 `_bbcdp.js` 从终端直连软件内 Console + 全部 Blockbench 事件，见 `_BBCDP.md` 与 0.0.2。**
@@ -209,6 +209,33 @@ Blockbench 的方块网格是「`mesh.position = origin`，顶点相对 origin �
 **真机验证（0.69.13）**：`ghost_lock` → 45 组锁 / 70 方块锁 / 50 半透明 / store=5；切 `off` → 全部归 0；重载插件后 `store` 仍是 5，再切 `off` 仍能全清。旧版本留下的 96 个孤立锁已用只读探针清掉（`Project.saved` 保持 `false`）。
 
 单测 289 项（+6）。
+
+### 0.0.22 「编辑分组映射属性」Ctrl+Z 撤不干净（0.73.1，2026-11-06）
+
+**现象**（用户报告）：改完分组映射属性，Ctrl+Z 好像撤不掉。
+
+**排查**（解 app.asar 的 sourcemap 看 Blockbench 5.2.2 源码）：
+- 右侧原生「属性」面板（`js/outliner/element_panel.ts`）只登记 `property.inputs.element_panel` 存在的属性。插件的 `imda_*` 都是 `new Property(..., {exposed:true})`，没有 `inputs`，所以**根本不出现在原生面板**——“属性编辑”只能走插件自己的「编辑分组映射属性…」对话框。
+- 该对话框本来就有 `Undo.initEdit/finishEdit`，主属性（imda_type/model/property…）实测能撤销（真机 detached 往返：改→undo→回退→redo→再改）。
+- 真正的问题：撤销用 `{ groups: targets }`，`getChildlessCopy` **不含子节点**。而改类型时 `syncBranchLabels` 给子分支加 `[n]` 前缀、`sortBranchChildren` 重排子节点——这些不在撤销记录里。撤销后父属性回去了、子分支名字/顺序还在 → 看起来“撤不掉”。
+- 真机探针（`_probe_props_undo2.js`）确认：旧 aspects 下 `before.groups` 只有 `[P]`；修复后 `before.groups = [P3, b1, b2]`（旧名）、`before.outliner` 存在、`post = [P3, [0] b1, [1] b2]`。
+
+**修复**（`editGroupProps` 的 `applyChanges`）：
+```js
+const affected = [];  // 目标分组 + 整棵子树 + 父分组
+for (const t of targets) {
+  for (const g of collectGroupSubtree(t)) addAffected(g);
+  if (t.parent && isGroup(t.parent)) addAffected(t.parent);
+}
+const affectedCubes = [...];  // 子树里方块的 faces[].tint 会被 walkTint 改
+Undo.initEdit({ outliner: true, groups: affected, elements: affectedCubes });
+...
+Undo.finishEdit('修改分组映射属性', { outliner: true, groups: affected, elements: affectedCubes });
+```
+- `outliner` 还原结构/顺序；`groups`（含子节点）还原名字/自定义属性；`elements` 还原方块着色。
+- catch 里加 `Undo.cancelEdit()`，防止异常留下半截 `current_save` 让后续 Ctrl+Z 全失效。
+
+**备注**：真机 detached 探针里 `Undo.undo()` 会抛 `Cannot read properties of undefined (reading 'position')`——来自 `Format.bone_rig` 分支对“没有 mesh 的脱离分组”调 `preview_controller.updateTransform`，是脱离测试树的假象；真实在 Outliner 里、有 mesh 的分组不会。因此验证改用“检查撤销快照 before/post + extend 还原”的方式。
 
 ### 0.0.21 range_dispatch 分支编号格式新增变量 `n`（0.73.0，2026-11-06）
 

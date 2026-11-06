@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.73.0';
+const VERSION = '0.73.1';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2759,8 +2759,21 @@ function editGroupProps() {
 				let targets = selected.length ? selected.slice() : [group];
 				if (selected.length && selected.indexOf(group) < 0) targets = [group];
 				if (targets.indexOf(group) < 0) targets.unshift(group);
+				// 撤销范围必须覆盖“会一起被改动”的所有节点：目标分组 + 它们整棵子树 + 父分组。
+				// 只快照目标分组本身（childless）是不够的：改类型时 syncBranchLabels 会给子分支加
+				// `[n]` 前缀、sortBranchChildren 会重排，只快照目标分组会导致 Ctrl+Z 后子分支名字/顺序
+				// 还原不了，看起来就像“属性编辑撤不掉”。outliner 负责结构/顺序，groups 负责名字/自定义
+				// 属性，elements 负责方块着色（walkTint 会改 cube.faces[].tint）。
+				const affected = [];
+				const affectedCubes = [];
+				const addAffected = (g) => { if (isGroup(g) && affected.indexOf(g) < 0) affected.push(g); };
+				for (const t of targets) {
+					for (const g of collectGroupSubtree(t)) addAffected(g);
+					if (t.parent && isGroup(t.parent)) addAffected(t.parent);
+				}
+				for (const g of affected) for (const c of (g.children || [])) if (isCube(c) && affectedCubes.indexOf(c) < 0) affectedCubes.push(c);
 				// “继续并删除”把删子元素和改属性合成同一条撤销记录
-				Undo.initEdit(extraGroups.length ? { outliner: true, groups: targets.concat(extraGroups), elements: [] } : { groups: targets });
+				Undo.initEdit({ outliner: true, groups: affected, elements: affectedCubes });
 				for (const g of extraGroups) for (const child of (g.children || []).slice()) {
 					try { if (typeof child.remove === 'function') child.remove(); } catch (e) { /* ignore */ }
 				}
@@ -2816,7 +2829,7 @@ function editGroupProps() {
 					try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 					try { if (typeof UVEditor !== 'undefined' && UVEditor.updateView) UVEditor.updateView(); } catch (e) { /* ignore */ }
 				}
-				Undo.finishEdit('修改分组映射属性', extraGroups.length ? { outliner: true, groups: targets.concat(extraGroups), elements: [] } : undefined);
+				Undo.finishEdit('修改分组映射属性', { outliner: true, groups: affected, elements: affectedCubes });
 				simInvalidate();
 				try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 				const modelRef = String(group.imda_model || '').trim();
@@ -2834,6 +2847,8 @@ function editGroupProps() {
 				Blockbench.showQuickMessage('已更新 ' + targets.length + ' 个分组' + (tinted ? ('，为 ' + tinted + ' 个方块自动勾选着色') : '') + (sortedCount ? ('，重排 ' + sortedCount + ' 个分支') : '') + (relabeled ? ('，更新 ' + relabeled + ' 个分支名') : ''), 2500);
 			} catch (error) {
 				console.error(error);
+				// 出错时务必结束当前撤销会话，否则会留下半截 current_save，令后续 Ctrl+Z 失效
+				try { Undo.cancelEdit(); } catch (e) { /* ignore */ }
 				Blockbench.showMessageBox({ title: '修改失败', message: String((error && error.message) || error), icon: 'error' });
 			}
 			};

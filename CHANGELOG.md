@@ -2,6 +2,14 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.73.1
+- **修「编辑分组映射属性…」改完 Ctrl+Z 撤不干净（看起来像撤不掉）**：
+  - 旧实现 `Undo.initEdit({ groups: targets })` 只快照**目标分组本身**，而 `getChildlessCopy` 不含子节点。可改映射类型时 `syncBranchLabels` 会给子分支加 `[n]` 前缀、`sortBranchChildren` 会重排子节点——这些都没进撤销记录。于是撤销后父分组的属性回去了、子分支的名字/顺序却还在，观感就是“属性没撤回”。
+  - 改法：撤销范围扩大到「目标分组 + 其整棵子树 + 父分组」，aspects 用 `{ outliner: true（结构/顺序）, groups: <这些分组>（名字/自定义属性）, elements: <子树里的方块>（walkTint 会改 faces[].tint） }`；`finishEdit` 用同一组 aspects。`outliner` 负责找回复排后的顺序，`groups`（含子节点）负责找回原名，方块负责着色。
+  - 另外：`applyChanges` 出错时调用 `Undo.cancelEdit()` 结束当前撤销会话，避免留下半截 `current_save` 让后续 Ctrl+Z 全部失效。
+  - 验证：真机探针检查撤销记录——`before.groups` 现在包含子分支且是**旧名字**（`P3, b1, b2`）、`before.outliner` 存在；apply 后 `post` 是 `P3, [0] b1, [1] b2`。
+- 说明：插件的 `imda_*` 属性没有声明 `inputs.element_panel`，**不会出现在 Blockbench 右侧原生属性面板**；「属性编辑」只能走插件的「编辑分组映射属性…」对话框（Blockbench 自身面板只登记带 `inputs.element_panel` 的属性）。
+- 单测 494 项全过（撤销属于 Blockbench 运行时行为，单测里的 Undo 是桩）。
 ## 0.73.0
 - **range_dispatch 分支编号格式新增变量 `n`**：`n` = 本分支在上层节点里的编号（阈值）。
   - 例：外层 `slots` 格式 `i` → 第 6 个分支 `slots[5]`；它自己的格式 `ni` → 子分支阈值 `0,5,10`（= 5 × i）。
