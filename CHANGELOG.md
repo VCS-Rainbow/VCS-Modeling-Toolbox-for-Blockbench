@@ -2,6 +2,15 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.73.6
+- **生成复调用序列：子节点的映射属性可以在对话框里选**（原来每个 `#分支` 子分组写死 `imda_type='composite'`）。
+  - 对话框新增「子节点类型（每个 #分支）」，可选 composite / inline / model / internal / range_dispatch / condition / select / empty（与「编辑分组映射属性」同一套类型）。
+  - 选 `range_dispatch` / `condition` / `select` 这类**分支总控**类型后，出现对应子选项：property、index、分支编号格式、scale，以及 property 相关字段（compass target、time source、wobble、normalize、period、remaining）；容器为 condition 时还能选 on_true/on_false。
+  - 实现：`buildSequenceChildResult(options)` 把对话框选择整理成 `imda_*` 结果对象，生成时对每个 `#分支` 子分组调用 `assignGroupMapProps(node, childResult)`（复用属性面板同一套赋值/清空逻辑），再按容器 range_dispatch 写 `imda_threshold`。
+  - 容器相关字段（property/index/阈值格式/起点/步长）改成仅在「容器节点类型 = range_dispatch」时显示。
+  - 单测新增 `_test_sequence_child.js`（37 项：`buildSequenceChildResult` 各类型/字段、`assignGroupMapProps` 集成、`generateCallSequence` 端到端生成子节点类型/字段）。
+- 单测合计：37 + 17 + 25 + 76 + 350 + 29 = **534 项**。
+- 备注：本轮 Blockbench 以**无远程调试端口**方式重启（CDP 9222 不可用），未做真机热重载验证；插件文件已部署，重启 Blockbench 或重载插件后生效。
 ## 0.73.5
 - **复调用标签右键菜单再调整**：
   - 顺序改为：`… → 提取变换 → 应用变换 →（分割线）→ 实例化同组复调用标签 → 编辑复调用标签…`。即「实例化」在「编辑」正上方（编辑仍在最下），并在「实例化/编辑」与「提取/应用」之间加一条分割线。

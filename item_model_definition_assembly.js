@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.73.5';
+const VERSION = '0.73.6';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -3086,6 +3086,35 @@ function sequenceFormatValue(format, index) {
 	} catch (e) { return null; }
 }
 
+/** 序列生成器：把对话框里「子节点」的选项整理成可传给 assignGroupMapProps 的 imda_* 结果对象。
+ *  子节点类型可以与容器不同，选了分支总控（range_dispatch / condition / select）后其对应子选项才生效。 */
+function buildSequenceChildResult(options) {
+	options = options || {};
+	const type = String(options.childType || 'composite').replace(/^minecraft:/, '');
+	const result = { imda_type: type };
+	const isBranch = (type === 'range_dispatch' || type === 'condition' || type === 'select');
+	const prop = String(options.childProperty == null ? '' : options.childProperty).replace(/^minecraft:/, '').trim();
+	if (isBranch) {
+		result.imda_property = prop;
+		if (type === 'range_dispatch') {
+			if (options.childIndex !== undefined) result.imda_index = num(options.childIndex);
+			if (options.childThresholdFormat !== undefined) result.imda_threshold_format = String(options.childThresholdFormat == null ? '' : options.childThresholdFormat).trim();
+			if (options.childScale !== undefined) result.imda_scale = num(options.childScale) || 1;
+		}
+		if (prop === 'compass' && options.childRangeTarget !== undefined) result.imda_range_target = options.childRangeTarget;
+		if (prop === 'time' && options.childRangeSource !== undefined) result.imda_range_source = options.childRangeSource;
+		if ((prop === 'compass' || prop === 'time') && options.childRangeWobble !== undefined) result.imda_range_wobble = !!options.childRangeWobble;
+		if ((prop === 'count' || prop === 'damage') && options.childRangeNormalize !== undefined) result.imda_range_normalize = !!options.childRangeNormalize;
+		if (prop === 'use_cycle' && options.childRangePeriod !== undefined) result.imda_range_period = num(options.childRangePeriod) || 1;
+		if (prop === 'use_duration' && options.childRangeRemaining !== undefined) result.imda_range_remaining = !!options.childRangeRemaining;
+	}
+	// on_true/on_false 只在「子节点的父级（即容器）是 condition」时有意义
+	if (String(options.nodeType || 'range_dispatch') === 'condition' && options.childCondition !== undefined) {
+		result.imda_condition = options.childCondition;
+	}
+	return result;
+}
+
 /** 生成复调用序列：满节点放本体，其余节点用 a1…ak 的复调用 */
 function generateCallSequence(options) {
 	options = options || {};
@@ -3108,6 +3137,8 @@ function generateCallSequence(options) {
 	const index = num(options.index);
 	const thresholdStart = num(options.thresholdStart);
 	const thresholdStep = num(options.thresholdStep);
+	// 子节点（每个 #分支）自身的映射属性：类型可选，分支总控类型会有对应子选项
+	const childResult = buildSequenceChildResult(options);
 	const groupsMoved = items.filter(isGroup);
 	try { Undo.initEdit({ outliner: true, groups: groupsMoved, elements: items.filter(isLocator) }); } catch (e) { /* ignore */ }
 	const container = new Group({ name: sequenceName, imda_type: type, origin: [8, 8, 8], rotation: [0, 0, 0] });
@@ -3123,7 +3154,9 @@ function generateCallSequence(options) {
 	for (let i = 0; i < counts.length; i++) {
 		const count = counts[i];
 		const isBody = count === total;
-		const node = new Group({ name: sequenceName + ' #' + count, imda_type: 'composite', origin: [8, 8, 8], rotation: [0, 0, 0] });
+		const node = new Group({ name: sequenceName + ' #' + count, origin: [8, 8, 8], rotation: [0, 0, 0] });
+		// 先把「子节点类型/属性」应用上去（assignGroupMapProps 会 set imda_type + 清空不适用的字段）
+		assignGroupMapProps(node, childResult);
 		generatedGroups.push(node);
 		if (type === 'range_dispatch') {
 			// 与属性面板同一个解析器：格式优先，留空才退回 起点 + i × 步长
@@ -3170,15 +3203,28 @@ function openSequenceDialog() {
 		form: {
 			name: { label: '容器名称', type: 'text', value: '[sequence]' },
 			direction: { label: '方向', type: 'select', value: 'decrease', options: { decrease: '递减（aN…a1）', increase: '递增（a1…aN）' } },
-			nodeType: { label: '节点类型', type: 'select', value: 'range_dispatch', options: { range_dispatch: 'range_dispatch', composite: 'composite' } },
+			nodeType: { label: '容器节点类型', type: 'select', value: 'range_dispatch', options: { range_dispatch: 'range_dispatch', composite: 'composite' } },
 			countStep: { label: '每次递增/递减的分组数（步长）', type: 'number', value: 1, step: 1, min: 1, max: 64 },
 			_: '_',
-			property: { label: 'range_dispatch 来源（property）', type: 'select', value: 'custom_model_data', options: { custom_model_data: 'custom_model_data', cooldown: 'cooldown', count: 'count', damage: 'damage', time: 'time', use_cycle: 'use_cycle', use_duration: 'use_duration', compass: 'compass' } },
-			index: { label: 'custom_model_data index', type: 'number', value: 0 },
-			thresholdFormat: { label: '分支编号格式（同属性面板）', type: 'text', value: '', description: '语法与分组属性里的「分支编号格式」完全一致：i → 0,1,2；2i → 0,2,4；10+2i → 10,12,14；0,1,3 → 字面列表；2:2i → 重复 2 次；ni → 0,n,2n。\n填了格式时它优先于下面的起点/步长（格式里也支持用 i 当序号、n 当上层编号）。' },
-			thresholdStart: { label: '阈值起点（未填格式时）', type: 'number', value: 0 },
-			thresholdStep: { label: '阈值步长（未填格式时）', type: 'number', value: 1, step: 1, min: -100, max: 100 },
-			info: { type: 'info', text: 'range_dispatch：有「分支编号格式」时按格式算 threshold，否则用 起点 + i × 步长；composite 时忽略 property/index/阈值。满节点只放一次本体。' },
+			property: { label: '容器 range_dispatch 来源（property）', type: 'select', value: 'custom_model_data', options: { custom_model_data: 'custom_model_data', cooldown: 'cooldown', count: 'count', damage: 'damage', time: 'time', use_cycle: 'use_cycle', use_duration: 'use_duration', compass: 'compass' }, condition: (r) => r.nodeType === 'range_dispatch' },
+			index: { label: '容器 custom_model_data index', type: 'number', value: 0, condition: (r) => r.nodeType === 'range_dispatch' },
+			thresholdFormat: { label: '容器分支编号格式（同属性面板）', type: 'text', value: '', description: '语法与分组属性里的「分支编号格式」完全一致：i → 0,1,2；2i → 0,2,4；10+2i → 10,12,14；0,1,3 → 字面列表；2:2i → 重复 2 次；ni → 0,n,2n。\n填了格式时它优先于下面的起点/步长（格式里也支持用 i 当序号、n 当上层编号）。', condition: (r) => r.nodeType === 'range_dispatch' },
+			thresholdStart: { label: '容器阈值起点（未填格式时）', type: 'number', value: 0, condition: (r) => r.nodeType === 'range_dispatch' },
+			thresholdStep: { label: '容器阈值步长（未填格式时）', type: 'number', value: 1, step: 1, min: -100, max: 100, condition: (r) => r.nodeType === 'range_dispatch' },
+			__child: '_',
+			childType: { label: '子节点类型（每个 #分支）', type: 'select', value: 'composite', options: { composite: 'composite', inline: 'inline（内联模型）', model: 'model（引用模型）', internal: 'internal（内部结构）', range_dispatch: 'range_dispatch', condition: 'condition', select: 'select', empty: 'empty' }, description: '生成的每个 #分支 子分组使用的映射类型。选 range_dispatch / condition / select 这类分支总控后，下面会出现对应子选项。默认 composite。' },
+			childProperty: { label: '子节点 property（分支总控）', type: 'select', value: '', options: { '': '（未设置）', selected: 'selected', broken: 'broken', damaged: 'damaged', carried: 'carried', custom_model_data: 'custom_model_data', has_component: 'has_component', component: 'component', keybind_down: 'keybind_down', compass: 'compass（range）', count: 'count（range）', damage: 'damage（range）', time: 'time（range）', use_cycle: 'use_cycle（range）', use_duration: 'use_duration（range）', 'bundle/fullness': 'bundle/fullness（range）', cooldown: 'cooldown（range）', 'crossbow/pull': 'crossbow/pull（range）', context_dimension: 'context_dimension（select）', block_state: 'block_state（select）', local_time: 'local_time（select）' }, condition: (r) => ['range_dispatch', 'condition', 'select'].indexOf(r.childType) >= 0, description: '子节点的 property / 谓词；range_dispatch、condition、select 生效。' },
+			childIndex: { label: '子节点 index（range_dispatch）', type: 'number', value: 0, condition: (r) => r.childType === 'range_dispatch' },
+			childThresholdFormat: { label: '子节点分支编号格式（其自身 entries）', type: 'text', value: '', condition: (r) => r.childType === 'range_dispatch', description: '子节点自身是 range_dispatch 时，它给自己的子分支用的编号格式（语法同属性面板）；一般留空。' },
+			childScale: { label: '子节点 scale（range_dispatch）', type: 'number', value: 1, condition: (r) => r.childType === 'range_dispatch' },
+			childCondition: { label: '子节点分支条件（on_true / on_false）', type: 'select', value: '', options: { '': '（按位置）', on_true: 'on_true', on_false: 'on_false' }, condition: (r) => r.nodeType === 'condition', description: '仅当容器是 condition 时，子节点按 on_true/on_false 占位。' },
+			childRangeTarget: { label: '子节点 compass target', type: 'select', value: '', options: { '': '（未设置）', lodestone: 'lodestone', none: 'none', spawn: 'spawn', recovery: 'recovery' }, condition: (r) => r.childProperty === 'compass' },
+			childRangeSource: { label: '子节点 time source', type: 'select', value: '', options: { '': '（未设置）', daytime: 'daytime', random: 'random', moon_phase: 'moon_phase' }, condition: (r) => r.childProperty === 'time' },
+			childRangeWobble: { label: '子节点 wobble（摆动）', type: 'checkbox', value: true, condition: (r) => r.childProperty === 'compass' || r.childProperty === 'time' },
+			childRangeNormalize: { label: '子节点 normalize（归一化）', type: 'checkbox', value: true, condition: (r) => r.childProperty === 'count' || r.childProperty === 'damage' },
+			childRangePeriod: { label: '子节点 period（use_cycle）', type: 'number', value: 1, condition: (r) => r.childProperty === 'use_cycle' },
+			childRangeRemaining: { label: '子节点 remaining（use_duration）', type: 'checkbox', value: false, condition: (r) => r.childProperty === 'use_duration' },
+			info: { type: 'info', text: '容器：range_dispatch 用 property/index + 分支编号格式（或 起点 + i × 步长）算各 #分支 的 threshold；composite 时忽略这些。\n子节点：每个 #分支 子分组按「子节点类型」生成，选分支总控类型时其对应子选项才生效。满节点只放一次本体。' },
 		},
 		onConfirm(result) { generateCallSequence(result); },
 	}).show();
@@ -6647,7 +6693,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, scanPackEntries, buildAllItemsTree, matchBlacklist, listFilesRecursive, simStepOnce, simAdvanceSlot, primeMappingCache, repairOutlinerDuplicates, applyConvertGroupsToCallTags, collectAllGroups, collectGroupSubtree, outermostSelectedGroups, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, buildSequenceChildResult, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, scanPackEntries, buildAllItemsTree, matchBlacklist, listFilesRecursive, simStepOnce, simAdvanceSlot, primeMappingCache, repairOutlinerDuplicates, applyConvertGroupsToCallTags, collectAllGroups, collectGroupSubtree, outermostSelectedGroups, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-11-06 更新 · 当前版本 **0.73.5**
+> 生成时间：2026-11-06 更新 · 当前版本 **0.73.6**
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 > 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉「导出阈值被子级格式覆盖」，0.68.115 修掉「实例化后 export=false 导致整条分支不导出」，0.68.116 修掉「撤销不删除新建节点」的 3 处问题，0.68.117 修掉「枢轴归位把方块挪走」并说明 gizmo 位置规则。
 > **调试入口已升级：可用 `_bbcdp.js` 从终端直连软件内 Console + 全部 Blockbench 事件，见 `_BBCDP.md` 与 0.0.2。**
@@ -209,6 +209,17 @@ Blockbench 的方块网格是「`mesh.position = origin`，顶点相对 origin �
 **真机验证（0.69.13）**：`ghost_lock` → 45 组锁 / 70 方块锁 / 50 半透明 / store=5；切 `off` → 全部归 0；重载插件后 `store` 仍是 5，再切 `off` 仍能全清。旧版本留下的 96 个孤立锁已用只读探针清掉（`Project.saved` 保持 `false`）。
 
 单测 289 项（+6）。
+
+### 0.0.26 生成复调用序列：子节点属性可选（0.73.6，2026-11-06）
+
+**需求**：生成复调用序列时，`#分支` 子分组的映射类型/属性应可在对话框里选；选 composite/range_dispatch/select 等分支总控后出现对应子选项（像「编辑分组映射属性」一样）。
+
+**实现**：
+- 新增 `buildSequenceChildResult(options)`：把对话框 `childType` + `child*` 选项整理成 `imda_*` 结果对象（type/property/index/threshold_format/scale + property 相关 range 字段 + 容器为 condition 时的 imda_condition）。
+- `generateCallSequence`：每个 `#分支` 子分组创建后调用 `assignGroupMapProps(node, childResult)`（复用属性面板同一套赋值/reset 逻辑），再按容器 range_dispatch 写 `imda_threshold`。
+- `openSequenceDialog`：把容器字段改名为「容器…」并仅在 `nodeType==='range_dispatch'` 显示；新增「子节点类型」及依赖子选项（`childProperty/childIndex/childThresholdFormat/childScale/childCondition/childRange*`），条件用 `condition:(r)=>...`。第二个分隔线用 `__child: '_'`——Blockbench Dialog 判断的是**值** `=== '_'`（bundle.js@6660335：`a==="_"→append <hr/>`），与键名无关，安全。
+
+**验证**：单测 `_test_sequence_child.js` 37 项全过（含 `generateCallSequence` 端到端：childType=range_dispatch 时 3 个分支 type/index/scale/threshold 正确；默认 composite）。**本轮无 CDP**（Blockbench 无调试端口重启），未做真机热重载。
 
 ### 0.0.25 复调用标签右键菜单顺序 + 快捷键（0.73.5，2026-11-06）
 
