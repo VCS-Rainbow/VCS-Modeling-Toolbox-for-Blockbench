@@ -2,6 +2,14 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.73.8
+- **修：range_dispatch 总控下的「复调用标签」名字前不显示序号**。复调用标签是自定义元素 `imda_call_tag`（继承 `Locator`，但导出器把它也当作 range_dispatch 的 `entries`），而 `syncBranchLabels` / `sortBranchChildren` / `stripChildPrefixes` 之前只处理 `isGroup` 子节点，导致标签永远不加 `[阈值]` 前缀。
+  - 新增 `branchChildNodes(group)`：分支子节点 = 分组 + 复调用标签（`isCallTag`），顺序与导出一致（先分组，再标签）。
+  - `syncBranchLabels` / `sortBranchChildren` / `stripChildPrefixes` / `stripStrayBranchPrefixes` 全部改为同时处理复调用标签；标签阈值取 `imda_call_overrides.threshold`（无则按序号），与导出语义一致。
+  - 新增 `add_locator` 事件触发分支同步；`复调用选中的分组`、`添加复调用标签` 在父级是分支容器时也会刷新序号。
+  - 载入/重载插件及 `select_project` / `finished_loading_project` 时跑一次 `syncAllBranchLabels()`（只改名/阈值、不排序），让已存在的结构也能立刻补上序号。
+- 单测：`_test_sequence_child.js` 增到 44 项（新增 range_dispatch 下复调用标签编号、分组优先顺序、改回 composite 去前缀、`syncAllBranchLabels`）；合计 44 + 17 + 25 + 76 + 350 + 29 = **541 项**。
+- 备注：仍无 CDP，未真机验证；文件已部署，重载插件/重启后生效。
 ## 0.73.7
 - **生成复调用序列后更新「大纲格式」**：生成完成后对容器执行 `sortBranchChildren` + `syncBranchLabels`，让子分支名按容器类型刷新前缀（range_dispatch → `[阈值]`、condition → `[on_true]/[on_false]`、select → `[when]`），必要时按阈值重排；这两步放在 `Undo.finishEdit` 之前，改名/重排都进撤销记录。另外对 outliner 面板 `Panels.outliner.inside_vue` 调用 `$forceUpdate()`，让程序化新增的节点立即重绘。
 - 单测：`_test_sequence_child.js` 增到 38 项（新增“分支名带 [阈值] 前缀”）；合计 38 + 17 + 25 + 76 + 350 + 29 = **535 项**。

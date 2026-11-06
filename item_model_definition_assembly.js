@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.73.7';
+const VERSION = '0.73.8';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2098,32 +2098,35 @@ function sortBranchChildren(parent) {
 	const type = String(parent.imda_type || '').replace(/^minecraft:/, '');
 	if (type !== 'range_dispatch' && type !== 'condition') return 0;
 	const thresholdFormat = String(parent.imda_threshold_format || '').trim();
-	const groups = parent.children.filter(isGroup);
-	try { console.log('[装配] sortBranchChildren', JSON.stringify({ parent: parent.name || '', type, threshold_format: thresholdFormat, order: groups.map(g => ({ name: g.name || '', threshold: g.imda_threshold })) })); } catch (e) { /* ignore */ }
+	// 分支子节点 = 分组 + 复调用标签（导出器把复调用标签也算 range_dispatch entries）
+	const items = branchChildNodes(parent);
+	try { console.log('[装配] sortBranchChildren', JSON.stringify({ parent: parent.name || '', type, threshold_format: thresholdFormat, order: items.map(g => ({ name: g.name || '', threshold: isGroup(g) ? g.imda_threshold : callTagBranchThreshold(g) })) })); } catch (e) { /* ignore */ }
 	// 格式（如 5-i）已经定义了“第 i 个分支”的 threshold；再用 threshold 排序会和 syncBranchLabels 互相翻转。
 	if (type === 'range_dispatch' && thresholdFormat) return 0;
-	if (groups.length < 2) return 0;
+	if (items.length < 2) return 0;
 	const keyOf = (child) => {
 		if (type === 'condition') {
 			const label = String(child.imda_condition || '').toLowerCase();
 			if (label === 'on_true' || label === 'on_false') return label === 'on_true' ? 0 : 1;
-			return groups.indexOf(child);
+			return items.indexOf(child);
 		}
-		return Number(child.imda_threshold) || 0;
+		if (isGroup(child)) return Number(child.imda_threshold) || 0;
+		const t = callTagBranchThreshold(child);
+		return t !== null ? t : items.indexOf(child);
 	};
-	const sorted = groups.slice().sort((a, b) => keyOf(a) - keyOf(b));
-	const unchanged = sorted.every((child, index) => child === groups[index]);
+	const sorted = items.slice().sort((a, b) => keyOf(a) - keyOf(b));
+	const unchanged = sorted.every((child, index) => child === items[index]);
 	if (unchanged) return 0;
 	try {
 		console.log('[装配] 分支重排', JSON.stringify({
 			parent: parent.name || '',
 			type,
 			threshold_format: thresholdFormat,
-			before: groups.map(g => ({ name: g.name || '', threshold: g.imda_threshold, key: keyOf(g) })),
-			after: sorted.map(g => ({ name: g.name || '', threshold: g.imda_threshold, key: keyOf(g) })),
+			before: items.map(g => ({ name: g.name || '', threshold: isGroup(g) ? g.imda_threshold : callTagBranchThreshold(g), key: keyOf(g) })),
+			after: sorted.map(g => ({ name: g.name || '', threshold: isGroup(g) ? g.imda_threshold : callTagBranchThreshold(g), key: keyOf(g) })),
 		}));
 	} catch (e) { /* ignore */ }
-	const others = parent.children.filter(child => !isGroup(child));
+	const others = parent.children.filter(child => items.indexOf(child) < 0);
 	parent.children.length = 0;
 	for (const child of sorted.concat(others)) parent.children.push(child);
 	return sorted.length;
@@ -2168,28 +2171,33 @@ function resetTypeSpecificProps(group, newType) {
 /* 剥掉所有子分组的 [..] / ⚠ 前缀（父分组不再是分支容器时用） */
 function stripChildPrefixes(group) {
 	let changed = 0;
-	for (const child of (group.children || []).filter(isGroup)) {
+	for (const child of (group.children || []).filter(c => isGroup(c) || isCallTag(c))) {
 		const base = String(child.name || '').replace(/^\[[^\]]*\]\s*/, '').replace(/^\u26a0\s*/, '');
 		if (base !== child.name) { child.name = base; changed++; }
-		if (child.imda_auto_disabled) { child.imda_auto_disabled = false; changed++; }
+		if (isGroup(child) && child.imda_auto_disabled) { child.imda_auto_disabled = false; changed++; }
 	}
 	return changed;
 }
 
-/* 分组被挪出分支容器（或挪到根目录）后，去掉名字里的 [k] / ⚠ 前缀 */
+/* 分组/复调用标签被挪出分支容器（或挪到根目录）后，去掉名字里的 [k] / ⚠ 前缀 */
 function stripStrayBranchPrefixes() {
 	const branchTypes = ['condition', 'range_dispatch', 'select'];
 	let changed = 0;
+	const strip = (node) => {
+		const base = String(node.name || '').replace(/^\[[^\]]*\]\s*/, '').replace(/^\u26a0\s*/, '');
+		if (base && base !== node.name) { node.name = base; changed++; }
+		if (node.imda_auto_disabled) { node.imda_auto_disabled = false; changed++; }
+	};
 	const walk = (nodes, parent) => {
 		for (const node of nodes || []) {
-			if (!isGroup(node)) continue;
 			const parentType = parent ? String(parent.imda_type || '').replace(/^minecraft:/, '') : '';
-			if (branchTypes.indexOf(parentType) < 0) {
-				const base = String(node.name || '').replace(/^\[[^\]]*\]\s*/, '').replace(/^\u26a0\s*/, '');
-				if (base && base !== node.name) { node.name = base; changed++; }
-				if (node.imda_auto_disabled) { node.imda_auto_disabled = false; changed++; }
+			if (isGroup(node)) {
+				if (branchTypes.indexOf(parentType) < 0) strip(node);
+				walk(node.children, node);
+			} else if (isCallTag(node)) {
+				// 复调用标签没有子节点；只有父级不是分支容器时才需要去掉旧前缀
+				if (branchTypes.indexOf(parentType) < 0) strip(node);
 			}
-			walk(node.children, node);
 		}
 	};
 	walk((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : [], null);
@@ -2618,11 +2626,31 @@ function branchSelfNumber(group) {
 	return undefined;
 }
 
+/** 分支容器的“分支子节点”：分组 + 复调用标签（imda_call_tag 自定义元素，也兼容旧式带 imda_call_target 的 Locator）。
+ *  顺序与导出器一致：先所有分组，再所有复调用标签。 */
+function branchChildNodes(group) {
+	const children = (group && Array.isArray(group.children)) ? group.children : [];
+	const groups = children.filter(isGroup);
+	const calls = children.filter(c => !isGroup(c) && isCallTag(c));
+	return groups.concat(calls);
+}
+
+/** 复调用标签作为 range_dispatch 分支时的有效阈值（导出语义：override.threshold，有则用）；返回 null 表示没有显式值。 */
+function callTagBranchThreshold(node) {
+	try {
+		const ov = callOverridesOf(node);
+		const raw = String(ov && ov.threshold != null ? ov.threshold : '').trim();
+		if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw);
+	} catch (e) { /* ignore */ }
+	return null;
+}
+
 function syncBranchLabels(group) {
 	const type = String((group && group.imda_type) || '').replace(/^minecraft:/, '');
 	// select 也有分支前缀（[when] …），此前被这里挡在门外，导致 select 分支名永远不刷新
 	if (type !== 'range_dispatch' && type !== 'condition' && type !== 'select') return 0;
-	const children = (group.children || []).filter(isGroup);
+	// 分支子节点同时包含分组和复调用标签（导出器把复调用标签也当 range_dispatch 的 entries）
+	const children = branchChildNodes(group);
 	let exporter = null;
 	let changed = 0;
 	children.forEach((child, index) => {
@@ -2632,13 +2660,17 @@ function syncBranchLabels(group) {
 		} else if (type === 'select') {
 			const when = String(child.imda_case_when || '').trim();
 			label = when ? when.replace(/^\[|\]$/g, '').split(',')[0].trim() : ('case' + index);
-		} else {
+		} else if (isGroup(child)) {
 			try { if (!exporter) exporter = createExporter(); } catch (e) { exporter = null; }
 			const formatted = exporter ? exporter.evalThreshold(group.imda_threshold_format, index, branchSelfNumber(group)) : null;
 			// 格式生效时把数值同步回子节点，属性面板的 threshold 才不会永远显示 0。
 			if (formatted !== null) child.imda_threshold = formatted;
 			const manual = Number(child.imda_threshold) || 0;
 			label = String(formatted !== null ? formatted : (manual !== 0 ? manual : index));
+		} else {
+			// 复调用标签：导出阈值 = override.threshold（有则用），否则它在分支里的序号
+			const manual = callTagBranchThreshold(child);
+			label = String(manual !== null ? manual : index);
 		}
 		const base = String(child.name || '').replace(/^\[[^\]]*\]\s*/, '').replace(/^\u26a0\s*/, '');
 				// 没有对应标签（例如类型从 range_dispatch 改成 condition）→ 只剥掉旧前缀
@@ -2647,9 +2679,9 @@ function syncBranchLabels(group) {
 						const ignored = type === 'condition' && index >= 2;
 						const target = (ignored ? '\u26a0 ' : '') + base;
 						if (ignored) {
-							if (child.export !== false) { child.export = false; changed++; }
+							if (isGroup(child) && child.export !== false) { child.export = false; changed++; }
 							if (projectValue('imda_hide_unavailable', true) !== false && child.visibility !== false) { child.visibility = false; changed++; }
-						} else if (child.export === false && child.imda_auto_disabled) {
+						} else if (isGroup(child) && child.export === false && child.imda_auto_disabled) {
 							child.export = true; child.imda_auto_disabled = false; changed++;
 						}
 						if (ignored) child.imda_auto_disabled = true;
@@ -2660,6 +2692,20 @@ function syncBranchLabels(group) {
 		const next = prefix + base;
 		if (next !== child.name) { child.name = next; changed++; }
 	});
+	return changed;
+}
+
+/** 遍历大纲，给所有分支容器的子节点（分组 + 复调用标签）刷新名字前缀。只改名/阈值，不排序。 */
+function syncAllBranchLabels() {
+	let changed = 0;
+	const walk = (nodes) => {
+		for (const node of (nodes || [])) {
+			if (!isGroup(node)) continue;
+			try { changed += syncBranchLabels(node); } catch (e) { /* ignore */ }
+			walk(node.children);
+		}
+	};
+	try { walk((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : []); } catch (e) { /* ignore */ }
 	return changed;
 }
 
@@ -2896,6 +2942,8 @@ function addEmptyCallTag() {
 		tag = newCallTag({ name: '调用', position: origin, rotation, ignore_inherited_scale: true });
 		if (tag) { addAndInit(tag, parent); try { tag.select(); } catch (e) { /* ignore */ } }
 	} catch (error) { console.error('[装配] 创建复调用标签失败', error); }
+	// 若父分组是分支容器（range_dispatch/condition/select），新建的复调用标签也要带序号前缀
+	try { if (parent && isGroup(parent)) { sortBranchChildren(parent); syncBranchLabels(parent); } } catch (e) { /* ignore */ }
 	try { Undo.finishEdit('添加复调用标签', { outliner: true, elements: tag ? [tag] : [] }); } catch (e) { /* ignore */ }
 	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 	try { Project.saved = false; } catch (e) { /* ignore */ }
@@ -2932,6 +2980,12 @@ function callSelectedGroup() {
 			created++;
 		} catch (error) { console.error('[装配] 创建复调用标签失败', error); }
 	}
+	// 若目标父级是分支容器（range_dispatch/condition/select），新建的复调用标签要带序号前缀
+	try {
+		const parents = [];
+		for (const loc of createdLocators) { const p = loc && loc.parent; if (p && isGroup(p) && parents.indexOf(p) < 0) parents.push(p); }
+		for (const p of parents) { sortBranchChildren(p); syncBranchLabels(p); }
+	} catch (e) { /* ignore */ }
 	try { Undo.finishEdit('复调用选中的分组', { outliner: true, elements: createdLocators }); } catch (e) { /* ignore */ }
 	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 	try { Project.saved = false; } catch (e) { /* ignore */ }
@@ -6688,10 +6742,13 @@ Plugin.register('item_model_definition_assembly', {
 		try { buildSimPanel(false); } catch (e) { console.warn('[装配] 面板创建失败（可忽略）', e); }
 		// 面板会自动出现在「视图 → 面板」里，不再占用 Tools 菜单
 		attachGroupMenu();
-		// 不绑定 outliner 的 mouseup/dragend，也不在 update_selection 时同步分支；
+		// 载入/重载插件时给现有分支容器（含 range_dispatch 下的复调用标签）补上序号前缀
+		try {
+			if (syncAllBranchLabels()) { try { if (typeof Panels !== 'undefined' && Panels.outliner && Panels.outliner.inside_vue && Panels.outliner.inside_vue.$forceUpdate) Panels.outliner.inside_vue.$forceUpdate(); } catch (e) { /* ignore */ } }
+		} catch (e) { /* ignore */ }
 		// 避免普通选中触发 sortBranchChildren / syncBranchLabels。
 		try { Blockbench.on('update_selection', () => { try { guardLockedSelection(); } catch (e) { /* ignore */ } try { guardBatchSelection(); } catch (e) { /* ignore */ } try { guardBoxSelection(); } catch (e) { /* ignore */ } }); } catch (e) { /* ignore */ }
-		for (const event of ['add_group', 'remove_group']) {
+		for (const event of ['add_group', 'remove_group', 'add_locator']) {
 			try { Blockbench.on(event, (data) => { simInvalidate(); scheduleBranchSync(data && data.object, event); }); } catch (e) { /* ignore */ }
 		}
 		for (const event of ['select_project', 'finished_loading_project', 'update_selection']) {
@@ -6700,9 +6757,20 @@ Plugin.register('item_model_definition_assembly', {
 		for (const event of ['select_project', 'finished_loading_project']) {
 			try { Blockbench.on(event, ensurePackVersion); } catch (e) { /* ignore */ }
 		}
+		for (const event of ['select_project', 'finished_loading_project']) {
+			try {
+				Blockbench.on(event, () => {
+					try {
+						if (syncAllBranchLabels()) {
+							try { if (typeof Panels !== 'undefined' && Panels.outliner && Panels.outliner.inside_vue && Panels.outliner.inside_vue.$forceUpdate) Panels.outliner.inside_vue.$forceUpdate(); } catch (e) { /* ignore */ }
+						}
+					} catch (e) { /* ignore */ }
+				});
+			} catch (e) { /* ignore */ }
+		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, buildSequenceChildResult, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, scanPackEntries, buildAllItemsTree, matchBlacklist, listFilesRecursive, simStepOnce, simAdvanceSlot, primeMappingCache, repairOutlinerDuplicates, applyConvertGroupsToCallTags, collectAllGroups, collectGroupSubtree, outermostSelectedGroups, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, syncAllBranchLabels, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, buildSequenceChildResult, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, scanPackEntries, buildAllItemsTree, matchBlacklist, listFilesRecursive, simStepOnce, simAdvanceSlot, primeMappingCache, repairOutlinerDuplicates, applyConvertGroupsToCallTags, collectAllGroups, collectGroupSubtree, outermostSelectedGroups, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

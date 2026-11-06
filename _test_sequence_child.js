@@ -182,5 +182,45 @@ const c2 = global.Outliner.root.find(n => isG(n) && n.name === 'seqCO');
 const br2 = (c2 && c2.children || []).filter(isG);
 ok('默认子节点类型 = composite', br2.length > 0 && br2.every(n => n.imda_type === 'composite'));
 
+console.log('\n[range_dispatch 下复调用标签编号]');
+// 复调用标签是自定义元素（imda_call_tag），导出时也算 range_dispatch 的 entries，名字应带序号前缀
+global.Outliner.root.length = 0;
+global.Group.selected = [];
+const rd = new global.Group({ name: 'rd', imda_type: 'range_dispatch', imda_property: 'custom_model_data', imda_index: 0, imda_threshold_format: '' });
+global.immAddAndInit(rd, null);
+const tagA = api.newCallTag({ name: '调用 A', target: 'u-a', position: [0, 0, 0], rotation: [0, 0, 0] });
+const tagB = api.newCallTag({ name: '调用 B', target: 'u-b', position: [0, 0, 0], rotation: [0, 0, 0] });
+global.immAddAndInit(tagA, rd);
+global.immAddAndInit(tagB, rd);
+api.syncBranchLabels(rd);
+ok('复调用标签 1 带序号前缀 [0]', /^\[0\]\s/.test(tagA.name), tagA.name);
+ok('复调用标签 2 带序号前缀 [1]', /^\[1\]\s/.test(tagB.name), tagB.name);
+
+// 顺序与导出一致：先所有分组，再所有复调用标签（即使标签先加入）
+global.Outliner.root.length = 0;
+const rd2 = new global.Group({ name: 'rd2', imda_type: 'range_dispatch', imda_property: 'custom_model_data', imda_index: 0, imda_threshold_format: '' });
+global.immAddAndInit(rd2, null);
+const t1 = api.newCallTag({ name: '调用 X', target: 'u-x', position: [0, 0, 0], rotation: [0, 0, 0] });
+global.immAddAndInit(t1, rd2);
+const g1 = new global.Group({ name: 'branchGroup', imda_type: 'model', imda_model: 'ns:m', imda_threshold: 5 });
+global.immAddAndInit(g1, rd2);
+api.syncBranchLabels(rd2);
+ok('分组优先用自身阈值前缀 [5]', /^\[5\]\s/.test(g1.name), g1.name);
+ok('标签排在分组后，序号 [1]', /^\[1\]\s/.test(t1.name), t1.name);
+
+// 类型改成 composite 后应剥掉标签序号前缀
+rd2.imda_type = 'composite';
+api.assignGroupMapProps(rd2, { imda_type: 'composite' });
+ok('改成 composite 后标签无序号前缀', !/^\[/.test(String(t1.name)), t1.name);
+
+// syncAllBranchLabels 遍历整棵大纲，也能给复调用标签补序号
+global.Outliner.root.length = 0;
+const rd3 = new global.Group({ name: 'rd3', imda_type: 'range_dispatch', imda_property: 'custom_model_data', imda_index: 0, imda_threshold_format: '' });
+global.immAddAndInit(rd3, null);
+const t3 = api.newCallTag({ name: '调用 Z', target: 'u-z', position: [0, 0, 0], rotation: [0, 0, 0] });
+global.immAddAndInit(t3, rd3);
+api.syncAllBranchLabels();
+ok('syncAllBranchLabels 给标签补序号 [0]', /^\[0\]\s/.test(t3.name), t3.name);
+
 if (fail) { console.log('\n\u5931\u8d25 ' + fail + ' \u9879'); process.exit(1); }
 console.log('\n\u901a\u8fc7 ' + pass + ' / ' + (pass + fail));
