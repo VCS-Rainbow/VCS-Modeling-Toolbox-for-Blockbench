@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.72.0';
+const VERSION = '0.73.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -823,7 +823,7 @@ class Exporter {
 		};
 	}
 
-	/** 分支阈值格式：i / i*2 / 10+i*5 / 0,1,3 */
+	/** 分支阈值格式：i / i*2 / 10+i*5 / 0,1,3 / ni */
 	/**
 	 * 分支阈值格式
 	 *   i         → 0,1,2…
@@ -831,8 +831,9 @@ class Exporter {
 	 *   10+2i     → 10,12,14…
 	 *   0,1,3     → 字面列表，超出末尾按 +1 顺延
 	 *   2:2i      → 每个值重复 2 次：2,2,4,4,6,6…（冒号前是重复次数/步长）
+	 *   ni        → 0·n,1·n,2·n…（n = 本分支在上层节点里的编号；如上层编号 5 → 0,5,10）
 	 */
-	evalThreshold(format, index) {
+	evalThreshold(format, index, n) {
 		let text = String(format == null ? '' : format).replace(/\s+/g, '');
 		if (!text) return null;
 		let repeat = 1;
@@ -845,16 +846,22 @@ class Exporter {
 		if (!text) return null;
 		// 带前缀时索引从 1 开始（2:2i → 2,2,4,4,6,6…），无前缀时从 0 开始（i → 0,1,2…）
 		const step = repeat > 1 ? Math.floor(index / repeat) + 1 : Math.floor(index / repeat);
+		// n = 本分支在上层节点里的编号（阈值本身），缺省当 0
+		const nv = (n === undefined || n === null || n === '' || !isFinite(Number(n))) ? 0 : Number(n);
 		if (text.indexOf(',') >= 0) {
 			const list = text.split(',').map(v => Number(v)).filter(v => isFinite(v));
 			if (!list.length) return null;
 			return step < list.length ? list[step] : list[list.length - 1] + (step - list.length + 1);
 		}
 		try {
-			// 让 2i / 10+2i 这类写法变成合法 JS 表达式
-			const js = text.replace(/i/g, '*i').replace(/^\*/, '').replace(/([+\-*/])\*/g, '$1');
-			const fn = new Function('i', '"use strict";return (' + js + ');');
-			const value = Number(fn(step));
+			// 让 2i / 10+2i / ni 这类写法变成合法 JS 表达式（隐式乘法）
+			const js = text
+				.replace(/i/g, '*i')          // 2i / ni → 2*i / n*i
+				.replace(/(\d)n/g, '$1*n')    // 2n → 2*n
+				.replace(/^\*/, '')
+				.replace(/([+\-*/])\*/g, '$1');
+			const fn = new Function('i', 'n', '"use strict";return (' + js + ');');
+			const value = Number(fn(step, nv));
 			return isFinite(value) ? value : null;
 		} catch (error) { return null; }
 	}
@@ -937,7 +944,7 @@ class Exporter {
 		return node;
 	}
 
-	buildNode(group, hint, parent_shift) {
+	buildNode(group, hint, parent_shift, selfNumber) {
 		if (this.normalizeType(group.imda_type) === 'range_dispatch_timeline') return this.buildTimelineNode(group, hint, parent_shift);
 		const pose = this.timelinePoses ? this.timelinePoses.get(group.uuid || group.name) : null;
 		if (pose) {
@@ -1075,18 +1082,20 @@ class Exporter {
 			node.entries = [];
 			let branch_index = 0;
 			for (const child of childGroups) {
-				const childNode = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'), own_shift);
-				if (!childNode) continue;
 				const manualText = String(child.imda_threshold == null ? '' : child.imda_threshold).trim();
 				const manual = num(child.imda_threshold);
 				// 父级编号格式优先：子分组自己的 imda_threshold_format 描述的是“它自己 entries 的编号”，
 				// 不是它在父级里的位置。若让子级格式覆盖父级，bone7 的 5-i 会被 sacpackN 自带的 i/i+N
 				// 顶掉，输出变成 0,1,1,2…（与名字前缀 [5..1] 相反）。只有父级没写格式时才回退到子级格式。
-				const parentFormatted = this.evalThreshold(group.imda_threshold_format, branch_index);
+				// 第三个参数 selfNumber = 本 range_dispatch 自己在上层节点里的编号，供格式里的变量 n 使用。
+				const parentFormatted = this.evalThreshold(group.imda_threshold_format, branch_index, selfNumber);
 				const childFormatted = parentFormatted === null ? this.evalThreshold(child.imda_threshold_format, branch_index) : null;
 				const formatted = parentFormatted !== null ? parentFormatted : childFormatted;
 				// 实例化覆盖的阈值（包括 0）优先于父级 threshold_format。
 				const threshold = (child.imda_threshold_force && manualText !== '') ? manual : (formatted !== null ? formatted : (manual !== 0 ? manual : branch_index));
+				// 这个 threshold 就是“子分支在本节点里的编号”，把它作为 n 一路传给子分支的 buildNode。
+				const childNode = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'), own_shift, threshold);
+				if (!childNode) continue;
 				node.entries.push({ threshold: clean(threshold), model: childNode });
 				branch_index++;
 			}
@@ -2614,7 +2623,7 @@ function syncBranchLabels(group) {
 			label = when ? when.replace(/^\[|\]$/g, '').split(',')[0].trim() : ('case' + index);
 		} else {
 			try { if (!exporter) exporter = createExporter(); } catch (e) { exporter = null; }
-			const formatted = exporter ? exporter.evalThreshold(group.imda_threshold_format, index) : null;
+			const formatted = exporter ? exporter.evalThreshold(group.imda_threshold_format, index, Number(group.imda_threshold) || 0) : null;
 			// 格式生效时把数值同步回子节点，属性面板的 threshold 才不会永远显示 0。
 			if (formatted !== null) child.imda_threshold = formatted;
 			const manual = Number(child.imda_threshold) || 0;
@@ -2722,7 +2731,7 @@ function editGroupProps() {
 			imda_predicate: { label: 'predicate（component 用）', type: 'text', value: String(group.imda_predicate || ''), description: '语法："predicate": "minecraft:stored_enchantments"', condition: (r) => r.imda_property === 'component' },
 			imda_value: { label: 'value（component 用，JSON）', type: 'text', value: String(group.imda_value == null ? '' : group.imda_value), description: '语法："value": [ { ... } ]', condition: (r) => r.imda_property === 'component' },
 			imda_keybind: { label: 'keybind（keybind_down 用）', type: 'text', value: String(group.imda_keybind || ''), description: '语法："keybind": "key.jump"', condition: (r) => r.imda_property === 'keybind_down' },			imda_index: { label: '分派下标（index）', description: '语法："index": 0\n作用：仅 range_dispatch，指定从 property 的哪个下标取值。', type: 'number', value: num(group.imda_index), condition: (r) => r.imda_type === 'range_dispatch' },
-			imda_threshold_format: { label: '分支编号格式（entries[].threshold）', type: 'text', value: String(group.imda_threshold_format || ''), description: '语法：i → 0,1,2；2i 或 i*2 → 0,2,4；10+2i → 10,12,14；0,1,3 → 字面列表；2:2i → 每个值重复 2 次、索引从 1 起（2,2,4,4,6,6…）。\n作用：range_dispatch 的子分组按顺序取这些阈值；留空为 0,1,2…', condition: (r) => r.imda_type === 'range_dispatch' },
+			imda_threshold_format: { label: '分支编号格式（entries[].threshold）', type: 'text', value: String(group.imda_threshold_format || ''), description: '语法：i → 0,1,2；2i 或 i*2 → 0,2,4；10+2i → 10,12,14；0,1,3 → 字面列表；2:2i → 每个值重复 2 次、索引从 1 起（2,2,4,4,6,6…）。\n变量 n = 本分支在上层节点里的编号：如本分支是 slots[5]，格式 ni → 子分支 0,5,10。\n作用：range_dispatch 的子分组按顺序取这些阈值；留空为 0,1,2…', condition: (r) => r.imda_type === 'range_dispatch' },
 			imda_threshold: { label: '分支编号 / 阈值（entries[].threshold）', type: 'number', value: num(group.imda_threshold), description: '语法：{"threshold": 0}\n作用：父分组为 range_dispatch 时，本分组的阈值；修改后自动按阈值重排。', condition: (r) => r.imda_type === 'range_dispatch' || parent_type === 'range_dispatch' },
 			imda_condition: { label: '分支条件（on_true / on_false）', type: 'select', value: String(group.imda_condition || ''), options: { '': '（按位置）', on_true: 'on_true', on_false: 'on_false' }, description: '语法："on_true" / "on_false"\n作用：父分组为 condition 时决定本分支走哪一支；修改后自动重排。', condition: (r) => parent_type === 'condition' },
 			imda_scale: { label: '数值缩放（scale）', description: '语法："scale": 1.0\n作用：仅 range_dispatch，property 数值乘以该倍数后再查阈值。', type: 'number', value: num(group.imda_scale) || 1, condition: (r) => r.imda_type === 'range_dispatch' },
@@ -3140,7 +3149,7 @@ function openSequenceDialog() {
 			_: '_',
 			property: { label: 'range_dispatch 来源（property）', type: 'select', value: 'custom_model_data', options: { custom_model_data: 'custom_model_data', cooldown: 'cooldown', count: 'count', damage: 'damage', time: 'time', use_cycle: 'use_cycle', use_duration: 'use_duration', compass: 'compass' } },
 			index: { label: 'custom_model_data index', type: 'number', value: 0 },
-			thresholdFormat: { label: '分支编号格式（同属性面板）', type: 'text', value: '', description: '语法与分组属性里的「分支编号格式」完全一致：i → 0,1,2；2i → 0,2,4；10+2i → 10,12,14；0,1,3 → 字面列表；2:2i → 重复 2 次。\n填了格式时它优先于下面的起点/步长（格式里也支持用 i 当序号）。' },
+			thresholdFormat: { label: '分支编号格式（同属性面板）', type: 'text', value: '', description: '语法与分组属性里的「分支编号格式」完全一致：i → 0,1,2；2i → 0,2,4；10+2i → 10,12,14；0,1,3 → 字面列表；2:2i → 重复 2 次；ni → 0,n,2n。\n填了格式时它优先于下面的起点/步长（格式里也支持用 i 当序号、n 当上层编号）。' },
 			thresholdStart: { label: '阈值起点（未填格式时）', type: 'number', value: 0 },
 			thresholdStep: { label: '阈值步长（未填格式时）', type: 'number', value: 1, step: 1, min: -100, max: 100 },
 			info: { type: 'info', text: 'range_dispatch：有「分支编号格式」时按格式算 threshold，否则用 起点 + i × 步长；composite 时忽略 property/index/阈值。满节点只放一次本体。' },
@@ -3402,7 +3411,7 @@ function callOverrideFields(source, locator) {
 		ov_predicate: { label: 'predicate 覆盖', type: 'text', value: val('predicate'), condition: (r) => r.ov_property === 'component', description: '留空不覆盖。' },
 		ov_value: { label: 'value 覆盖（JSON）', type: 'text', value: val('value'), condition: (r) => r.ov_property === 'component', description: '留空不覆盖。' },
 		ov_keybind: { label: 'keybind 覆盖', type: 'text', value: val('keybind'), condition: (r) => r.ov_property === 'keybind_down', description: '留空不覆盖。' },
-		ov_threshold_format: { label: '分支编号格式覆盖', type: 'text', value: val('threshold_format'), condition: () => isRange, description: '同分组属性：i / 2i / 10+2i / 0,1,3；留空不覆盖。源节点：' + String(src.imda_threshold_format || '') },
+		ov_threshold_format: { label: '分支编号格式覆盖', type: 'text', value: val('threshold_format'), condition: () => isRange, description: '同分组属性：i / 2i / 10+2i / 0,1,3 / ni（n=上层编号）；留空不覆盖。源节点：' + String(src.imda_threshold_format || '') },
 		ov_index: { label: 'index 覆盖', type: 'text', value: val('index'), condition: () => isRange, description: '留空不覆盖；源节点：' + String(src.imda_index == null ? '' : src.imda_index) },
 		ov_scale: { label: 'scale 覆盖', type: 'text', value: val('scale'), condition: () => isRange, description: '留空不覆盖。' },
 		ov_target: { label: 'compass target 覆盖', type: 'select', value: val('target'), options: { '': '（不覆盖）', lodestone: 'lodestone', none: 'none', spawn: 'spawn', recovery: 'recovery' }, condition: (r) => r.ov_property === 'compass', description: '留空不覆盖。' },
@@ -6085,7 +6094,7 @@ P(ModelProject, 'number', 'imda_extra_composite_layers', { label: '调试：额�
 	P(Group, 'string', 'imda_value', { label: 'value', default: '' });
 	P(Group, 'string', 'imda_keybind', { label: 'keybind', default: '' });
 	P(Group, 'string', 'imda_condition', { label: '分支条件（on_true/on_false）', default: '' });
-	P(Group, 'string', 'imda_threshold_format', { label: '分支编号格式', description: 'i / i*2 / 10+i*5 / 0,1,3', default: '' });
+	P(Group, 'string', 'imda_threshold_format', { label: '分支编号格式', description: 'i / i*2 / 10+i*5 / 0,1,3 / ni（n=上层编号）', default: '' });
 	P(Group, 'number', 'imda_threshold', { label: '分支编号 / 阈值（entries[].threshold）', default: 0 });
 	P(Group, 'boolean', 'imda_threshold_force', { default: false, exposed: false });
 	P(Group, 'number', 'imda_scale', { label: '数值缩放（scale）', default: 1 });

@@ -2,6 +2,16 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.73.0
+- **range_dispatch 分支编号格式新增变量 `n`**：`n` = 本分支在上层节点里的编号（阈值）。
+  - 例：外层 `slots` 格式 `i` → 第 6 个分支 `slots[5]`；它自己的格式 `ni` → 子分支阈值 `0,5,10`（= 5 × i）。
+  - 支持 `n`、`ni`、`2n`、`n+i`、`n*i` 等写法，和原有 `i` 共用同一套隐式乘法规则（`2i→2*i`、`ni→n*i`、`2n→2*n`）。
+  - 实现：
+    - `evalThreshold(format, index, n)` 增加第三参 `n`（缺省按 0）。
+    - `Exporter.buildNode(group, hint, parent_shift, selfNumber)` 新增 `selfNumber`；`range_dispatch` 循环里先把每个子分支的阈值算出来，再把它作为 `n` 递归传给子分支的 `buildNode`（所以嵌套 `ni` 用的就是子分支自己的编号，不依赖是否手动同步过）。
+    - `syncBranchLabels` 刷新名字/阈值时用分组自身的 `imda_threshold` 当 `n`。
+  - 单测：新增 `_test_threshold_n.js`（14 项：`evalThreshold` 的各写法 + 导出级嵌套 `ni` = 0,5,10）；真机探针 `_probe_threshold_n_live.js` 9/9（真实 Blockbench 运行时、在"脱离大纲的分组树"上跑 `buildNode`，不碰用户工程）。
+- 单测合计：`_test_threshold_n.js` 14 + `_test_convert.js` 25 + `_test_all_items.js` 76 + `_test_sim.js` 350 + `_test_export.js` 29 = **494 项**。
 ## 0.72.0
 - **重新设计「将分组转化为复调用标签」**。旧实现和「复调用选中的分组」产出的节点完全一样（同样指向分组自己的位置/旋转、`imda_call_target = 分组自身.uuid`），只是多设了一个 `group.export = false`；导出后净效果不变，等于没转化 —— 这就是用户看到的「结果和复调用标签一样」。
   - **新语义**：选中分组 → 弹窗选一个**已存在的其它分组** T → 把选中分组**原位替换**为指向 T 的调用标签。

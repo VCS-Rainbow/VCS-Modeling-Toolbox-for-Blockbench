@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-11-06 更新 · 当前版本 **0.72.0**
+> 生成时间：2026-11-06 更新 · 当前版本 **0.73.0**
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 > 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉「导出阈值被子级格式覆盖」，0.68.115 修掉「实例化后 export=false 导致整条分支不导出」，0.68.116 修掉「撤销不删除新建节点」的 3 处问题，0.68.117 修掉「枢轴归位把方块挪走」并说明 gizmo 位置规则。
 > **调试入口已升级：可用 `_bbcdp.js` 从终端直连软件内 Console + 全部 Blockbench 事件，见 `_BBCDP.md` 与 0.0.2。**
@@ -209,6 +209,22 @@ Blockbench 的方块网格是「`mesh.position = origin`，顶点相对 origin �
 **真机验证（0.69.13）**：`ghost_lock` → 45 组锁 / 70 方块锁 / 50 半透明 / store=5；切 `off` → 全部归 0；重载插件后 `store` 仍是 5，再切 `off` 仍能全清。旧版本留下的 96 个孤立锁已用只读探针清掉（`Project.saved` 保持 `false`）。
 
 单测 289 项（+6）。
+
+### 0.0.21 range_dispatch 分支编号格式新增变量 `n`（0.73.0，2026-11-06）
+
+**需求**：分支编号格式要能引用"本分支在上层节点里的编号" `n`。例：外层 `slots` 用格式 `i`，第 6 个分支就是 `slots[5]`；它自己的格式写 `ni`，则它的子分支阈值是 `0,5,10`（= n × i，n=5）。
+
+**实现**：
+- `evalThreshold(format, index, n)` 加第三参 `n`（缺省 0）。表达式转换里新增两条隐式乘法：`(\d)n → $1*n`，配合原有 `i → *i`，`ni` 会变成 `n*i`。`new Function('i','n', …)` 同时注入两个变量。
+- `Exporter.buildNode(group, hint, parent_shift, selfNumber)` 新增 `selfNumber` = 本分组在上层节点里的编号。
+  - `range_dispatch` 分支循环**调整了顺序**：先算 `threshold`（`evalThreshold(本组 format, branch_index, selfNumber)`），再把 `threshold` 作为第四参传给子分支的 `buildNode`。这样嵌套时子分支自己的 `n` 就是它被父级算出来的阈值，**不依赖 sync 是否跑过**。
+  - `childFormatted`（父级没写格式时的旧回退）**不传 n**（用子自己的格式算子自己被父级取的阈值，n 在这里是循环的，传 0）。
+- `syncBranchLabels(group)` 刷新子分支名字/阈值时，用 `Number(group.imda_threshold)||0` 当 `n`（这正是界面上 `[5]` 里的那个编号）。
+
+**测试**：
+- `_test_threshold_n.js`（14 项）：`evalThreshold` 的 `ni`/`n`/`2n`/`n+i`/`n*i`/缺省 0/旧格式不回归；以及导出级嵌套：外层 6 entries 阈值 0..5、第 6 分支（格式 `ni`）阈值 0,5,10。
+- 真机探针 `_probe_threshold_n_live.js`：`api.createExporter().evalThreshold` + 在"脱离 Outliner 的 empty 叶子树"上直接 `buildNode`，9/9，`Outliner.root.length` 前后不变。
+- 单测合计 494 项。
 
 ### 0.0.20 重新设计「将分组转化为复调用标签」（0.72.0，2026-11-06）
 
