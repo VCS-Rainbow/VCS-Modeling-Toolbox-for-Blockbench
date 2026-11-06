@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.73.2';
+const VERSION = '0.73.3';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -6149,6 +6149,9 @@ let menuAttached = false;
 let locatorMenuAttached = false;
 let cubeMenuAttached = false;
 let menuActions = {};
+/** 复调用标签右键菜单动作的唯一序号：每次给一个 Menu 对象挂动作都用新键，
+ *  避免重载后旧类菜单与当前类菜单共用同一个 menuActions 键导致互删。 */
+let menuActionSeq = 0;
 
 /* ============================== 大纲 Shift 连选 ============================== */
 /** Blockbench 自带 Shift 连选的两个限制，导致「1~5 分组 + 6 标签，点 6 再 Shift 点 1」
@@ -6363,29 +6366,50 @@ function attachGroupMenu() {
 		}
 	} catch (error) { /* ignore */ }
 	// 复调用标签右键：只有真正的复调用标签才显示实例化/编辑。
-	// 新类型 CallTag 与旧 Locator 标签各有自己的 menu 对象，两个都要挂。
-	const attachCallMenu = (menu, label) => {
+	// 关键：CallTag 是自定义元素类型，重载插件时会重新注册一个「新类」，
+	// 而大纲里已有的复调用标签节点仍属于上一次注册的「旧类」，它们的
+	// prototype.menu 是各自独立的 Menu 对象（旧类没有挂过这些动作）。
+	// 所以不能只挂「当前类」的原型，必须把现有每个复调用标签节点自己的
+	// menu（可能来自旧类）也一起挂上，否则重载后右键只剩通用项。
+	const attachCallMenu = (menu, key, label) => {
 		try {
 			if (!menu || typeof menu.addAction !== 'function' || !actions.editCall) return false;
+			if (menu.__imdaCallAttached) return true; // 同一个 Menu 对象已挂过，直接跳过（update_selection 会高频触发）
 			cleanByPrefix(menu);
-			menuActions['instantiateThis:' + label] = menuVariant(actions.instantiateThis, 'imda_menu_instantiate_this', () => isImdaFormat() && isCallTagNode(pickTargetLocator()));
-			menuActions['editCall:' + label] = menuVariant(actions.editCall, 'imda_menu_edit_call', () => isImdaFormat() && isCallTagNode(pickTargetLocator()));
-			menuActions['extractPoseLoc:' + label] = menuVariant(actions.extractPose, 'imda_menu_extract_pose_loc', () => isImdaFormat() && !!pickTargetLocator());
-			menuActions['applyPoseLoc:' + label] = menuVariant(actions.applyPose, 'imda_menu_apply_pose_loc', () => isImdaFormat() && !!pickTargetLocator());
+			menuActions['instantiateThis:' + key] = menuVariant(actions.instantiateThis, 'imda_menu_instantiate_this', () => isImdaFormat() && isCallTagNode(pickTargetLocator()));
+			menuActions['editCall:' + key] = menuVariant(actions.editCall, 'imda_menu_edit_call', () => isImdaFormat() && isCallTagNode(pickTargetLocator()));
+			menuActions['extractPoseLoc:' + key] = menuVariant(actions.extractPose, 'imda_menu_extract_pose_loc', () => isImdaFormat() && !!pickTargetLocator());
+			menuActions['applyPoseLoc:' + key] = menuVariant(actions.applyPose, 'imda_menu_apply_pose_loc', () => isImdaFormat() && !!pickTargetLocator());
 			addSeparator(menu);
-			menu.addAction(menuActions['instantiateThis:' + label]);
-			menu.addAction(menuActions['editCall:' + label]);
-			menu.addAction(menuActions['extractPoseLoc:' + label]);
-			menu.addAction(menuActions['applyPoseLoc:' + label]);
+			menu.addAction(menuActions['instantiateThis:' + key]);
+			menu.addAction(menuActions['editCall:' + key]);
+			menu.addAction(menuActions['extractPoseLoc:' + key]);
+			menu.addAction(menuActions['applyPoseLoc:' + key]);
+			menu.__imdaCallAttached = true;
 			console.log('[装配] 已重排' + label + '右键菜单（按目标条件显示）');
 			return true;
 		} catch (error) { return false; }
 	};
 	try {
-		if (attachCallMenu((typeof CallTag !== 'undefined' && CallTag && CallTag.prototype) ? CallTag.prototype.menu : null, '复调用标签')) locatorMenuAttached = true;
-	} catch (error) { /* ignore */ }
-	try {
-		if (attachCallMenu((typeof Locator !== 'undefined' && Locator.prototype) ? Locator.prototype.menu : null, '定位点')) locatorMenuAttached = true;
+		// 收集所有需要挂载的 Menu 对象：Locator 原型、当前 CallTag 原型、
+		// 以及现有大纲里每个复调用标签节点自己的 menu（覆盖重载前的旧类）。
+		const callMenus = [];
+		const addCallMenu = (menu) => { if (menu && typeof menu.addAction === 'function' && callMenus.indexOf(menu) < 0) callMenus.push(menu); };
+		try { addCallMenu((typeof Locator !== 'undefined' && Locator.prototype) ? Locator.prototype.menu : null); } catch (e) { /* ignore */ }
+		try { addCallMenu((typeof CallTag !== 'undefined' && CallTag && CallTag.prototype) ? CallTag.prototype.menu : null); } catch (e) { /* ignore */ }
+		try {
+			const walk = (nodes) => {
+				for (const node of (nodes || [])) {
+					if (isCallLike(node)) { try { addCallMenu(node.menu); } catch (e) { /* ignore */ } }
+					if (isGroup(node)) walk(node.children);
+				}
+			};
+			walk((typeof Outliner !== 'undefined' && Outliner) ? Outliner.root : []);
+		} catch (e) { /* ignore */ }
+		callMenus.forEach((menu, i) => {
+			const label = (i === 0 && menu === ((typeof Locator !== 'undefined' && Locator.prototype) ? Locator.prototype.menu : null)) ? '定位点' : '复调用标签';
+			if (attachCallMenu(menu, 'call' + (menuActionSeq++), label)) locatorMenuAttached = true;
+		});
 	} catch (error) { /* ignore */ }
 	// 方块右键：位姿提取/应用（方块也能作为来源）
 	try {
@@ -6613,13 +6637,28 @@ Plugin.register('item_model_definition_assembly', {
 			menuActions = {};
 		} catch (e) { /* ignore */ }
 		try {
+			// 收集所有可能挂过 imda 右键项的 Menu：各类原型 + 现有大纲节点的
+			// menu（后者覆盖“重载前旧类”的节点，重载后旧类菜单也要清干净）。
+			const cleanMenus = [];
+			const addClean = (menu) => { if (menu && Array.isArray(menu.structure) && cleanMenus.indexOf(menu) < 0) cleanMenus.push(menu); };
 			for (const proto of [typeof Group !== 'undefined' ? Group : null, typeof Locator !== 'undefined' ? Locator : null, typeof CallTag !== 'undefined' && CallTag ? CallTag : null, typeof Cube !== 'undefined' ? Cube : null]) {
-				const menu = proto && proto.prototype && proto.prototype.menu;
-				if (menu && Array.isArray(menu.structure)) {
-					menu.structure = menu.structure.filter(item => { const id = typeof item === 'string' ? item : (item && item.id) || ''; return !String(id).startsWith('imda_'); });
-				}
+				try { addClean(proto && proto.prototype && proto.prototype.menu); } catch (e) { /* ignore */ }
+			}
+			try {
+				const walk = (nodes) => {
+					for (const node of (nodes || [])) {
+						if (isCallLike(node)) { try { addClean(node.menu); } catch (e) { /* ignore */ } }
+						if (isGroup(node)) walk(node.children);
+					}
+				};
+				walk((typeof Outliner !== 'undefined' && Outliner) ? Outliner.root : []);
+			} catch (e) { /* ignore */ }
+			for (const menu of cleanMenus) {
+				menu.structure = menu.structure.filter(item => { const id = typeof item === 'string' ? item : (item && item.id) || ''; return !String(id).startsWith('imda_'); });
+				try { delete menu.__imdaCallAttached; } catch (e) { /* ignore */ }
 			}
 		} catch (menuError) { /* ignore */ }
+		menuActionSeq = 0;
 		try { uninstallOutlinerRangeSelect(); } catch (e) { /* ignore */ }
 		try { if (sim.timer) { clearInterval(sim.timer); sim.timer = null; } } catch (e) { /* ignore */ }
 		try { if (sim.tickTimer) { clearTimeout(sim.tickTimer); sim.tickTimer = null; } } catch (e) { /* ignore */ }

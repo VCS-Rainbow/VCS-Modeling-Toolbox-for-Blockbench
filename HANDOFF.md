@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-11-06 更新 · 当前版本 **0.73.2**
+> 生成时间：2026-11-06 更新 · 当前版本 **0.73.3**
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 > 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉「导出阈值被子级格式覆盖」，0.68.115 修掉「实例化后 export=false 导致整条分支不导出」，0.68.116 修掉「撤销不删除新建节点」的 3 处问题，0.68.117 修掉「枢轴归位把方块挪走」并说明 gizmo 位置规则。
 > **调试入口已升级：可用 `_bbcdp.js` 从终端直连软件内 Console + 全部 Blockbench 事件，见 `_BBCDP.md` 与 0.0.2。**
@@ -209,6 +209,19 @@ Blockbench 的方块网格是「`mesh.position = origin`，顶点相对 origin �
 **真机验证（0.69.13）**：`ghost_lock` → 45 组锁 / 70 方块锁 / 50 半透明 / store=5；切 `off` → 全部归 0；重载插件后 `store` 仍是 5，再切 `off` 仍能全清。旧版本留下的 96 个孤立锁已用只读探针清掉（`Project.saved` 保持 `false`）。
 
 单测 289 项（+6）。
+
+### 0.0.23 复调用标签右键菜单在重载后只剩通用项（0.73.3，2026-11-06）
+
+**现象**（用户报告）：右键复调用标签，菜单里插件动作（实例化/编辑/提取变换/应用变换）全没了，只剩复制/重命名/删除等通用项。
+
+**根因**：`CallTag` 是自定义元素类型（`OutlinerElement.registerType`）。每次重载插件，`onunload` 把 `CallTag=null` 并删掉类型注册，`onload` 的 `ensureCallTagType()` 会 `registerType` 一个**新类**；但大纲里已经存在的复调用标签节点仍属于**上一次的旧类**（`inst instanceof 当前CallTag === false`），它们的 `prototype.menu` 是当年克隆出来的**独立 Menu 对象**。旧 `attachGroupMenu` 只给「当前 CallTag 原型 + Locator 原型」挂 4 个插件动作，识别不到这些旧类节点用的 Menu → 右键只剩通用项。新建的标签（当前类）则正常——所以单看新建节点会以为没 bug。
+
+**修复**（`attachGroupMenu`）：
+- 收集三处去重的 Menu 对象：`Locator.prototype.menu`、当前 `CallTag.prototype.menu`、以及遍历 `Outliner.root` 里**每个 `isCallLike(node)` 的 `node.menu`**（覆盖旧类节点），逐一 `attachCallMenu`。
+- `attachCallMenu(menu, key, label)`：用 `menu.__imdaCallAttached` 幂等（`update_selection` 高频触发不重复叠加）；`menuActions` 键改用自增 `menuActionSeq`，避免旧类与当前类菜单共用键互相覆盖/误删。
+- `onunload`：清理范围扩大到「各原型 Menu + 每个复调用标签节点的 `node.menu`」，过滤 `imda_*` 并 `delete menu.__imdaCallAttached`，`menuActionSeq=0`。
+
+**真机验证**：`_probe_ctxmenu*.js`（不碰用户工程，只读现有节点）——重载前旧节点菜单 12 项（无插件动作）；重载后 17 项（4 个插件动作齐全）；`update_selection×5` 后仍 17 项、渲染 `实例化/编辑/应用` 各 1 次无重复；二次重载仍 17 项。
 
 ### 0.0.22 「编辑分组映射属性」Ctrl+Z 撤不干净（0.73.1，2026-11-06）
 
