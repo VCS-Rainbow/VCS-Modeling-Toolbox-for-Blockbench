@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.73.3';
+const VERSION = '0.73.4';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -6382,9 +6382,10 @@ function attachGroupMenu() {
 			menuActions['applyPoseLoc:' + key] = menuVariant(actions.applyPose, 'imda_menu_apply_pose_loc', () => isImdaFormat() && !!pickTargetLocator());
 			addSeparator(menu);
 			menu.addAction(menuActions['instantiateThis:' + key]);
-			menu.addAction(menuActions['editCall:' + key]);
 			menu.addAction(menuActions['extractPoseLoc:' + key]);
 			menu.addAction(menuActions['applyPoseLoc:' + key]);
+			// 「编辑复调用标签…」固定放在右键菜单最下
+			menu.addAction(menuActions['editCall:' + key]);
 			menu.__imdaCallAttached = true;
 			console.log('[装配] 已重排' + label + '右键菜单（按目标条件显示）');
 			return true;
