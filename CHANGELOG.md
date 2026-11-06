@@ -2,6 +2,15 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.72.0
+- **重新设计「将分组转化为复调用标签」**。旧实现和「复调用选中的分组」产出的节点完全一样（同样指向分组自己的位置/旋转、`imda_call_target = 分组自身.uuid`），只是多设了一个 `group.export = false`；导出后净效果不变，等于没转化 —— 这就是用户看到的「结果和复调用标签一样」。
+  - **新语义**：选中分组 → 弹窗选一个**已存在的其它分组** T → 把选中分组**原位替换**为指向 T 的调用标签。
+  - 标签**只保留原分组自身的位姿**（位置 = 原 `origin`，旋转 = 原 `rotation`），几何由目标 T 提供；原分组连同几何删除。
+  - **原位替换**保留兄弟顺序：`at = siblings.indexOf(group)` → `addAndInit` → 把标签挪到 `at` → `group.remove()`。
+  - **多选**：一个弹窗选一个 T，全部指向它；只处理"最外层"选中分组（子分组随祖先一起删）；候选目标排除被删分组及其全部后代（避免选中一个会被连带删掉的分组）。
+  - **修一个真机隐患**：`CallTag.init()` 会把根级标签塞进 `Group.first_selected`（正是这次要删的那个分组）；若不处理，标签会跟着被删。转换时检测到被重挂就强制拉回目标父级。
+  - **单测**：新增 `_test_convert.js`（25 项：根级/嵌套原位替换、兄弟顺序、位姿、目标、最外层过滤、删除集合候选、无目标不动手）；真机探针 `_probe_convert_live.js` 12/12（用真实 Blockbench CallTag 类在"脱离大纲"的分组树上验证，绝不碰用户真实工程）。
+- 单测合计：`_test_convert.js` 25 + `_test_all_items.js` 76 + `_test_sim.js` 350 + `_test_export.js` 29 = **480 项**。
 ## 0.71.1
 - **修「生成全物品模型表」把每个分支都跑成根级节点**：`new Group()` 的 `parent` 默认是 `'root'`，原来只把 case 分组 `push` 进 `container.children` 而没有改 `parent`；随后调用 `caseGroup.init()` 时，真实 Blockbench 的 `OutlinerNode.init()` 有一段
   ```js

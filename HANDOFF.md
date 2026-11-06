@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-11-05 更新 · 当前版本 **0.71.1**
+> 生成时间：2026-11-06 更新 · 当前版本 **0.72.0**
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 > 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉「导出阈值被子级格式覆盖」，0.68.115 修掉「实例化后 export=false 导致整条分支不导出」，0.68.116 修掉「撤销不删除新建节点」的 3 处问题，0.68.117 修掉「枢轴归位把方块挪走」并说明 gizmo 位置规则。
 > **调试入口已升级：可用 `_bbcdp.js` 从终端直连软件内 Console + 全部 Blockbench 事件，见 `_BBCDP.md` 与 0.0.2。**
@@ -209,6 +209,29 @@ Blockbench 的方块网格是「`mesh.position = origin`，顶点相对 origin �
 **真机验证（0.69.13）**：`ghost_lock` → 45 组锁 / 70 方块锁 / 50 半透明 / store=5；切 `off` → 全部归 0；重载插件后 `store` 仍是 5，再切 `off` 仍能全清。旧版本留下的 96 个孤立锁已用只读探针清掉（`Project.saved` 保持 `false`）。
 
 单测 289 项（+6）。
+
+### 0.0.20 重新设计「将分组转化为复调用标签」（0.72.0，2026-11-06）
+
+**现象**（用户报告）：`将分组转化为复调用标签` 的结果和"复调用标签"一样，等于没有转化。
+
+**根因**：旧 `convertSelectedGroupsToCallTags()` 给每个选中分组 G 建一个调用标签，位置/旋转取 G 的 `origin`/`rotation`、`imda_call_target = G.uuid`，**再设 `G.export = false`**。而 `复调用选中的分组`（`callSelectedGroup`）建的是**完全相同**的标签（同样指向 G 自己），唯一差别就是多了 `export=false`。所以导出后净效果不变（几何通过调用又回来了），产出节点看起来就是"一个普通的复调用标签"。
+
+**新语义**（用户确认的三点）：
+1. 删除 G，原位替换为调用标签；
+2. 位置锚点取 **G 自身的 `origin`**，旋转取 G 的 `rotation`（只换目标）；
+3. 一个弹窗选一个已存在的目标分组 T，批量全部指向它。
+
+**实现要点**（`convertSelectedGroupsToCallTags()` + 纯逻辑 `applyConvertGroupsToCallTags(groups, targetGroup)`）：
+- 只处理**最外层**选中分组（`outermostSelectedGroups`）：父子都选中时子分组随祖先一并删，不再单独建标签。
+- 删除集合 = 最外层选中分组 + 它们的所有后代（`collectGroupSubtree`）；**候选目标**从 `collectAllGroups()` 里排除删除集合（否则可能选中一个会被连带删掉的分组）。
+- 原位替换：`at = siblings.indexOf(group)` → `addAndInit(locator, parent)` → 把标签 splice 回 `at` → `group.remove()`。siblings 在根级时就是 `Outliner.root`，在嵌套时是 `parent.children`。
+- **关键真机陷阱**：`CallTag.init()` 有一段"根级标签会被塞进 `Group.first_selected`"的行为（`if (this.parent == Outliner.ROOT && Group.first_selected) this.addTo(Group.first_selected)`）。转换时 `Group.first_selected` 往往正是我们要删的那个分组，标签会被挪进它、随后 `group.remove()` 把标签一起删掉。代码里在 `addAndInit` 后检测 `wantRoot !== isRoot`，若被重挂就 `locator.addTo(parent)` 强制拉回。
+- 撤销：`Undo.initEdit({ outliner: true, groups, elements: [] })` → 转换 → `Undo.finishEdit('将分组转换为复调用标签', { outliner: true, groups, elements: locators })`。
+
+**测试**：
+- `_test_convert.js`（25 项，mock 复刻 `CallTag.init` 的 `Group.first_selected` 重挂副作用）：根级与嵌套原位替换、兄弟顺序、位姿拷贝、目标、最外层过滤、候选排除待删子树、无目标不动手。
+- 真机探针 `_probe_convert_live.js`：用**真实 Blockbench CallTag 类**在"脱离 Outliner 的分组树"上跑（不 `addTo` 根、绝不碰用户真实工程），12/12 通过，并断言 `Outliner.root.length` 前后不变。
+- 单测合计：25 + 76 + 350 + 29 = **480 项**。
 
 ### 0.0.19 「生成全物品模型表」把分支跑成根级节点（0.71.1，2026-11-05）
 

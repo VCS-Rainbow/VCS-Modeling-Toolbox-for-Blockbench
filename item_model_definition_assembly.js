@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.71.1';
+const VERSION = '0.72.0';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -3270,30 +3270,102 @@ function instantiateCallTags(targets) {
 	});
 }
 
-/** 把选中分组转换为复调用标签：原分组停止直接导出，标签在同位置调用它 */
-function convertSelectedGroupsToCallTags() {
-	if (typeof Locator === 'undefined') { Blockbench.showMessageBox({ title: '不支持定位点', message: '当前 Blockbench 没有 Locator。', icon: 'warning' }); return; }
-	const groups = selectedGroups();
-	if (!groups.length) { Blockbench.showMessageBox({ title: '请先选中分组', message: '在 outliner 里选中要转换的分组。', icon: 'info' }); return; }
-	try { Undo.initEdit({ outliner: true, groups, elements: [] }); } catch (e) { /* ignore */ }
+/** 收集所有分组（Outliner 顺序，深度优先）。 */
+function collectAllGroups() {
+	const out = [];
+	const walk = (nodes) => { for (const node of (nodes || [])) { if (!isGroup(node)) continue; out.push(node); walk(node.children); } };
+	try { walk((typeof Outliner !== 'undefined' && Outliner) ? Outliner.root : []); } catch (e) { /* ignore */ }
+	return out;
+}
+
+/** 从一个分组出发收集它和它的所有后代分组。 */
+function collectGroupSubtree(group) {
+	const out = [];
+	const walk = (g) => { if (!isGroup(g)) return; out.push(g); for (const c of (g.children || [])) if (isGroup(c)) walk(c); };
+	walk(group);
+	return out;
+}
+
+/** 只保留“最外层”的选中分组：若某被选分组的祖先也被选中，它会被祖先一并删除，跳过。 */
+function outermostSelectedGroups(groups) {
+	const selected = new Set(groups);
+	return groups.filter(group => {
+		let p = group && group.parent;
+		while (p && isGroup(p)) { if (selected.has(p)) return false; p = p.parent; }
+		return true;
+	});
+}
+
+/** 核心：把 groups 原位替换为指向 targetGroup 的调用标签（调用前已确保 targetGroup 不在删除集合里）。
+ *  每个标签保留原分组自身的位姿（origin + rotation），原分组连同几何被删除。
+ *  返回 { converted, locators }。 */
+function applyConvertGroupsToCallTags(groups, targetGroup) {
 	const locators = [];
 	let converted = 0;
+	if (!targetGroup) return { converted, locators };
 	for (const group of groups) {
 		try {
-			const locator = newCallTag({ name: '调用 ' + labelOf(group), position: (group.origin || [0, 0, 0]).slice(), rotation: (group.rotation || [0, 0, 0]).slice(), ignore_inherited_scale: true });
+			const parent = group.parent && isGroup(group.parent) ? group.parent : null;
+			const siblings = parent ? parent.children : ((typeof Outliner !== 'undefined' && Outliner) ? Outliner.root : []);
+			const at = siblings.indexOf(group);
+			const locator = newCallTag({ name: '调用 ' + labelOf(targetGroup), position: (group.origin || [0, 0, 0]).slice(), rotation: (group.rotation || [0, 0, 0]).slice(), ignore_inherited_scale: true, target: targetGroup.uuid });
 			if (!locator) continue;
-			addAndInit(locator, group.parent || null);
-			locator.imda_call_target = group.uuid;
-			group.export = false;
+			addAndInit(locator, parent);
+			// CallTag.init() 会把“根级标签”塞进 Group.first_selected，而那个分组正是我们马上要删的。
+			// 这里强制拉回到目标父级（根级 → null），否则标签会跟着被删掉。
+			const wantRoot = !parent;
+			const isRoot = !locator.parent || locator.parent === 'root';
+			if (wantRoot !== isRoot) { try { locator.addTo(parent); } catch (e) { /* ignore */ } }
+			// 原位替换：把新标签挪到原分组所在的兄弟位次，再删掉原分组（保持大纲顺序）
+			if (at >= 0) { const now = siblings.indexOf(locator); if (now >= 0) siblings.splice(now, 1); siblings.splice(Math.min(at, siblings.length), 0, locator); }
 			locators.push(locator);
+			try { group.remove(); } catch (e) { console.warn('[装配] 删除原分组失败', e); }
 			converted++;
 		} catch (error) { console.warn('[装配] 转换为复调用标签失败', error); }
 	}
-	try { Undo.finishEdit('将分组转换为复调用标签', { outliner: true, groups, elements: locators }); } catch (e) { /* ignore */ }
-	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
-	try { Project.saved = false; } catch (e) { /* ignore */ }
-	try { simInvalidate(); } catch (e) { /* ignore */ }
-	Blockbench.showQuickMessage('已转换 ' + converted + ' 个分组为复调用标签（原分组停止直接导出）', 4000);
+	return { converted, locators };
+}
+
+/** 将分组转化为复调用标签（0.72.0 重新设计）：
+ *  选中分组 → 弹窗指定一个「已存在的其它分组」→ 把选中分组**原位替换**为指向它的调用标签，
+ *  只保留各分组自身的位姿（origin + rotation），原分组连同几何删除。
+ *  旧实现只是建一个指向自己的标签再把原分组藏起来，导出后净效果不变，等于没转化。 */
+function convertSelectedGroupsToCallTags() {
+	if (typeof Locator === 'undefined') { Blockbench.showMessageBox({ title: '不支持定位点', message: '当前 Blockbench 没有 Locator。', icon: 'warning' }); return; }
+	const picked = selectedGroups();
+	if (!picked.length) { Blockbench.showMessageBox({ title: '请先选中分组', message: '在 outliner 里选中要转换的分组。', icon: 'info' }); return; }
+	const groups = outermostSelectedGroups(picked);
+	// 删除集合：最外层选中分组 + 它们的全部后代（删父连带删子，这些都不能再当调用目标）
+	const willRemove = new Set();
+	for (const group of groups) for (const node of collectGroupSubtree(group)) willRemove.add(node);
+	const candidates = collectAllGroups().filter(group => group && !willRemove.has(group));
+	if (!candidates.length) {
+		Blockbench.showMessageBox({ title: '没有可调用的分组', message: '除了将被替换的分组之外，项目里没有其它已存在的分组可作为调用目标。', icon: 'info' });
+		return;
+	}
+	const options = {};
+	for (const group of candidates) options[group.uuid] = labelOf(group);
+	new Dialog({
+		id: 'imda_convert_call',
+		title: '将分组转化为复调用标签',
+		width: 560,
+		form: {
+			target: { label: '调用目标（已存在的分组）', type: 'select', value: '', options, description: '选中的分组会被删除，并在原位替换为指向该目标的调用标签；标签保留各自原有的位置与旋转，几何由目标分组提供。' },
+			list: { label: '将被替换的分组（' + groups.length + ' 个）', type: 'textarea', value: groups.map(group => labelOf(group)).join('\n'), readonly: true, description: '这些分组及其几何会被删除。目标分组不能落在它们的子树里。' },
+		},
+		onConfirm(result) {
+			const target = String(result.target || '').trim();
+			const targetGroup = candidates.find(group => group && group.uuid === target) || null;
+			if (!targetGroup) { Blockbench.showQuickMessage('未选择有效的目标分组，已取消。', 3000); return; }
+			try { Undo.initEdit({ outliner: true, groups: groups.slice(), elements: [] }); } catch (e) { /* ignore */ }
+			const applied = applyConvertGroupsToCallTags(groups, targetGroup);
+			try { Undo.finishEdit('将分组转换为复调用标签', { outliner: true, groups: groups.slice(), elements: applied.locators }); } catch (e) { /* ignore */ }
+			try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+			try { Project.saved = false; } catch (e) { /* ignore */ }
+			try { simInvalidate(); } catch (e) { /* ignore */ }
+			Blockbench.showQuickMessage('已将 ' + applied.converted + ' 个分组替换为指向「' + labelOf(targetGroup) + '」的调用标签（原几何已删除）', 5000);
+		},
+	}).show();
 }
 
 /** 编辑一个复调用 Locator 的目标（分组 UUID 或模型 id） */
@@ -6409,7 +6481,7 @@ Plugin.register('item_model_definition_assembly', {
 		});
 	actions.animationTimeline = new Action('imda_animation_timeline', { name: '时间轴属性…', description: '设置该动画导出时间轴使用的 range_dispatch property 与 index', icon: 'timeline', category: 'animation', condition: () => typeof Animation !== 'undefined' && !!Animation.selected, click: () => showAnimationTimelineDialog() });
 	actions.sequence = new Action('imda_sequence', { name: '生成复调用序列…', description: '按大纲顺序生成递增/递减复调用序列，节点类型可选 range_dispatch / composite', icon: 'format_list_numbered', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => openSequenceDialog() });
-	actions.convertCall = new Action('imda_convert_call', { name: '将分组转化为复调用标签', description: '在同位置创建 Locator 调用该分组，并让原分组停止直接导出', icon: 'content_copy', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID) && selectedGroups().length > 0, click: () => convertSelectedGroupsToCallTags() });
+	actions.convertCall = new Action('imda_convert_call', { name: '将分组转化为复调用标签…', description: '弹窗指定一个已存在的分组，把选中分组原位替换为指向它的调用标签（只保留原分组的位置与旋转，原几何删除）', icon: 'content_copy', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID) && selectedGroups().length > 0, click: () => convertSelectedGroupsToCallTags() });
 	actions.normalize = new Action('imda_normalize', { name: '规范化结构…', description: '按当前导出规范整理项目结构（当前：composite 直属 cube → inline 子分组）', icon: 'account_tree', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID), click: () => openNormalizeDialog() });
 		actions.createModel = new Action('imda_create_model', { name: '从分组创建模型…', description: '把选中分组的方块烘焙成 models/item 模型，并改为引用（自动居中）', icon: 'file_upload', category: 'tools', condition, click: () => { const group = pickTargetGroup(); if (!group) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } createModelFromGroup(group); } });
 		actions.check = new Action('imda_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
@@ -6493,7 +6565,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, scanPackEntries, buildAllItemsTree, matchBlacklist, listFilesRecursive, simStepOnce, simAdvanceSlot, primeMappingCache, repairOutlinerDuplicates, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, scanPackEntries, buildAllItemsTree, matchBlacklist, listFilesRecursive, simStepOnce, simAdvanceSlot, primeMappingCache, repairOutlinerDuplicates, applyConvertGroupsToCallTags, collectAllGroups, collectGroupSubtree, outermostSelectedGroups, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
