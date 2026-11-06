@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.73.4';
+const VERSION = '0.73.5';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -6376,16 +6376,38 @@ function attachGroupMenu() {
 			if (!menu || typeof menu.addAction !== 'function' || !actions.editCall) return false;
 			if (menu.__imdaCallAttached) return true; // 同一个 Menu 对象已挂过，直接跳过（update_selection 会高频触发）
 			cleanByPrefix(menu);
-			menuActions['instantiateThis:' + key] = menuVariant(actions.instantiateThis, 'imda_menu_instantiate_this', () => isImdaFormat() && isCallTagNode(pickTargetLocator()));
-			menuActions['editCall:' + key] = menuVariant(actions.editCall, 'imda_menu_edit_call', () => isImdaFormat() && isCallTagNode(pickTargetLocator()));
-			menuActions['extractPoseLoc:' + key] = menuVariant(actions.extractPose, 'imda_menu_extract_pose_loc', () => isImdaFormat() && !!pickTargetLocator());
-			menuActions['applyPoseLoc:' + key] = menuVariant(actions.applyPose, 'imda_menu_apply_pose_loc', () => isImdaFormat() && !!pickTargetLocator());
+			// 用「普通对象」作为菜单项：l() 渲染器支持 {name,icon,keybind,condition,click}，
+			// keybind 只用于显示（不注册全局快捷键，避免和基础动作重复触发）。
+			const mkItem = (id, base, cond, showKey) => {
+				const item = {
+					id,
+					name: base.name,
+					icon: base.icon,
+					description: base.description,
+					condition: cond,
+					click: function (v, ev) { return typeof base.click === 'function' ? base.click.call(base, v, ev) : undefined; },
+				};
+				if (showKey && base.keybind) {
+					const txt = String(base.keybind.toString() || '').trim();
+					if (txt) item.keybind = base.keybind;
+				}
+				return item;
+			};
+			const instItem = mkItem('imda_menu_instantiate_this', actions.instantiateThis, () => isImdaFormat() && isCallTagNode(pickTargetLocator()), false);
+			const editItem = mkItem('imda_menu_edit_call', actions.editCall, () => isImdaFormat() && isCallTagNode(pickTargetLocator()), false);
+			const extractItem = mkItem('imda_menu_extract_pose_loc', actions.extractPose, () => isImdaFormat() && !!pickTargetLocator(), true);
+			const applyItem = mkItem('imda_menu_apply_pose_loc', actions.applyPose, () => isImdaFormat() && !!pickTargetLocator(), true);
+			menuActions['instantiateThis:' + key] = instItem;
+			menuActions['editCall:' + key] = editItem;
+			menuActions['extractPoseLoc:' + key] = extractItem;
+			menuActions['applyPoseLoc:' + key] = applyItem;
+			// 顺序：提取变换 / 应用变换 →（分割线）→ 实例化 → 编辑（编辑固定最下，实例化在其上）
 			addSeparator(menu);
-			menu.addAction(menuActions['instantiateThis:' + key]);
-			menu.addAction(menuActions['extractPoseLoc:' + key]);
-			menu.addAction(menuActions['applyPoseLoc:' + key]);
-			// 「编辑复调用标签…」固定放在右键菜单最下
-			menu.addAction(menuActions['editCall:' + key]);
+			menu.addAction(extractItem);
+			menu.addAction(applyItem);
+			addSeparator(menu);
+			menu.addAction(instItem);
+			menu.addAction(editItem);
 			menu.__imdaCallAttached = true;
 			console.log('[装配] 已重排' + label + '右键菜单（按目标条件显示）');
 			return true;
@@ -6558,8 +6580,8 @@ Plugin.register('item_model_definition_assembly', {
 		actions.repairCalls = new Action('imda_repair_calls', { name: '修复失效的复调用目标…', description: '扫描所有目标 UUID 已不存在的复调用标签，统一改成指定分组', icon: 'build', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID) && invalidCallTags().length > 0, click: repairCallTargetsDialog });
 		actions.refreshCalls = new Action('imda_refresh_calls', { name: '更新所有调用', description: '重新读取所有复调用目标与外部物品映射引用（清缓存、重排分支名、列出失效项）', icon: 'refresh', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => refreshAllCalls() });
 		actions.pickModelFile = new Action('imda_pick_model_file', { name: '选择引用模型 / 物品映射文件…', description: '用资源管理器选 assets/<命名空间>/models/…（模型引用）或 assets/<命名空间>/items/…（物品映射引用），自动解析并写入该分组的「引用模型」', icon: 'folder_open', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID) && !!pickTargetGroup(), click: () => pickModelFileForGroup(pickTargetGroup()) });
-		actions.extractPose = new Action('imda_extract_pose', { name: '提取变换', description: '记录选中分组 / 复调用标签的位姿（origin + rotation），供「应用变换」使用', icon: 'content_copy', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID) && (selectedGroups().length > 0 || selectedCallTags().length > 0), click: () => extractPose() });
-		actions.applyPose = new Action('imda_apply_pose', { name: '应用变换', description: '把提取到的位姿套用到所有选中的同类元素（子树一起平移，枢轴落到同一位置）', icon: 'content_paste', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID) && (selectedGroups().length > 0 || selectedCallTags().length > 0), click: () => applyPose() });
+		actions.extractPose = new Action('imda_extract_pose', { name: '提取变换', description: '记录选中分组 / 复调用标签的位姿（origin + rotation），供「应用变换」使用', icon: 'content_copy', category: 'tools', keybind: (typeof Keybind !== 'undefined') ? new Keybind({ key: 67, ctrl: true, shift: true }) : undefined, condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID) && (selectedGroups().length > 0 || selectedCallTags().length > 0), click: () => extractPose() });
+		actions.applyPose = new Action('imda_apply_pose', { name: '应用变换', description: '把提取到的位姿套用到所有选中的同类元素（子树一起平移，枢轴落到同一位置）', icon: 'content_paste', category: 'tools', keybind: (typeof Keybind !== 'undefined') ? new Keybind({ key: 86, ctrl: true, shift: true }) : undefined, condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID) && (selectedGroups().length > 0 || selectedCallTags().length > 0), click: () => applyPose() });
 
 		addMenu(actions.zip, 'file.export');
 		addMenu(actions.merge, 'file.export');

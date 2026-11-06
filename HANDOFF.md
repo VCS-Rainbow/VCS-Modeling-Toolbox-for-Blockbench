@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-11-06 更新 · 当前版本 **0.73.4**
+> 生成时间：2026-11-06 更新 · 当前版本 **0.73.5**
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 > 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉「导出阈值被子级格式覆盖」，0.68.115 修掉「实例化后 export=false 导致整条分支不导出」，0.68.116 修掉「撤销不删除新建节点」的 3 处问题，0.68.117 修掉「枢轴归位把方块挪走」并说明 gizmo 位置规则。
 > **调试入口已升级：可用 `_bbcdp.js` 从终端直连软件内 Console + 全部 Blockbench 事件，见 `_BBCDP.md` 与 0.0.2。**
@@ -209,6 +209,17 @@ Blockbench 的方块网格是「`mesh.position = origin`，顶点相对 origin �
 **真机验证（0.69.13）**：`ghost_lock` → 45 组锁 / 70 方块锁 / 50 半透明 / store=5；切 `off` → 全部归 0；重载插件后 `store` 仍是 5，再切 `off` 仍能全清。旧版本留下的 96 个孤立锁已用只读探针清掉（`Project.saved` 保持 `false`）。
 
 单测 289 项（+6）。
+
+### 0.0.25 复调用标签右键菜单顺序 + 快捷键（0.73.5，2026-11-06）
+
+**需求**：① 提取/应用 与 实例化/编辑 之间加分割线；② 实例化在编辑正上方（编辑仍最下）；③ 提取变换 = Ctrl+Shift+C、应用变换 = Ctrl+Shift+V。
+
+**实现**：`attachCallMenu` 里菜单项改用**普通对象**（`{id,name,icon,description,condition,click,keybind?}`，Blockbench 的 `l()` 渲染器直接支持）：
+- 顺序：`addSeparator()` → 提取 → 应用 → `addSeparator()`（分割线）→ 实例化 → 编辑。
+- 快捷键设在**基础动作** `actions.extractPose` / `actions.applyPose` 的 `keybind`（`new Keybind({key:67/86, ctrl:true, shift:true})`），全局生效；右键菜单项的 `keybind` 只是显示标签，**不注册**（否则触发两次）。
+- 之前用 `menuVariant` Action 的做法废弃于本菜单（Action 若带 keybind 会重复注册）。
+
+**验证**：`_probe_ctxmenu_verify.js` —— 菜单结构尾部 `delete, sep, extract, apply, sep, instantiate, edit`；`extract.keybind='Ctrl + Shift + C'`、`apply='Ctrl + Shift + V'`；临时 Menu 渲染出 `提取变换/Ctrl + Shift + C`、`应用变换/Ctrl + Shift + V`。`BarItems['imda_extract_pose']` key=67/ctrl+shift，`['imda_apply_pose']` key=86/ctrl+shift。
 
 ### 0.0.24 复调用标签右键菜单顺序调整（0.73.4，2026-11-06）
 
