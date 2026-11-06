@@ -2,6 +2,10 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.73.7
+- **生成复调用序列后更新「大纲格式」**：生成完成后对容器执行 `sortBranchChildren` + `syncBranchLabels`，让子分支名按容器类型刷新前缀（range_dispatch → `[阈值]`、condition → `[on_true]/[on_false]`、select → `[when]`），必要时按阈值重排；这两步放在 `Undo.finishEdit` 之前，改名/重排都进撤销记录。另外对 outliner 面板 `Panels.outliner.inside_vue` 调用 `$forceUpdate()`，让程序化新增的节点立即重绘。
+- 单测：`_test_sequence_child.js` 增到 38 项（新增“分支名带 [阈值] 前缀”）；合计 38 + 17 + 25 + 76 + 350 + 29 = **535 项**。
+- 备注：本轮仍无 CDP（Blockbench 无调试端口），未做真机热重载；文件已部署，重载插件/重启后生效。
 ## 0.73.6
 - **生成复调用序列：子节点的映射属性可以在对话框里选**（原来每个 `#分支` 子分组写死 `imda_type='composite'`）。
   - 对话框新增「子节点类型（每个 #分支）」，可选 composite / inline / model / internal / range_dispatch / condition / select / empty（与「编辑分组映射属性」同一套类型）。

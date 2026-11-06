@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.73.6';
+const VERSION = '0.73.7';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -3184,8 +3184,17 @@ function generateCallSequence(options) {
 			} catch (error) { console.warn('[装配] 创建序列复调用失败', error); }
 		}
 	}
+	// 更新「大纲格式」：按容器类型刷新子分支名字前缀（range_dispatch → [阈值]、condition → [on_true]、select → [when]），
+	// 并在必要时按阈值重排分支。放在 finishEdit 之前，改名/重排才会进撤销记录。
+	try { sortBranchChildren(container); } catch (e) { /* ignore */ }
+	try { syncBranchLabels(container); } catch (e) { /* ignore */ }
 	try { Undo.finishEdit('生成复调用序列', { outliner: true, groups: groupsMoved.concat(generatedGroups), elements: generatedLocators }); } catch (e) { /* ignore */ }
 	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
+	// 让 outliner 面板立即重绘：程序化新增节点不一定触发 Vue 响应式更新
+	try {
+		const vue = (typeof Panels !== 'undefined' && Panels.outliner && Panels.outliner.inside_vue) ? Panels.outliner.inside_vue : null;
+		if (vue && typeof vue.$forceUpdate === 'function') vue.$forceUpdate();
+	} catch (e) { /* ignore */ }
 	try { Project.saved = false; } catch (e) { /* ignore */ }
 	try { simInvalidate(); } catch (e) { /* ignore */ }
 	if (!allSameParent) console.warn('[装配] 序列项父级不同，容器放在第一项的父级下。');

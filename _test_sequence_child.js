@@ -170,6 +170,7 @@ ok('全部子节点类型 = range_dispatch', br1.every(n => n.imda_type === 'ran
 ok('全部子节点 index = 1', br1.every(n => n.imda_index === 1));
 ok('全部子节点 scale = 2', br1.every(n => n.imda_scale === 2));
 ok('全部子节点有数字 threshold（父容器赋值）', br1.every(n => typeof n.imda_threshold === 'number'));
+ok('分支名带 [阈值] 前缀（大纲格式已更新）', br1.every(n => /^\[/.test(String(n.name))));
 
 // 默认（不传 childType）→ 子节点保持 composite
 global.Outliner.root.length = 0;

@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-11-06 更新 · 当前版本 **0.73.6**
+> 生成时间：2026-11-06 更新 · 当前版本 **0.73.7**
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 > 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉「导出阈值被子级格式覆盖」，0.68.115 修掉「实例化后 export=false 导致整条分支不导出」，0.68.116 修掉「撤销不删除新建节点」的 3 处问题，0.68.117 修掉「枢轴归位把方块挪走」并说明 gizmo 位置规则。
 > **调试入口已升级：可用 `_bbcdp.js` 从终端直连软件内 Console + 全部 Blockbench 事件，见 `_BBCDP.md` 与 0.0.2。**
@@ -209,6 +209,14 @@ Blockbench 的方块网格是「`mesh.position = origin`，顶点相对 origin �
 **真机验证（0.69.13）**：`ghost_lock` → 45 组锁 / 70 方块锁 / 50 半透明 / store=5；切 `off` → 全部归 0；重载插件后 `store` 仍是 5，再切 `off` 仍能全清。旧版本留下的 96 个孤立锁已用只读探针清掉（`Project.saved` 保持 `false`）。
 
 单测 289 项（+6）。
+
+### 0.0.27 生成复调用序列后更新大纲格式（0.73.7，2026-11-06）
+
+**需求**：生成复调用序列后应更新「大纲格式」（子分支名前缀/排序、outliner 显示刷新）。
+
+**实现**：`generateCallSequence` 在 `Undo.finishEdit` **之前**对容器执行 `sortBranchChildren(container)` + `syncBranchLabels(container)`（range_dispatch → `[阈值]`、condition → `[on_true]`、select → `[when]`；无格式的 range_dispatch 按阈值重排），使改名/重排进撤销记录；之后对 `Panels.outliner.inside_vue` 调 `$forceUpdate()` 让程序化新增节点立即重绘。
+
+**验证**：`_test_sequence_child.js` 38 项（新增“分支名带 [阈值] 前缀”）。**仍无 CDP**，未真机验证。
 
 ### 0.0.26 生成复调用序列：子节点属性可选（0.73.6，2026-11-06）
 

@@ -1,3 +1,7 @@
 # debug logs produced by _bbcdp.js
 *.log
 _bbcdp*.txt
+
+# temp asar extraction / search scripts
+_bb_asar/
+_search*.js
