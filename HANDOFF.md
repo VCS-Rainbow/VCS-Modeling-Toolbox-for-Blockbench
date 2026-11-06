@@ -1,6 +1,6 @@
 # 交接文档 — 物品模型映射装配（Blockbench 插件）
 
-> 生成时间：2026-11-06 更新 · 当前版本 **0.73.8**
+> 生成时间：2026-11-07 更新 · 当前版本 **0.73.9**
 > 用途：换新会话继续开发前的完整交接。**先读这一份，再动代码。**
 > 注意：0.68.86–0.68.98 的实例化撤销/覆盖改动已全部回退；0.68.113 是基线，0.68.114 修掉「导出阈值被子级格式覆盖」，0.68.115 修掉「实例化后 export=false 导致整条分支不导出」，0.68.116 修掉「撤销不删除新建节点」的 3 处问题，0.68.117 修掉「枢轴归位把方块挪走」并说明 gizmo 位置规则。
 > **调试入口已升级：可用 `_bbcdp.js` 从终端直连软件内 Console + 全部 Blockbench 事件，见 `_BBCDP.md` 与 0.0.2。**
@@ -209,6 +209,18 @@ Blockbench 的方块网格是「`mesh.position = origin`，顶点相对 origin �
 **真机验证（0.69.13）**：`ghost_lock` → 45 组锁 / 70 方块锁 / 50 半透明 / store=5；切 `off` → 全部归 0；重载插件后 `store` 仍是 5，再切 `off` 仍能全清。旧版本留下的 96 个孤立锁已用只读探针清掉（`Project.saved` 保持 `false`）。
 
 单测 289 项（+6）。
+
+### 0.0.29 编号格式变量 n 的缺省值 = 同层序号（0.73.9，2026-11-07）
+
+**需求**：`n` 没有显式值时应取「本分支在同层分组里从上往下数的顺序」。例 `slots{a,b,c}` → n = 1,2,3（而不是原来一律 1）。
+
+**实现**：
+- 新增 `siblingBranchNumber(node)`：`branchChildNodes(parent).indexOf(node) + 1`（根目录返回 undefined）。
+- `branchSelfNumber(group)`：在 range_dispatch 下仍优先用 `imda_threshold`；否则退回 `siblingBranchNumber()`。
+- 导出器新增 `Exporter.siblingIndexOf(parent, child)`，并沿 `buildNode(group, hint, parent_shift, selfNumber)` 传下去：`select` 分支、普通 composite/model 的子分组递归都传；`range_dispatch` 子分支仍传各自算出的阈值（优先级不变）。
+- `evalThreshold` 本身未改：只有 `n` 为 undefined/null/空/非数字时才用 1（现在只有“根目录”才会走到 1）。
+
+**验证**：`_test_threshold_n.js` 22 项——`siblingBranchNumber` = 1/2/3；导出级：a/b/c 各写 `ni` → 阈值 `0,1` / `0,2` / `0,3`；原“顶层 range_dispatch 用 ni → 0,1,2”（无父级）仍成立。
 
 ### 0.0.28 range_dispatch 下的复调用标签不显示序号（0.73.8，2026-11-06）
 

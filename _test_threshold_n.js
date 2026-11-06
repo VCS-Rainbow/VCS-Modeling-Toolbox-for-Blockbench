@@ -147,5 +147,32 @@ const topNode = m2.model.models.find(n => n && n.type === 'minecraft:range_dispa
 ok('\u627e\u5230\u9876\u5c42 range_dispatch', !!topNode);
 eq('\u9876\u5c42 ni\uff08n \u9ed8\u8ba4 1\uff09= 0,1,2', topNode && topNode.entries.map(e => e.threshold), [0, 1, 2]);
 
+/* ---------- 缺省 n = 同层兄弟分组从上往下数的序号（slots{a,b,c} → 1,2,3） ---------- */
+console.log('\n[缺省 n = 同层序号]');
+global.Outliner.root.length = 0;
+const slotsC = new global.Group({ name: 'slotsC', imda_type: 'composite' });
+global.immAddAndInit(slotsC, null);
+const mkBranch = (name) => {
+	const g = new global.Group({ name, imda_type: 'range_dispatch', imda_property: 'custom_model_data', imda_index: 0, imda_threshold_format: 'ni' });
+	for (let k = 0; k < 2; k++) global.immAddAndInit(leaf(name + '_l' + k, 'ns:' + name + k), g);
+	global.immAddAndInit(g, slotsC);
+	return g;
+};
+const sa = mkBranch('a'), sb = mkBranch('b'), sc = mkBranch('c');
+eq('siblingBranchNumber a/b/c = 1/2/3', [sa, sb, sc].map(g => api.siblingBranchNumber(g)), [1, 2, 3]);
+const m3 = api.createExporter().buildMapping();
+const br = (name) => (m3.model.models || []).find(n => n && n.type === 'minecraft:range_dispatch' && n.entries && n.entries.length === 2 && n.entries[0].model && String(n.entries[0].model.model || '').indexOf(name) >= 0);
+const findRd = () => {
+	const out = [];
+	const walk = (nodes) => { for (const n of (nodes || [])) { if (!n || typeof n !== 'object') continue; if (n.type === 'minecraft:range_dispatch') out.push(n); for (const k of ['models', 'on_true', 'on_false', 'fallback']) if (n[k]) walk(Array.isArray(n[k]) ? n[k] : [n[k]]); if (n.cases) for (const c of n.cases) walk([c.model]); if (n.entries) for (const e of n.entries) walk([e.model]); } };
+	walk(m3.model.models);
+	return out;
+};
+const rds = findRd();
+eq('三个子 range_dispatch 都导出', rds.length, 3);
+eq('a 的 n=1 → ni 得 0,1', rds[0] && rds[0].entries.map(e => e.threshold), [0, 1]);
+eq('b 的 n=2 → ni 得 0,2', rds[1] && rds[1].entries.map(e => e.threshold), [0, 2]);
+eq('c 的 n=3 → ni 得 0,3', rds[2] && rds[2].entries.map(e => e.threshold), [0, 3]);
+
 if (fail) { console.log('\n\u5931\u8d25 ' + fail + ' \u9879'); process.exit(1); }
 console.log('\n\u901a\u8fc7 ' + pass + ' / ' + (pass + fail));

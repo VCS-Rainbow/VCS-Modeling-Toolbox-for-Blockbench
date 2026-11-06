@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.73.8';
+const VERSION = '0.73.9';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -831,8 +831,19 @@ class Exporter {
 	 *   10+2i     → 10,12,14…
 	 *   0,1,3     → 字面列表，超出末尾按 +1 顺延
 	 *   2:2i      → 每个值重复 2 次：2,2,4,4,6,6…（冒号前是重复次数/步长）
-	 *   ni        → 0·n,1·n,2·n…（n = 本分支在上层节点里的编号；如上层编号 5 → 0,5,10；无上层编号时 n 缺省为 1）
+	 *   ni        → 0·n,1·n,2·n…（n = 本分支在上层节点里的编号；如上层编号 5 → 0,5,10；
+	 *               没有显式编号时取「同层兄弟分组从上往下数的序号」，slots{a,b,c} → n = 1,2,3）
 	 */
+	/** 分支子节点在父级里的 1 起序号（分组 + 复调用标签，按大纲顺序）——编号格式变量 n 的缺省值来源。
+	 *  例：slots{a,b,c} → a/b/c 得 1/2/3。 */
+	siblingIndexOf(parent, child) {
+		try {
+			const kids = branchChildNodes(parent);
+			const i = kids.indexOf(child);
+			return i < 0 ? undefined : i + 1;
+		} catch (e) { return undefined; }
+	}
+
 	evalThreshold(format, index, n) {
 		let text = String(format == null ? '' : format).replace(/\s+/g, '');
 		if (!text) return null;
@@ -847,8 +858,7 @@ class Exporter {
 		// 带前缀时索引从 1 开始（2:2i → 2,2,4,4,6,6…），无前缀时从 0 开始（i → 0,1,2…）
 		const step = repeat > 1 ? Math.floor(index / repeat) + 1 : Math.floor(index / repeat);
 		// n = 本分支在上层节点里的编号（阈值本身）；缺省（上层没有编号）当 1，于是 `ni` 等价于 `i`
-		const nv = (n === undefined || n === null || n === '' || !isFinite(Number(n))) ? 1 : Number(n);
-		if (text.indexOf(',') >= 0) {
+		const nv = (n === undefined || n === null || n === '' || !isFinite(Number(n))) ? 1 : Number(n);		if (text.indexOf(',') >= 0) {
 			const list = text.split(',').map(v => Number(v)).filter(v => isFinite(v));
 			if (!list.length) return null;
 			return step < list.length ? list[step] : list[list.length - 1] + (step - list.length + 1);
@@ -1039,7 +1049,8 @@ class Exporter {
 			else if (prop === 'component') node.component = String(group.imda_component || 'minecraft:custom_data');
 			node.cases = [];
 			for (const child of childGroups) {
-				const childNode = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'), own_shift);
+				const siblingNo = this.siblingIndexOf(group, child);
+				const childNode = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'), own_shift, siblingNo);
 				if (!childNode) continue;
 				const when = this.parseWhen(child.imda_case_when);
 				// when 为空说明这个 case 谁都不匹配，原版会当成永不命中，留着只会误导；跳过并告警
@@ -1139,7 +1150,7 @@ class Exporter {
 		for (const extra of extras) models.push(extra);
 		for (const call of calls) models.push(call);
 		for (const child of childGroups) {
-			const childNode = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'), own_shift);
+			const childNode = this.buildNode(child, hint + '_' + sanitizePath(labelOf(child), 'group'), own_shift, this.siblingIndexOf(group, child));
 			if (childNode) models.push(childNode);
 		}
 		if (!models.length) { this.warn('分组 “' + labelOf(group) + '” 没有可导出内容，已跳过。'); return null; }
@@ -2615,15 +2626,26 @@ function openPivotFix() {
 	}).show();
 }
 
-/** 本分组在上层节点里的编号（供编号格式的 n 用）：只有它确实挂在 range_dispatch 下才算有编号，
- *  否则返回 undefined（evalThreshold 会把缺省 n 当 1）。 */
+/** 本节点在「同层兄弟分组」里从上往下数的序号（1 起）：作为编号格式变量 n 的缺省值。
+ *  例：slots{a,b,c} → a/b/c 的 n 分别是 1/2/3。合并 复调用标签（它们也是分支子项）。
+ *  没有父级（根目录）时返回 undefined。 */
+function siblingBranchNumber(node) {
+	const parent = node && node.parent;
+	if (!parent || !isGroup(parent)) return undefined;
+	const siblings = branchChildNodes(parent);
+	const index = siblings.indexOf(node);
+	return index < 0 ? undefined : index + 1;
+}
+
+/** 本分组在上层节点里的编号（供编号格式的 n 用）：挂在 range_dispatch 下就用它的阈值，
+ *  否则退回「同层兄弟分组里的 1 起序号」；根目录下返回 undefined（evalThreshold 缺省按 1）。 */
 function branchSelfNumber(group) {
 	const parent = group && group.parent;
 	if (parent && isGroup(parent) && String(parent.imda_type || '').replace(/^minecraft:/, '') === 'range_dispatch') {
 		const v = group.imda_threshold;
 		if (v !== undefined && v !== null && String(v).trim() !== '' && isFinite(Number(v))) return Number(v);
 	}
-	return undefined;
+	return siblingBranchNumber(group);
 }
 
 /** 分支容器的“分支子节点”：分组 + 复调用标签（imda_call_tag 自定义元素，也兼容旧式带 imda_call_target 的 Locator）。
@@ -2788,7 +2810,7 @@ function editGroupProps() {
 			imda_predicate: { label: 'predicate（component 用）', type: 'text', value: String(group.imda_predicate || ''), description: '语法："predicate": "minecraft:stored_enchantments"', condition: (r) => r.imda_property === 'component' },
 			imda_value: { label: 'value（component 用，JSON）', type: 'text', value: String(group.imda_value == null ? '' : group.imda_value), description: '语法："value": [ { ... } ]', condition: (r) => r.imda_property === 'component' },
 			imda_keybind: { label: 'keybind（keybind_down 用）', type: 'text', value: String(group.imda_keybind || ''), description: '语法："keybind": "key.jump"', condition: (r) => r.imda_property === 'keybind_down' },			imda_index: { label: '分派下标（index）', description: '语法："index": 0\n作用：仅 range_dispatch，指定从 property 的哪个下标取值。', type: 'number', value: num(group.imda_index), condition: (r) => r.imda_type === 'range_dispatch' },
-			imda_threshold_format: { label: '分支编号格式（entries[].threshold）', type: 'text', value: String(group.imda_threshold_format || ''), description: '语法：i → 0,1,2；2i 或 i*2 → 0,2,4；10+2i → 10,12,14；0,1,3 → 字面列表；2:2i → 每个值重复 2 次、索引从 1 起（2,2,4,4,6,6…）。\n变量 n = 本分支在上层节点里的编号：如本分支是 slots[5]，格式 ni → 子分支 0,5,10；没有上层编号时 n 默认为 1（等于 i）。\n作用：range_dispatch 的子分组按顺序取这些阈值；留空为 0,1,2…', condition: (r) => r.imda_type === 'range_dispatch' },
+			imda_threshold_format: { label: '分支编号格式（entries[].threshold）', type: 'text', value: String(group.imda_threshold_format || ''), description: '语法：i → 0,1,2；2i 或 i*2 → 0,2,4；10+2i → 10,12,14；0,1,3 → 字面列表；2:2i → 每个值重复 2 次、索引从 1 起（2,2,4,4,6,6…）。\n变量 n = 本分支在上层节点里的编号：如本分支是 slots[5]，格式 ni → 子分支 0,5,10；没有显式编号时取「同层兄弟分组从上往下数的序号」（slots{a,b,c} → n = 1,2,3）。\n作用：range_dispatch 的子分组按顺序取这些阈值；留空为 0,1,2…', condition: (r) => r.imda_type === 'range_dispatch' },
 			imda_threshold: { label: '分支编号 / 阈值（entries[].threshold）', type: 'number', value: num(group.imda_threshold), description: '语法：{"threshold": 0}\n作用：父分组为 range_dispatch 时，本分组的阈值；修改后自动按阈值重排。', condition: (r) => r.imda_type === 'range_dispatch' || parent_type === 'range_dispatch' },
 			imda_condition: { label: '分支条件（on_true / on_false）', type: 'select', value: String(group.imda_condition || ''), options: { '': '（按位置）', on_true: 'on_true', on_false: 'on_false' }, description: '语法："on_true" / "on_false"\n作用：父分组为 condition 时决定本分支走哪一支；修改后自动重排。', condition: (r) => parent_type === 'condition' },
 			imda_scale: { label: '数值缩放（scale）', description: '语法："scale": 1.0\n作用：仅 range_dispatch，property 数值乘以该倍数后再查阈值。', type: 'number', value: num(group.imda_scale) || 1, condition: (r) => r.imda_type === 'range_dispatch' },
@@ -6770,7 +6792,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, syncAllBranchLabels, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, buildSequenceChildResult, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, scanPackEntries, buildAllItemsTree, matchBlacklist, listFilesRecursive, simStepOnce, simAdvanceSlot, primeMappingCache, repairOutlinerDuplicates, applyConvertGroupsToCallTags, collectAllGroups, collectGroupSubtree, outermostSelectedGroups, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, syncAllBranchLabels, siblingBranchNumber, branchChildNodes, callTagBranchThreshold, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, buildSequenceChildResult, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, scanPackEntries, buildAllItemsTree, matchBlacklist, listFilesRecursive, simStepOnce, simAdvanceSlot, primeMappingCache, repairOutlinerDuplicates, applyConvertGroupsToCallTags, collectAllGroups, collectGroupSubtree, outermostSelectedGroups, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

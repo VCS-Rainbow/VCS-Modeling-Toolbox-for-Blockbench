@@ -2,6 +2,15 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.73.9
+- **编号格式变量 `n` 的缺省值改为「本分支在同层分组里从上往下数的序号」**（原来缺省一律 1）。例：`slots{ a, b, c }` 三个子分组的 `n` 分别是 **1 / 2 / 3**，于是它们各自写 `ni` 时，子分支阈值分别得到 `0,1` / `0,2` / `0,3`。
+  - 新增 `siblingBranchNumber(node)`：返回节点在同层分支子项（分组 + 复调用标签，按大纲顺序）中的 1 起序号；根目录下返回 `undefined`。
+  - `branchSelfNumber(group)`：挂在 `range_dispatch` 下仍优先用它的 `imda_threshold`；否则退回 `siblingBranchNumber()`（根目录下才是 undefined → `evalThreshold` 缺省 1）。
+  - 导出器把该序号沿 `buildNode(..., selfNumber)` 往下传：新增 `Exporter.siblingIndexOf(parent, child)`，`select` 分支和普通 composite/model 的子分组递归都会传（`range_dispatch` 子分支仍传各自算出的阈值）。
+  - 属性面板「分支编号格式」说明同步更新。
+- 单测：`_test_threshold_n.js` 增到 22 项（新增 `siblingBranchNumber` = 1/2/3 与导出级 `ni` → `0,1`/`0,2`/`0,3`）；合计 22 + 25 + 76 + 350 + 29 + 44 = **546 项**。
+- 备注：仍无 CDP，未真机验证；文件已部署，重载插件/重启后生效。
+
 ## 0.73.8
 - **修：range_dispatch 总控下的「复调用标签」名字前不显示序号**。复调用标签是自定义元素 `imda_call_tag`（继承 `Locator`，但导出器把它也当作 range_dispatch 的 `entries`），而 `syncBranchLabels` / `sortBranchChildren` / `stripChildPrefixes` 之前只处理 `isGroup` 子节点，导致标签永远不加 `[阈值]` 前缀。
   - 新增 `branchChildNodes(group)`：分支子节点 = 分组 + 复调用标签（`isCallTag`），顺序与导出一致（先分组，再标签）。
