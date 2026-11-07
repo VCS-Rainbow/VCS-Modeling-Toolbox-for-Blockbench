@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.73.9';
+const VERSION = '0.73.10';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1201,18 +1201,70 @@ class Exporter {
 			if (!pathmod || !fsmod) return null;
 			const abs = modelPathOf(pathmod, root, reference);
 			if (!fsmod.existsSync(abs)) return null;
-			return { data: JSON.parse(fsmod.readFileSync(abs, 'utf8')), abs, root, pathmod };
+			return { data: JSON.parse(fsmod.readFileSync(abs, 'utf8')), abs, root, pathmod, fsmod };
 		} catch (e) { return null; }
 	}
 
-	/** 强制统一引用模型的 display：copy=生成副本，overwrite=覆盖源文件，none=不处理 */
+	/** 沿 parent 链求引用模型的“有效 display”（子槽覆盖父槽），用于判断是否需要覆盖。 */
+	effectiveReferenceDisplay(reference, source) {
+		const eff = {};
+		const seen = {};
+		let data = source && source.data;
+		for (let depth = 0; depth < 12 && data; depth++) {
+			const disp = data.display;
+			if (disp && typeof disp === 'object') {
+				for (const slot of Object.keys(disp)) {
+					if (!(slot in eff) && disp[slot] && typeof disp[slot] === 'object') eff[slot] = disp[slot];
+				}
+			}
+			const parent = typeof data.parent === 'string' ? data.parent.trim() : '';
+			if (!parent || seen[parent]) break;
+			seen[parent] = true;
+			let next = null;
+			try {
+				const abs = modelPathOf(source.pathmod, source.root, parent);
+				if (source.fsmod.existsSync(abs)) next = JSON.parse(source.fsmod.readFileSync(abs, 'utf8'));
+			} catch (e) { next = null; }
+			data = next;
+		}
+		return eff;
+	}
+
+	/** display 归一化比较：忽略零旋转/零平移/单位缩放，数值取 6 位小数。 */
+	sameDisplay(a, b) {
+		const norm = (disp) => {
+			const out = {};
+			if (!disp || typeof disp !== 'object') return out;
+			for (const slot of Object.keys(disp)) {
+				const d = disp[slot];
+				if (!d || typeof d !== 'object') continue;
+				const s = {};
+				const r = Array.isArray(d.rotation) ? d.rotation.map(v => Math.round(num(v) * 1e6) / 1e6) : null;
+				const t = Array.isArray(d.translation) ? d.translation.map(v => Math.round(num(v) * 1e6) / 1e6) : null;
+				const c = Array.isArray(d.scale) ? d.scale.map(v => Math.round(num(v) * 1e6) / 1e6) : null;
+				if (r && r.some(v => Math.abs(v) > 1e-6)) s.rotation = r;
+				if (t && t.some(v => Math.abs(v) > 1e-6)) s.translation = t;
+				if (c && c.some(v => Math.abs(v - 1) > 1e-6)) s.scale = c;
+				if (Object.keys(s).length) out[slot] = s;
+			}
+			return out;
+		};
+		return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
+	}
+
+	/** 强制统一引用模型的 display：
+	 *  copy      = 检测到与引用模型（含父链）的 display 不适配时，新建一个以源模型为 parent、覆盖 display 的模型；
+	 *  overwrite = 直接改写资源包里的源模型文件；
+	 *  none      = 不处理。 */
 	unifyReferenceDisplay(reference, mode) {
 		if (!reference || mode === 'none') return reference;
 		const desired = this.desiredDisplay();
+		if (!desired || !Object.keys(desired).length) return reference;
 		const source = this.readReferenceModel(reference);
+		// 源模型不在本地资源包里，无法判断差异：保持原引用
 		if (!source || !source.data) return reference;
-		const current = source.data.display || {};
-		if (JSON.stringify(current) === JSON.stringify(desired)) return reference;
+		const effective = this.effectiveReferenceDisplay(reference, source);
+		if (this.sameDisplay(effective, desired)) return reference;
 		if (mode === 'overwrite') {
 			const rel = source.pathmod.relative(source.root, source.abs).replace(/\\/g, '/');
 			const data = Object.assign({}, source.data, { display: desired });
@@ -1223,7 +1275,9 @@ class Exporter {
 		if (this.displayCopies.has(key)) return this.displayCopies.get(key);
 		const base = this.stem + '_' + sanitizePath(String(reference).split(':').pop(), 'ref') + '_display';
 		const name = this.unique(base, this.modelNames);
-		const data = Object.assign({}, source.data, { display: desired });
+		// 仅保留 parent + display：几何/纹理全部继承源模型，只覆盖显示调整参数。
+		const parentId = /:/.test(String(reference)) ? String(reference).trim() : ('minecraft:' + String(reference).trim());
+		const data = { parent: parentId, display: JSON.parse(JSON.stringify(desired)) };
 		this.models.push({ name, data });
 		const ref = this.namespace + ':item/' + (this.subpath ? this.subpath + '/' : '') + name;
 		this.displayCopies.set(key, ref);

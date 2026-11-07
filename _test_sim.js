@@ -786,6 +786,46 @@ eq('display 使用显示调整页的手持', displayExporter.models[0].data.disp
 eq('未在显示调整页出现的上下文不输出', displayExporter.models[0].data.display.ground, undefined);
 delete global.Project.display_settings;
 delete global.Project.imda_display_all_slots;
+
+/* ---------- 引用模型 display 不适配 → 生成 parent+display 覆盖模型 ---------- */
+console.log('\n[引用模型 display 覆盖]');
+{
+	const dispRefExporter = api.createExporter();
+	const desiredDisp = dispRefExporter.desiredDisplay();
+	eq('desiredDisplay 含手持槽', !!desiredDisp.thirdperson_righthand, true);
+	// 1) 引用模型 display 与 imda 不一致 → 新建 child 模型，parent=源，只有 display
+	const stubSource = { data: { parent: 'minecraft:item/generated', textures: { 0: 'minecraft:item/x' } }, abs: '/x.json', root: '/pack', pathmod: null, fsmod: null };
+	dispRefExporter.readReferenceModel = () => stubSource;
+	const ref1 = dispRefExporter.unifyReferenceDisplay('minecraft:item/x', 'copy');
+	eq('不一致时返回新模型引用', ref1 !== 'minecraft:item/x', true);
+	eq('新模型写入 this.models', dispRefExporter.models.length, 1);
+	const newModel = dispRefExporter.models[0].data;
+	eq('新模型 parent = 源模型', newModel.parent, 'minecraft:item/x');
+	eq('新模型覆盖 display', JSON.stringify(newModel.display), JSON.stringify(desiredDisp));
+	eq('新模型不再内联 elements', newModel.elements, undefined);
+	eq('新模型不复制 textures', newModel.textures, undefined);
+	eq('新模型引用带 namespace', ref1.indexOf(dispRefExporter.namespace + ':item/') === 0, true);
+	// 缓存命中
+	const ref1b = dispRefExporter.unifyReferenceDisplay('minecraft:item/x', 'copy');
+	eq('相同输入复用同一副本', ref1b, ref1);
+	eq('缓存不重复生成模型', dispRefExporter.models.length, 1);
+
+	// 2) 引用模型 display 已适配 → 原样返回
+	const dispSame = api.createExporter();
+	dispSame.readReferenceModel = () => ({ data: { parent: 'minecraft:item/generated', display: JSON.parse(JSON.stringify(desiredDisp)) }, abs: '/y.json', root: '/pack', pathmod: null, fsmod: null });
+	eq('display 已适配时原样返回', dispSame.unifyReferenceDisplay('minecraft:item/y', 'copy'), 'minecraft:item/y');
+	eq('适配时不新增模型', dispSame.models.length, 0);
+
+	// 3) display 沿 parent 继承：子无 display、父有适配 display → 不新增
+	const dispInherit = api.createExporter();
+	const parentData = { display: JSON.parse(JSON.stringify(desiredDisp)) };
+	const childData = { parent: 'minecraft:item/parent' };
+	const fakePath = { join: (...seg) => seg.join('/'), relative: () => '' };
+	dispInherit.readReferenceModel = () => ({ data: childData, abs: '/pack/assets/minecraft/models/item/child.json', root: '/pack', pathmod: fakePath, fsmod: { existsSync: () => true, readFileSync: () => JSON.stringify(parentData) } });
+	eq('父链 display 适配时不新增模型', dispInherit.unifyReferenceDisplay('minecraft:item/child', 'copy'), 'minecraft:item/child');
+	eq('继承判定不新增模型', dispInherit.models.length, 0);
+}
+
 const parsedNs = api.parseNamespaceSetting('sqsptst:weapon/shotgun');
 eq('命名空间解析', parsedNs.namespace, 'sqsptst');
 eq('子空间解析', parsedNs.subpath, 'weapon/shotgun');

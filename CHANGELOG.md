@@ -2,6 +2,15 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.73.10
+- **引用模型的 display（显示调整）覆盖方式改为「新建以源模型为 parent 的子模型」**。原来检测到 imda 显示参数与引用模型不一致时，会把源模型的完整数据（elements/textures…）复制一份再改 `display`；现在改为只生成 `{ parent: <源模型 id>, display: <imda 显示参数> }` 的轻量模型文件，几何/纹理全部继承源模型，只覆盖显示调整，避免复制大模型、也避免两处几何不一致。
+  - `unifyReferenceDisplay()`（copy 模式）改写：输出 `{ parent, display }`，不再 `Object.assign({}, source.data, …)`。
+  - 新增 `effectiveReferenceDisplay()`：沿源模型的 `parent` 链求**有效 display**（子槽覆盖父槽），用于判断是否真的“不适配”。
+  - 新增 `sameDisplay()`：归一化比较（忽略零旋转/零平移/单位缩放，6 位小数），避免因默认值/键序差异误判。
+  - `readReferenceModel()` 返回值补充 `fsmod`，供父链读取。
+  - overwrite 模式不变（仍直接改写源模型文件的 `display`）；源模型不在本地资源包时保持原引用不动。
+- 单测：`_test_sim.js` 新增「引用模型 display 覆盖」6 项（生成 parent+display、不内联 elements/textures、缓存复用、已适配不新增、父链继承判定），合计 **364 项全部通过**。
+
 ## 0.73.9
 - **编号格式变量 `n` 的缺省值改为「本分支在同层分组里从上往下数的序号」**（原来缺省一律 1）。例：`slots{ a, b, c }` 三个子分组的 `n` 分别是 **1 / 2 / 3**，于是它们各自写 `ni` 时，子分支阈值分别得到 `0,1` / `0,2` / `0,3`。
   - 新增 `siblingBranchNumber(node)`：返回节点在同层分支子项（分组 + 复调用标签，按大纲顺序）中的 1 起序号；根目录下返回 `undefined`。
