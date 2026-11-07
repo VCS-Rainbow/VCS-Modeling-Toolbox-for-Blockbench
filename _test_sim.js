@@ -809,6 +809,14 @@ console.log('\n[引用模型 display 覆盖]');
 	const ref1b = dispRefExporter.unifyReferenceDisplay('minecraft:item/x', 'copy');
 	eq('相同输入复用同一副本', ref1b, ref1);
 	eq('缓存不重复生成模型', dispRefExporter.models.length, 1);
+	eq('副本名不含目录斜杠', dispRefExporter.models[0].name.indexOf('/') < 0, true);
+	// 源模型 id 带目录（item/inker/jet_rifle/sac.empty）时，副本名只取最后一段，不再嵌目录
+	const dispNested = api.createExporter();
+	dispNested.readReferenceModel = () => ({ data: { parent: 'minecraft:item/generated' }, abs: '/z.json', root: '/pack', pathmod: null, fsmod: null });
+	const refNested = dispNested.unifyReferenceDisplay('sqsp:item/inker/jet_rifle/sac.empty', 'copy');
+	eq('带目录源模型 → 副本名不含斜杠', dispNested.models[0].name.indexOf('/') < 0, true);
+	eq('带目录源模型 → 副本名取文件名 sac.empty', dispNested.models[0].name.indexOf('sac.empty') >= 0, true);
+	eq('带目录源模型 → 引用落在 item_id 目录', refNested.indexOf(dispNested.modelRefBase()) === 0, true);
 
 	// 2) 引用模型 display 已适配 → 原样返回
 	const dispSame = api.createExporter();

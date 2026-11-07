@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.73.11';
+const VERSION = '0.73.12';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -790,7 +790,7 @@ class Exporter {
 		const display = this.blockDisplay ? this.desiredDisplay() : null;
 		if (display && Object.keys(display).length) model.display = JSON.parse(JSON.stringify(display));
 
-		const name = this.unique(sanitizePath(this.stem + '_' + (hint || 'part'), 'model'), this.modelNames);
+		const name = this.unique(sanitizePath(this.stem + '_' + (hint || 'part'), 'model').replace(/\//g, '_'), this.modelNames);
 		this.models.push({ name, data: model });
 		const built = { reference: this.modelRefBase() + name, shift };
 		this.modelCache.set(modelKey, built);
@@ -1284,7 +1284,9 @@ class Exporter {
 		}
 		const key = reference + '|' + JSON.stringify(desired);
 		if (this.displayCopies.has(key)) return this.displayCopies.get(key);
-		const base = this.stem + '_' + sanitizePath(String(reference).split(':').pop(), 'ref') + '_display';
+		// 只用源模型的最后一段文件名作为副本名，避免 name 里带出 item/inker/... 这类目录段嵌套进文件名。
+		const refLeaf = String(reference).split(':').pop().split('/').filter(Boolean).pop() || 'ref';
+		const base = this.stem + '_' + sanitizePath(refLeaf, 'ref').replace(/\//g, '_') + '_display';
 		const name = this.unique(base, this.modelNames);
 		// 仅保留 parent + display：几何/纹理全部继承源模型，只覆盖显示调整参数。
 		const parentId = /:/.test(String(reference)) ? String(reference).trim() : ('minecraft:' + String(reference).trim());

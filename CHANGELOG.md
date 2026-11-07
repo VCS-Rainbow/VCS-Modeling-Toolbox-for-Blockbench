@@ -2,6 +2,12 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.73.12
+- **修：display 副本文件名里带出源模型的目录段**，导致路径嵌套成 `models/item/jet_rifle/jet_rifle_item/inker/jet_rifle/sac.empty_display.json`。现在副本名只取源模型 id 的**最后一段文件名**（`sqsp:item/inker/jet_rifle/sac.empty` → `sac.empty`），并去掉所有 `/`，统一落在 `models/item/<item_id>/` 下。
+  - `unifyReferenceDisplay()`（copy 模式）的 `base` 改为 `refLeaf`（`split(':').pop().split('/').pop()`）。
+  - `addModel()` 的模型名也把 `/` 压成 `_`，避免分组标签里的斜杠再次制造子目录。
+- 单测：新增 3 项（副本名不含斜杠、带目录源模型取 `sac.empty`、引用落在 item_id 目录）；`_test_sim.js` 合计 **373 项**。
+
 ## 0.73.11
 - **生成的子模型统一放到 `models/item/<主文件名>/` 目录下**。以前子模型跟随命名空间子空间（`models/item/<subpath>/`），例如主文件 `items/inker/jet_rifle.json` 的子模型落在 `models/item/inker/jet_rifle_xxx.json`；现在改为落到 `models/item/jet_rifle/jet_rifle_xxx.json`（`inker` 不再进入子模型目录）。
   - 新增 `Exporter.modelDir()`：取 `item_id` 的最后一段作为子模型目录名。
