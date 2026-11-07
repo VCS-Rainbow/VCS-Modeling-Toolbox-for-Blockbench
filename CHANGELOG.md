@@ -2,6 +2,14 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.73.11
+- **生成的子模型统一放到 `models/item/<主文件名>/` 目录下**。以前子模型跟随命名空间子空间（`models/item/<subpath>/`），例如主文件 `items/inker/jet_rifle.json` 的子模型落在 `models/item/inker/jet_rifle_xxx.json`；现在改为落到 `models/item/jet_rifle/jet_rifle_xxx.json`（`inker` 不再进入子模型目录）。
+  - 新增 `Exporter.modelDir()`：取 `item_id` 的最后一段作为子模型目录名。
+  - 新增 `Exporter.modelRefBase()`：模型引用前缀改为 `ns:item/<item_id>/`；`addModel` / `unifyReferenceDisplay` / `displayCarrierReference` 三处引用统一走它。
+  - `buildFiles()` 里模型文件路径改为 `assets/<ns>/models/item/<modelDir>/<name>.json`；主文件 `items/...` 路径不变（仍带 subpath）。
+  - `createModelFromGroup()` 写盘目录同步改为 `models/item/<modelDir>/`，与引用一致。
+- 单测：`_test_sim.js` 更新子空间路径断言并新增「主文件名子目录」5 项（`modelDir`/`modelRefBase`/引用/文件路径/不再落 `inker/`）；合计 **369 项**，其余套件 29+76+25+44+22 全通过。
+
 ## 0.73.10
 - **引用模型的 display（显示调整）覆盖方式改为「新建以源模型为 parent 的子模型」**。原来检测到 imda 显示参数与引用模型不一致时，会把源模型的完整数据（elements/textures…）复制一份再改 `display`；现在改为只生成 `{ parent: <源模型 id>, display: <imda 显示参数> }` 的轻量模型文件，几何/纹理全部继承源模型，只覆盖显示调整，避免复制大模型、也避免两处几何不一致。
   - `unifyReferenceDisplay()`（copy 模式）改写：输出 `{ parent, display }`，不再 `Object.assign({}, source.data, …)`。

@@ -837,7 +837,21 @@ eq('子空间模型引用前缀', subExporter.models[0].name.indexOf('subpath') 
 const savedSubRoot = global.Outliner.root.splice(0, global.Outliner.root.length, dispCube);
 const subFiles = subExporter.buildFiles().files;
 eq('items 路径带子空间', subFiles.some(f => f.path === 'assets/sqsptst/items/weapon/shotgun/' + Project.model_identifier + '.json' || f.path.indexOf('assets/sqsptst/items/weapon/shotgun/') === 0), true);
-eq('models 路径带子空间', subFiles.some(f => f.path.indexOf('assets/sqsptst/models/item/weapon/shotgun/') === 0), true);
+eq('models 路径按主文件名放到同名子目录', subFiles.some(f => f.path.indexOf('assets/sqsptst/models/item/' + subExporter.item_id + '/') === 0), true);
+/* 主文件 items/inker/jet_rifle.json（namespace=sqsp:inker, item_id=jet_rifle）→ 子模型在 models/item/jet_rifle/ */
+global.Project.imda_namespace = 'sqsp:inker';
+global.Project.model_identifier = 'jet_rifle';
+const dirExporter = api.createExporter();
+eq('modelDir 取 item_id', dirExporter.modelDir(), 'jet_rifle');
+eq('modelRefBase 使用 item_id 目录', dirExporter.modelRefBase(), 'sqsp:item/jet_rifle/');
+dirExporter.addModel([dispCube], 'jet_rifle_extra');
+eq('子模型引用在 item_id 目录下', dirExporter.models[0] && dirExporter.modelRefBase().indexOf('item/jet_rifle/') >= 0, true);
+const savedDirRoot = global.Outliner.root.splice(0, global.Outliner.root.length, dispCube);
+const dirFiles = dirExporter.buildFiles().files;
+eq('子模型文件写到 models/item/jet_rifle/', dirFiles.some(f => f.path.indexOf('assets/sqsp/models/item/jet_rifle/') === 0), true);
+eq('子模型不再写到 models/item/inker/', dirFiles.some(f => f.path.indexOf('assets/sqsp/models/item/inker/') === 0), false);
+global.Outliner.root.splice(0, global.Outliner.root.length, ...savedDirRoot);
+delete global.Project.model_identifier;
 global.Outliner.root.splice(0, global.Outliner.root.length, ...savedSubRoot);
 delete global.Project.imda_namespace;
 const sampleAnim = { time: 0.5, getBoneAnimator(group) { return group === dispCube.parent ? null : { keyframes: [{}], channels: { rotation: [{}], position: [{}] }, interpolate(ch) { return ch === 'rotation' ? [0, 10, 0] : (ch === 'position' ? [0, 1, 0] : [1, 1, 1]); } }; } };

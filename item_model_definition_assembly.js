@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.73.10';
+const VERSION = '0.73.11';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -620,6 +620,17 @@ class Exporter {
 		return name;
 	}
 
+	/** 生成模型文件所在的子目录（相对 models/item/）：用主文件名 item_id，例如主文件 items/inker/jet_rifle.json → models/item/jet_rifle/ */
+	modelDir() {
+		const seg = String(this.item_id || '').replace(/\\/g, '/').split('/').filter(Boolean);
+		return sanitizePath(seg.length ? seg[seg.length - 1] : 'item', 'item');
+	}
+
+	/** 生成模型的引用前缀，形如 ns:item/jet_rifle/ */
+	modelRefBase() {
+		return this.namespace + ':item/' + this.modelDir() + '/';
+	}
+
 	uvScale(texture) {
 		if (this.uvScales.has(texture)) return this.uvScales.get(texture);
 		let w = 0, h = 0;
@@ -781,7 +792,7 @@ class Exporter {
 
 		const name = this.unique(sanitizePath(this.stem + '_' + (hint || 'part'), 'model'), this.modelNames);
 		this.models.push({ name, data: model });
-		const built = { reference: this.namespace + ':item/' + (this.subpath ? this.subpath + '/' : '') + name, shift };
+		const built = { reference: this.modelRefBase() + name, shift };
 		this.modelCache.set(modelKey, built);
 		return built;
 	}
@@ -1279,7 +1290,7 @@ class Exporter {
 		const parentId = /:/.test(String(reference)) ? String(reference).trim() : ('minecraft:' + String(reference).trim());
 		const data = { parent: parentId, display: JSON.parse(JSON.stringify(desired)) };
 		this.models.push({ name, data });
-		const ref = this.namespace + ':item/' + (this.subpath ? this.subpath + '/' : '') + name;
+		const ref = this.modelRefBase() + name;
 		this.displayCopies.set(key, ref);
 		return ref;
 	}
@@ -1472,7 +1483,7 @@ class Exporter {
 		const name = this.unique(this.stem + '_display', this.modelNames);
 		const data = { display: this.desiredDisplay(), elements: [] };
 		this.models.push({ name, data });
-		this.displayCarrier = this.namespace + ':item/' + (this.subpath ? this.subpath + '/' : '') + name;
+		this.displayCarrier = this.modelRefBase() + name;
 		return this.displayCarrier;
 	}
 
@@ -1641,9 +1652,10 @@ const models = [];
 	buildFiles() {
 		const mapping = this.buildMapping();
 		const sub = this.subpath ? this.subpath + '/' : '';
+		const modelSub = this.modelDir() ? this.modelDir() + '/' : '';
 		const files = [{ path: 'assets/' + this.namespace + '/items/' + sub + this.item_id + '.json', data: formatMapping(mapping) }];
 		for (const model of this.models) {
-			files.push({ path: 'assets/' + this.namespace + '/models/item/' + sub + model.name + '.json', data: formatModel(model.data) });
+			files.push({ path: 'assets/' + this.namespace + '/models/item/' + modelSub + model.name + '.json', data: formatModel(model.data) });
 		}
 		for (const texture of this.textures) {
 			const source = texture.texture && texture.texture.source;
@@ -3765,7 +3777,7 @@ function createModelFromGroup(group) {
 		title: '从分组创建模型',
 		width: 560,
 		form: {
-			name: { label: '模型名', type: 'text', value: sanitizePath(labelOf(group), 'group'), description: '写入 assets/<namespace>/models/item/<名字>.json；分组会改为引用该模型，并记录居中补偿以保持外观。' },
+			name: { label: '模型名', type: 'text', value: sanitizePath(labelOf(group), 'group'), description: '写入 assets/<namespace>/models/item/<主文件名>/<名字>.json；分组会改为引用该模型，并记录居中补偿以保持外观。' },
 		},
 		onConfirm(result) {
 			const hint = sanitizePath(result.name || labelOf(group), 'group');
@@ -3783,7 +3795,7 @@ function createModelFromGroup(group) {
 				Blockbench.showMessageBox({ title: '无法写入', message: '需要桌面版 Blockbench，并且资源包路径可用。', icon: 'warning' });
 				return;
 			}
-			const dir = pathmod.join(root, 'assets', exporter.namespace, 'models', 'item', ...(exporter.subpath ? exporter.subpath.split('/') : []));
+			const dir = pathmod.join(root, 'assets', exporter.namespace, 'models', 'item', ...(exporter.modelDir() ? exporter.modelDir().split('/') : []));
 			const file = pathmod.join(dir, model.name + '.json');
 			try {
 				fsmod.mkdirSync(dir, { recursive: true });
