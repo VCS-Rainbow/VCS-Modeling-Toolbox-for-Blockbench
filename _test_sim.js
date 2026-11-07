@@ -781,11 +781,19 @@ global.Project.display_settings = {
 global.Project.imda_display_all_slots = true;
 const displayExporter = api.createExporter();
 displayExporter.addModel([dispCube], 'displayFromProject');
-eq('display 使用显示调整页的 gui', displayExporter.models[0].data.display.gui.scale, [1.25, 1.25, 1.25]);
-eq('display 使用显示调整页的手持', displayExporter.models[0].data.display.thirdperson_righthand.scale, [0.85, 0.85, 0.85]);
+eq('display 使用显示调整页的 gui（改过的槽位）', displayExporter.models[0].data.display.gui.scale, [1.25, 1.25, 1.25]);
+eq('与默认值相同的手持槽位不输出', displayExporter.models[0].data.display.thirdperson_righthand, undefined);
 eq('未在显示调整页出现的上下文不输出', displayExporter.models[0].data.display.ground, undefined);
 delete global.Project.display_settings;
 delete global.Project.imda_display_all_slots;
+/* 只写改过的槽位：默认值全部相同 → 空 display */
+global.Project.display_settings = {
+  ground: { export() { return { translation: [0, 2, 0], scale: [0.5, 0.5, 0.5] }; } },
+  gui: { export() { return { rotation: [30, -135, 0], scale: [0.625, 0.625, 0.625] }; } },
+};
+const defaultOnlyExporter = api.createExporter();
+eq('全部为默认值时 desiredDisplay 为空', JSON.stringify(defaultOnlyExporter.desiredDisplay()), '{}');
+delete global.Project.display_settings;
 
 /* ---------- 引用模型 display 不适配 → 生成 parent+display 覆盖模型 ---------- */
 console.log('\n[引用模型 display 覆盖]');

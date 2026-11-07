@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.73.12';
+const VERSION = '0.73.13';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -37,6 +37,28 @@ const BLOCK_DISPLAY = {
 	firstperson_righthand: { rotation: [0, -90, 25], translation: [1.13, 3.2, 1.13], scale: [0.68, 0.68, 0.68] },
 	firstperson_lefthand: { rotation: [0, 90, -25], translation: [1.13, 3.2, 1.13], scale: [0.68, 0.68, 0.68] },
 };
+
+/** Blockbench “显示调整”页各槽的默认值；与默认值相同的槽位不写进模型（视为用户没改过）。 */
+const DEFAULT_DISPLAY = {
+	thirdperson_righthand: { rotation: [0, -90, 55], translation: [0, 4, 0.5], scale: [0.85, 0.85, 0.85] },
+	thirdperson_lefthand: { rotation: [0, 90, -55], translation: [0, 4, 0.5], scale: [0.85, 0.85, 0.85] },
+	firstperson_righthand: { rotation: [0, -90, 25], translation: [1.13, 3.2, 1.13], scale: [0.68, 0.68, 0.68] },
+	firstperson_lefthand: { rotation: [0, 90, -25], translation: [1.13, 3.2, 1.13], scale: [0.68, 0.68, 0.68] },
+	ground: { rotation: [0, 0, 0], translation: [0, 2, 0], scale: [0.5, 0.5, 0.5] },
+	gui: { rotation: [30, -135, 0], translation: [0, 0, 0], scale: [0.625, 0.625, 0.625] },
+	head: { rotation: [0, -180, 0], translation: [0, 13, 7], scale: [1, 1, 1] },
+	fixed: { rotation: [0, -180, 0], translation: [0, 0, 0], scale: [1, 1, 1] },
+};
+
+/** 两个 display 槽位变换是否等价（缺省 rotation/translation 视为 0，scale 视为 1）。 */
+function sameSlotTransform(a, b) {
+	const vec = (v, fallback) => Array.isArray(v) ? [0, 1, 2].map(i => Math.round(num(v[i]) * 1e6) / 1e6) : fallback.slice();
+	const ra = vec(a && a.rotation, [0, 0, 0]), rb = vec(b && b.rotation, [0, 0, 0]);
+	const ta = vec(a && a.translation, [0, 0, 0]), tb = vec(b && b.translation, [0, 0, 0]);
+	const sa = vec(a && a.scale, [1, 1, 1]), sb = vec(b && b.scale, [1, 1, 1]);
+	const eq = (x, y) => x.every((v, i) => Math.abs(v - y[i]) < 1e-6);
+	return eq(ra, rb) && eq(ta, tb) && eq(sa, sb);
+}
 
 let format_object = null;
 let codec_object = null;
@@ -790,7 +812,7 @@ class Exporter {
 		const display = this.blockDisplay ? this.desiredDisplay() : null;
 		if (display && Object.keys(display).length) model.display = JSON.parse(JSON.stringify(display));
 
-		const name = this.unique(sanitizePath(this.stem + '_' + (hint || 'part'), 'model').replace(/\//g, '_'), this.modelNames);
+		const name = this.unique(sanitizePath(hint || 'part', 'model').replace(/\//g, '_') || 'part', this.modelNames);
 		this.models.push({ name, data: model });
 		const built = { reference: this.modelRefBase() + name, shift };
 		this.modelCache.set(modelKey, built);
@@ -1194,13 +1216,17 @@ class Exporter {
 	/** 定位点 → 复调用节点：指向分组时先占位，构建完成后克隆目标节点 */
 	desiredDisplay() {
 		if (!this.blockDisplay) return {};
-		const base = JSON.parse(JSON.stringify(BLOCK_DISPLAY));
 		const custom = this.projectDisplay || {};
+		// 没有“显示调整”数据：回退到内置手持预设，保证模型在手里不至于完全没变换。
+		if (!Object.keys(custom).length) return JSON.parse(JSON.stringify(BLOCK_DISPLAY));
+		// 有显示调整数据：只输出用户真正改过的槽位（与 Blockbench 默认值不同）。
+		const out = {};
 		for (const slot of Object.keys(custom)) {
-			if (!this.displayAllSlots && !/thirdperson|firstperson/.test(slot)) continue;
-			base[slot] = custom[slot];
+			const def = DEFAULT_DISPLAY[slot];
+			if (def && sameSlotTransform(custom[slot], def)) continue;
+			out[slot] = custom[slot];
 		}
-		return base;
+		return out;
 	}
 
 	readReferenceModel(reference) {
@@ -1286,7 +1312,7 @@ class Exporter {
 		if (this.displayCopies.has(key)) return this.displayCopies.get(key);
 		// 只用源模型的最后一段文件名作为副本名，避免 name 里带出 item/inker/... 这类目录段嵌套进文件名。
 		const refLeaf = String(reference).split(':').pop().split('/').filter(Boolean).pop() || 'ref';
-		const base = this.stem + '_' + sanitizePath(refLeaf, 'ref').replace(/\//g, '_') + '_display';
+		const base = sanitizePath(refLeaf, 'ref').replace(/\//g, '_') + '_display';
 		const name = this.unique(base, this.modelNames);
 		// 仅保留 parent + display：几何/纹理全部继承源模型，只覆盖显示调整参数。
 		const parentId = /:/.test(String(reference)) ? String(reference).trim() : ('minecraft:' + String(reference).trim());
@@ -1482,7 +1508,7 @@ class Exporter {
 	/** 空几何的 display 载体：放在时间轴根 composite 的第一个子项，保证 display 能被解析 */
 	displayCarrierReference() {
 		if (this.displayCarrier) return this.displayCarrier;
-		const name = this.unique(this.stem + '_display', this.modelNames);
+		const name = this.unique('display', this.modelNames);
 		const data = { display: this.desiredDisplay(), elements: [] };
 		this.models.push({ name, data });
 		this.displayCarrier = this.modelRefBase() + name;

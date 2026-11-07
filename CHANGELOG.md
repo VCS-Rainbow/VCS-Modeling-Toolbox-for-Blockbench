@@ -2,6 +2,17 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.73.13
+- **子模型文件名去掉重复的主文件名前缀**：目录已经是 `models/item/jet_rifle/`，文件名不再写 `jet_rifle_`，直接 `sac.empty_display.json`、`bone5_group3_group2.json` 等。
+  - `addModel()`：名字改为 `sanitizePath(hint)`，不再拼 `this.stem + '_'`。
+  - `unifyReferenceDisplay()`：display 副本名改为 `<源模型最后一段>_display`，不再带 `jet_rifle_`。
+  - `displayCarrierReference()`：载体名改为 `display`（`unique` 自动避让）。
+- **display 只写“显示调整页里改过的槽位”**：
+  - 新增 `DEFAULT_DISPLAY`（Blockbench 各槽默认变换）与 `sameSlotTransform()`。
+  - `desiredDisplay()`：项目有显示调整数据时，逐槽与默认值比较，**相同则跳过**；没有显示调整数据时才回退到内置手持预设 `BLOCK_DISPLAY`。
+  - 不再依赖 `imda_display_all_slots` 开关（保留属性但不再影响输出）。
+- 单测：`_test_sim.js` 更新为新语义并新增「默认值不输出」断言，合计 **374 项**；其余套件 29+76+25+44+22 全通过。
+
 ## 0.73.12
 - **修：display 副本文件名里带出源模型的目录段**，导致路径嵌套成 `models/item/jet_rifle/jet_rifle_item/inker/jet_rifle/sac.empty_display.json`。现在副本名只取源模型 id 的**最后一段文件名**（`sqsp:item/inker/jet_rifle/sac.empty` → `sac.empty`），并去掉所有 `/`，统一落在 `models/item/<item_id>/` 下。
   - `unifyReferenceDisplay()`（copy 模式）的 `base` 改为 `refLeaf`（`split(':').pop().split('/').pop()`）。
