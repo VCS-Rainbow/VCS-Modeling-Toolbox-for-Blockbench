@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.73.13';
+const VERSION = '0.73.14';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1289,6 +1289,41 @@ class Exporter {
 		return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
 	}
 
+	/** 找引用模型（含父链）可用的 particle 贴图：优先 textures.particle，其次任意真实路径贴图。 */
+	referenceParticleTexture(reference, source) {
+		let data = source && source.data;
+		const seen = {};
+		const pick = (textures) => {
+			if (!textures || typeof textures !== 'object') return null;
+			if (typeof textures.particle === 'string') {
+				const p = textures.particle.trim();
+				if (p && p.charAt(0) !== '#') return p;
+			}
+			for (const key of Object.keys(textures)) {
+				const v = textures[key];
+				if (typeof v === 'string' && v.trim() && v.trim().charAt(0) !== '#') return v.trim();
+			}
+			return null;
+		};
+		let current = String(reference || '').trim();
+		for (let depth = 0; depth < 12 && data; depth++) {
+			const found = pick(data.textures);
+			if (found) return found;
+			const parent = typeof data.parent === 'string' ? data.parent.trim() : '';
+			if (!parent || seen[parent]) break;
+			seen[parent] = true;
+			let next = null;
+			try {
+				if (source && source.pathmod && source.fsmod) {
+					const abs = modelPathOf(source.pathmod, source.root, parent);
+					if (source.fsmod.existsSync(abs)) next = JSON.parse(source.fsmod.readFileSync(abs, 'utf8'));
+				}
+			} catch (e) { next = null; }
+			data = next;
+		}
+		return null;
+	}
+
 	/** 强制统一引用模型的 display：
 	 *  copy      = 检测到与引用模型（含父链）的 display 不适配时，新建一个以源模型为 parent、覆盖 display 的模型；
 	 *  overwrite = 直接改写资源包里的源模型文件；
@@ -1317,6 +1352,10 @@ class Exporter {
 		// 仅保留 parent + display：几何/纹理全部继承源模型，只覆盖显示调整参数。
 		const parentId = /:/.test(String(reference)) ? String(reference).trim() : ('minecraft:' + String(reference).trim());
 		const data = { parent: parentId, display: JSON.parse(JSON.stringify(desired)) };
+		// 补 particle：源模型（含父链）常缺 `textures.particle`，Minecraft 会对继承它的副本报
+		// “Missing texture references ... particle”。这里取源模型第一个真实贴图路径补上。
+		const particle = this.referenceParticleTexture(reference, source);
+		if (particle) data.textures = { particle };
 		this.models.push({ name, data });
 		const ref = this.modelRefBase() + name;
 		this.displayCopies.set(key, ref);

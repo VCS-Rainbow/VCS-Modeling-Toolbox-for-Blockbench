@@ -811,7 +811,7 @@ console.log('\n[引用模型 display 覆盖]');
 	eq('新模型 parent = 源模型', newModel.parent, 'minecraft:item/x');
 	eq('新模型覆盖 display', JSON.stringify(newModel.display), JSON.stringify(desiredDisp));
 	eq('新模型不再内联 elements', newModel.elements, undefined);
-	eq('新模型不复制 textures', newModel.textures, undefined);
+	eq('新模型只补 particle 贴图', JSON.stringify(newModel.textures), JSON.stringify({ particle: 'minecraft:item/x' }));
 	eq('新模型引用带 namespace', ref1.indexOf(dispRefExporter.namespace + ':item/') === 0, true);
 	// 缓存命中
 	const ref1b = dispRefExporter.unifyReferenceDisplay('minecraft:item/x', 'copy');
@@ -825,6 +825,15 @@ console.log('\n[引用模型 display 覆盖]');
 	eq('带目录源模型 → 副本名不含斜杠', dispNested.models[0].name.indexOf('/') < 0, true);
 	eq('带目录源模型 → 副本名取文件名 sac.empty', dispNested.models[0].name.indexOf('sac.empty') >= 0, true);
 	eq('带目录源模型 → 引用落在 item_id 目录', refNested.indexOf(dispNested.modelRefBase()) === 0, true);
+	// particle 继承：源无 textures，父链有真实贴图 → 副本补上 particle
+	const dispParticle = api.createExporter();
+	const fakePath2 = { join: (...seg) => seg.join('/'), relative: () => '' };
+	const parentTex = { textures: { 2: 'sqsp:item/inker/sac.empty' } };
+	const childNoTex = { parent: 'sqsp:item/inker/jet_rifle/sac.empty' };
+	dispParticle.readReferenceModel = () => ({ data: childNoTex, abs: '/pack/assets/sqsp/models/item/jet_rifle/sac.empty_display.json', root: '/pack', pathmod: fakePath2, fsmod: { existsSync: () => true, readFileSync: () => JSON.stringify(parentTex) } });
+	const refParticle = dispParticle.unifyReferenceDisplay('sqsp:item/inker/jet_rifle/sac.empty', 'copy');
+	eq('父链贴图补到 particle', dispParticle.models[0].data.textures && dispParticle.models[0].data.textures.particle, 'sqsp:item/inker/sac.empty');
+	eq('particle 副本引用正常', refParticle.indexOf(dispParticle.modelRefBase()) === 0, true);
 
 	// 2) 引用模型 display 已适配 → 原样返回
 	const dispSame = api.createExporter();

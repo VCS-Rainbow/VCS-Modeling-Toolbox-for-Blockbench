@@ -2,6 +2,14 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.73.14
+- **修：display 副本模型缺少 `textures.particle`，Minecraft 报 `Missing texture references ... particle`**。副本原本只有 `{ parent, display }`，从父模型继承贴图；而源模型（如 `sac.empty`/`sac.full`）本身没有 `particle`，于是副本也被判缺贴图。
+  - 新增 `Exporter.referenceParticleTexture()`：沿源模型 `parent` 链找第一个真实贴图路径（优先 `textures.particle`，次选任意非 `#` 引用的贴图）。
+  - `unifyReferenceDisplay()` 生成的副本补 `textures: { particle: <路径> }`。
+  - 旧生成模型（`addModel`）本来就写 `particle`，不受影响。
+  - 注：日志里的 `minecraft:block/moving_piston`、`structure_void` 等是原版/其它模型，与插件无关。
+- 单测：新增「父链贴图补 particle」与「只补 particle」断言，`_test_sim.js` 合计 **376 项**；其余套件 29+76+25+44+22 全通过。
+
 ## 0.73.13
 - **子模型文件名去掉重复的主文件名前缀**：目录已经是 `models/item/jet_rifle/`，文件名不再写 `jet_rifle_`，直接 `sac.empty_display.json`、`bone5_group3_group2.json` 等。
   - `addModel()`：名字改为 `sanitizePath(hint)`，不再拼 `this.stem + '_'`。
