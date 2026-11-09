@@ -765,6 +765,28 @@ eq('手持 display scale = 0.85（对齐引用模型）', dispExporter.models[0]
 eq('不再输出 gui display', dispExporter.models[0].data.display.gui, undefined);
 eq('未设置槽位回退手持预设', dispExporter.models[0].data.display.firstperson_righthand.scale, [0.68, 0.68, 0.68]);
 
+/* ---------- 右键菜单只改写 IMDA 格式 ---------- */
+console.log('\n[菜单格式隔离]');
+{
+	const fakeMenu = { structure: [{ id: 'minecraft:cube_duplicate' }], addAction(a) { this.structure.push(a); } };
+	const fakeCubeMenu = { structure: [{ id: 'minecraft:cube_delete' }], addAction(a) { this.structure.push(a); } };
+	global.Group.prototype.menu = fakeMenu;
+	global.Cube.prototype.menu = fakeCubeMenu;
+	global.Format.id = 'java_block';
+	api.attachGroupMenu();
+	eq('非 IMDA：分组菜单没有被塞入插件项', fakeMenu.structure.some(i => String(i && i.id || '').startsWith('imda_')), false);
+	eq('非 IMDA：分组菜单原项保留', fakeMenu.structure.length, 1);
+	eq('非 IMDA：方块菜单没有被塞入插件项', fakeCubeMenu.structure.some(i => String(i && i.id || '').startsWith('imda_')), false);
+	eq('非 IMDA：方块菜单原项保留', fakeCubeMenu.structure.length, 1);
+	// 切回 IMDA 后应能重新挂载
+	global.Format.id = 'item_model_definition_assembly';
+	api.attachGroupMenu();
+	eq('IMDA：分组菜单重新挂载', fakeMenu.structure.some(i => String(i && i.id || '').startsWith('imda_')), true);
+	delete global.Group.prototype.menu;
+	delete global.Cube.prototype.menu;
+	global.Format.id = 'item_model_definition_assembly';
+}
+
 /* ---------- transformation 单位 ---------- */
 console.log('\n[transformation 单位]');
 const unitExporter = api.createExporter();

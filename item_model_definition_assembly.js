@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.73.14';
+const VERSION = '0.73.16';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -515,8 +515,19 @@ function attachAnimationTimelineMenu() {
 	if (typeof Animation === 'undefined' || !Animation || !Animation.prototype) return false;
 	const menu = Animation.prototype.menu;
 	if (!menu || typeof menu.addAction !== 'function') return false;
-	if (!actions.animationTimeline) return false;
 	const hasAction = () => { try { return Array.isArray(menu.structure) && menu.structure.some(item => item === actions.animationTimeline || (item && item.id === actions.animationTimeline.id)); } catch (e) { return false; } };
+	const hasSeparator = () => { try { return Array.isArray(menu.structure) && menu.structure.some(item => item && item.id === 'imda_timeline_sep'); } catch (e) { return false; } };
+	// 非 IMDA 格式：不往动画右键菜单里塞任何插件项，已塞过的也清掉。
+	if (!isImdaFormat()) {
+		try {
+			if (hasAction() || hasSeparator()) {
+				menu.structure = menu.structure.filter(item => item !== actions.animationTimeline && !(item && (item.id === 'imda_timeline_sep' || String(item.id || '').startsWith('imda_'))));
+			}
+		} catch (e) { /* ignore */ }
+		menu.__imdaTimelineAdded = false;
+		return false;
+	}
+	if (!actions.animationTimeline) return false;
 	if (menu.__imdaTimelineAdded && hasAction()) return true;
 	menu.__imdaTimelineAdded = false;
 	try { if (!hasAction()) { menu.addAction(new MenuSeparator('imda_timeline_sep')); menu.addAction(actions.animationTimeline); } menu.__imdaTimelineAdded = true; return true; } catch (e) { return false; }
@@ -6591,19 +6602,59 @@ function targetGroupTypeIn(types) {
 	return types.indexOf(type) >= 0;
 }
 
+/** 各内置原型菜单的原始结构快照：非 IMDA 格式时用它完整还原，避免残留插件分隔线/空项。 */
+const imdaMenuSnapshots = new WeakMap();
+
+/** 从某个右键菜单里移除所有 imda_* 项并清掉挂载标记（用于重载前清理）。 */
+function cleanImdaMenu(menu) {
+	try {
+		if (!menu || !Array.isArray(menu.structure)) return;
+		menu.structure = menu.structure.filter(item => {
+			if (item === null || item === undefined) return false;
+			const id = typeof item === 'string' ? item : (item && item.id) || '';
+			return !String(id).startsWith('imda_');
+		});
+		if (menu.__imdaCallAttached) delete menu.__imdaCallAttached;
+	} catch (e) { /* ignore */ }
+}
+
+/** 清理所有可能被插件改写过的原型菜单（Group / Locator / CallTag / Cube）。
+ *  restore=true 时直接恢复到插件改写前的原始快照（非 IMDA 格式必须用这个）。 */
+function cleanAllImdaMenus(restore) {
+	const menus = [];
+	const push = (m) => { if (m && menus.indexOf(m) < 0) menus.push(m); };
+	try { push((typeof Group !== 'undefined' && Group.prototype) ? Group.prototype.menu : null); } catch (e) { /* ignore */ }
+	try { push((typeof Locator !== 'undefined' && Locator.prototype) ? Locator.prototype.menu : null); } catch (e) { /* ignore */ }
+	try { push((typeof CallTag !== 'undefined' && CallTag && CallTag.prototype) ? CallTag.prototype.menu : null); } catch (e) { /* ignore */ }
+	try { push((typeof Cube !== 'undefined' && Cube.prototype) ? Cube.prototype.menu : null); } catch (e) { /* ignore */ }
+	menus.forEach(menu => {
+		try {
+			if (!menu || !Array.isArray(menu.structure)) return;
+			if (!imdaMenuSnapshots.has(menu)) {
+				// 快照必须是“干净的原生菜单”：剔除历史版本可能残留的 null 分隔线与 imda_* 项。
+				imdaMenuSnapshots.set(menu, menu.structure.filter(item => {
+					if (item === null || item === undefined) return false;
+					const id = typeof item === 'string' ? item : (item && item.id) || '';
+					return !String(id).startsWith('imda_');
+				}));
+			}
+			if (restore) menu.structure = imdaMenuSnapshots.get(menu).slice();
+			cleanImdaMenu(menu);
+		} catch (e) { /* ignore */ }
+	});
+}
+
 function attachGroupMenu() {
+	// 关键：所有对 Blockbench 内置原型（Group/Locator/CallTag/Cube）的菜单改写都必须严格限定在 IMDA 格式。
+	// 否则会让其它格式的方块/分组右键菜单被塞进 imda 项，甚至打不开。
+	// 因此先无条件清掉所有 imda_* 项；非 IMDA 格式更进一步，直接恢复原始菜单快照后返回。
+	const imda = isImdaFormat();
+	cleanAllImdaMenus(!imda);
+	if (!imda) return;
 	const addSeparator = (menu) => {
 		try { if (typeof MenuSeparator !== 'undefined') menu.addAction(new MenuSeparator('imda_menu_sep')); } catch (e) { /* ignore */ }
 	};
-	const cleanByPrefix = (menu) => {
-		try {
-			if (!Array.isArray(menu.structure)) return;
-			menu.structure = menu.structure.filter(item => {
-				const id = typeof item === 'string' ? item : (item && item.id) || '';
-				return !String(id).startsWith('imda_');
-			});
-		} catch (e) { /* ignore */ }
-	};
+	const cleanByPrefix = (menu) => cleanImdaMenu(menu);
 	// 分组右键：按分组类型给不同项
 	try {
 		const menu = (typeof Group !== 'undefined' && Group.prototype) ? Group.prototype.menu : null;
@@ -6825,7 +6876,7 @@ Plugin.register('item_model_definition_assembly', {
 			condition: () => selectedCallTags().length > 0,
 			click: () => instantiateCallTags(expandCallTagSiblings(selectedCallTags())),
 		});
-	actions.animationTimeline = new Action('imda_animation_timeline', { name: '时间轴属性…', description: '设置该动画导出时间轴使用的 range_dispatch property 与 index', icon: 'timeline', category: 'animation', condition: () => typeof Animation !== 'undefined' && !!Animation.selected, click: () => showAnimationTimelineDialog() });
+	actions.animationTimeline = new Action('imda_animation_timeline', { name: '时间轴属性…', description: '设置该动画导出时间轴使用的 range_dispatch property 与 index', icon: 'timeline', category: 'animation', condition: () => isImdaFormat() && typeof Animation !== 'undefined' && !!Animation.selected, click: () => showAnimationTimelineDialog() });
 	actions.sequence = new Action('imda_sequence', { name: '生成复调用序列…', description: '按大纲顺序生成递增/递减复调用序列，节点类型可选 range_dispatch / composite', icon: 'format_list_numbered', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => openSequenceDialog() });
 	actions.convertCall = new Action('imda_convert_call', { name: '将分组转化为复调用标签…', description: '弹窗指定一个已存在的分组，把选中分组原位替换为指向它的调用标签（只保留原分组的位置与旋转，原几何删除）', icon: 'content_copy', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID) && selectedGroups().length > 0, click: () => convertSelectedGroupsToCallTags() });
 	actions.normalize = new Action('imda_normalize', { name: '规范化结构…', description: '按当前导出规范整理项目结构（当前：composite 直属 cube → inline 子分组）', icon: 'account_tree', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID), click: () => openNormalizeDialog() });
@@ -6925,7 +6976,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, syncAllBranchLabels, siblingBranchNumber, branchChildNodes, callTagBranchThreshold, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, buildSequenceChildResult, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, scanPackEntries, buildAllItemsTree, matchBlacklist, listFilesRecursive, simStepOnce, simAdvanceSlot, primeMappingCache, repairOutlinerDuplicates, applyConvertGroupsToCallTags, collectAllGroups, collectGroupSubtree, outermostSelectedGroups, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, attachGroupMenu, cleanAllImdaMenus, attachAnimationTimelineMenu, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, syncAllBranchLabels, siblingBranchNumber, branchChildNodes, callTagBranchThreshold, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, buildSequenceChildResult, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, scanPackEntries, buildAllItemsTree, matchBlacklist, listFilesRecursive, simStepOnce, simAdvanceSlot, primeMappingCache, repairOutlinerDuplicates, applyConvertGroupsToCallTags, collectAllGroups, collectGroupSubtree, outermostSelectedGroups, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
@@ -6970,6 +7021,7 @@ Plugin.register('item_model_definition_assembly', {
 		sim_panel = null;
 		sim_ui = null;
 		menuAttached = false;
+		try { cleanAllImdaMenus(true); } catch (e) { /* ignore */ }
 		for (const key of Object.keys(actions)) {
 			try { if (actions[key]) actions[key].delete(); } catch (e) { /* ignore */ }
 			actions[key] = null;

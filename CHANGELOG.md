@@ -2,6 +2,23 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.73.16
+- **修 0.73.15 遗留：非 IMDA 格式仍会残留空的右键菜单分隔线。** 0.73.15 只按 `id` 过滤 `imda_*`，但 `MenuSeparator` 经 Blockbench 渲染后会在 `menu.structure` 里变成 `null` 占位，过滤不掉；而 `attachGroupMenu()` 在 `update_selection` 上高频执行，导致分隔线不断累积（实测 Cube 菜单积了 26 个 `null`），最终使其它格式的方块右键菜单异常。
+  - 新增 `imdaMenuSnapshots`（`WeakMap`）：首次改写前保存**干净的原生菜单结构**（同时剔除历史遗留的 `null` 与 `imda_*`）。
+  - 非 IMDA 格式：`cleanAllImdaMenus(true)` 直接**整体恢复快照**，不再做增量过滤。
+  - `cleanImdaMenu()` 同时剔除 `null`/`undefined` 项。
+  - 插件卸载时也恢复快照。
+- 单测：菜单隔离 5 项继续通过，`_test_sim.js` 合计 **381 项**。
+
+## 0.73.15
+- **修：插件会改写其它格式的右键菜单，导致非 IMDA 项目里方块不能正常弹出右键菜单。** 根因是插件把菜单项/分隔线挂到了 Blockbench 内置原型（`Cube.prototype.menu`、`Group.prototype.menu`、`Locator.prototype.menu`、`Animation.prototype.menu`）上，且加载时无条件执行；其它格式下虽然 `condition` 会隐藏项，但菜单结构已被污染（可能出现空菜单）。
+  - 新增 `cleanImdaMenu()` / `cleanAllImdaMenus()`：移除所有 `imda_*` 项并清掉挂载标记。
+  - `attachGroupMenu()` 开头先无条件清理，再 `if (!isImdaFormat()) return;`——非 IMDA 格式不再做任何菜单写入。
+  - `attachAnimationTimelineMenu()` 同样按格式门控：非 IMDA 会移除已挂的 `imda_timeline_*` 项。
+  - `时间轴属性…` 动作的 `condition` 增加 `isImdaFormat()`。
+  - 插件 `onunload` 时清理所有原型菜单，卸载后不留残留。
+- 单测：新增「菜单格式隔离」5 项（非 IMDA 不写入分组/方块菜单、原项保留、切回 IMDA 能重新挂载），`_test_sim.js` 合计 **381 项**。
+
 ## 0.73.14
 - **修：display 副本模型缺少 `textures.particle`，Minecraft 报 `Missing texture references ... particle`**。副本原本只有 `{ parent, display }`，从父模型继承贴图；而源模型（如 `sac.empty`/`sac.full`）本身没有 `particle`，于是副本也被判缺贴图。
   - 新增 `Exporter.referenceParticleTexture()`：沿源模型 `parent` 链找第一个真实贴图路径（优先 `textures.particle`，次选任意非 `#` 引用的贴图）。
