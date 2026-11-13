@@ -2,6 +2,17 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.73.18
+- **分支编号格式新增变量 `f` 与 `s`。** 以前只有 `i`（分支序号）和 `n`（本分支在上层里的编号），没法表达「这一层一共几个」和「这个容器自己有几个子项」。
+  - `f` = **格式所有者（容器）所在层级的元素数，含自身**。例：`a:{ a1:{b1,b2}, a2:{}, a3:{} }`，`a1` 的 `f = 3`（a1/a2/a3），`a` 在根目录且唯一时 `f = 1`。
+  - `s` = **格式所有者自己的子项数，不递归**。同上例：`a1` 的 `s = 2`（b1/b2），`a` 的 `s = 3`。
+  - 于是 `f-s` 在上例的 `a1` 上得到 `3-2 = 1`；`f-1-i` 可在 `f=5` 的层里写倒序编号 `4,3,2,1,0`（不用再写死 `5-i`）。
+  - 计数口径（`countLayerItems()` / `countInlineCubes()`）：分组、复调用标签各算 1；**普通定位点不算**；容器自身是 `inline` 时递归数内部 cube；否则该层的直属 cube 合并算 1（等价于导出的「内联模型」）。
+  - `evalThreshold(format, index, n, extra)` 增加第 4 个参数 `extra = { f, s }`；隐式乘法预处理支持 `fs` / `nf` / `2f` / `fi` 等写法。
+  - `thresholdFormatVars(owner)` 统一算 `{ f, s }`：父级格式用容器本身算；`range_dispatch` 回退到子级格式时用子分组算；复调用覆盖的 `threshold_format` 用被调用分组算；`sequenceFormatValue()` 用「即将生成的容器」算（`f` 取实际同层数，`s` 取待生成子项数）。
+  - 属性面板 / 序列对话框 / 复调用覆盖的格式说明同步补上 `f`、`s`。
+- 单测：`_test_threshold_n.js` 从 22 项扩到 **51 项**（`f`/`s` 解析、`f-s` 示例、`f-1-i`、`fs`/`2f`/`fi` 隐式乘法、缺省值、结构口径 14 项、导出层与子级回退）；`_test_sim.js` 396 项、export 29、all_items 76、convert 25、sequence_child 44 全通过。
+
 ## 0.73.17
 - **「规范化结构」新增两项效果：刷新分支序号 / 分组属性，以及规范分组名称格式。** 以前这个入口只做「删无效 internal + composite 直属 cube 收进 inline」，改完结构后分支阈值和名字前缀还是旧的（例如 `sac_slots` 的 `5-i` 格式改了，子分组仍停在 `[5][4][3][2][1]` 而 threshold 没更新）。
   - 新增 `cleanGroupName(name, type)`：压掉首尾与连续空白；`[inline]` 标记只在 `inline` 分组上保留**一个**且固定在末尾，非 inline 分组不留该标记；`createUniqueName()` 产生的 `bone [inline]_1` 归一为 `bone_1 [inline]`；空名兜底 `group`。

@@ -174,5 +174,107 @@ eq('a 的 n=1 → ni 得 0,1', rds[0] && rds[0].entries.map(e => e.threshold), [
 eq('b 的 n=2 → ni 得 0,2', rds[1] && rds[1].entries.map(e => e.threshold), [0, 2]);
 eq('c 的 n=3 → ni 得 0,3', rds[2] && rds[2].entries.map(e => e.threshold), [0, 3]);
 
+/* ---------- f / s：f = 容器所在层的元素数（含自身），s = 容器自身的子项数（不递归） ---------- */
+console.log('\n[f / s]');
+// 直接测解析器：不依赖大纲
+eq('f 字面', [0, 1].map(i => ex.evalThreshold('f', i, undefined, { f: 3, s: 2 })), [3, 3]);
+eq('s 字面', [0, 1].map(i => ex.evalThreshold('s', i, undefined, { f: 3, s: 2 })), [2, 2]);
+eq('f-s', [0, 1].map(i => ex.evalThreshold('f-s', i, undefined, { f: 3, s: 2 })), [1, 1]);
+eq('f*10+i（f 参与，单调升序）', [0, 1, 2].map(i => ex.evalThreshold('f*10+i', i, undefined, { f: 1, s: 1 })), [10, 11, 12]);
+eq('f-1-i 在 5 分支容器里', [0, 1, 2, 3, 4].map(i => ex.evalThreshold('f-1-i', i, undefined, { f: 5, s: 1 })), [4, 3, 2, 1, 0]);
+eq('s*i', [0, 1, 2].map(i => ex.evalThreshold('s*i', i, undefined, { f: 1, s: 4 })), [0, 4, 8]);
+eq('2f（隐式乘法）', [0, 1].map(i => ex.evalThreshold('2f', i, undefined, { f: 3, s: 1 })), [6, 6]);
+eq('fs', [0, 1].map(i => ex.evalThreshold('fs', i, undefined, { f: 3, s: 2 })), [6, 6]);
+eq('f 缺省按 1', [0, 1].map(i => ex.evalThreshold('f', i)), [1, 1]);
+eq('s 缺省按 1', [0, 1].map(i => ex.evalThreshold('s-i', i)), [1, 0]);
+eq('f 与 ni 共存', [0, 1].map(i => ex.evalThreshold('f+n-i', i, 2, { f: 10, s: 1 })), [12, 11]);
+
+// 结构口径：a:{ a1:{b1,b2}, a2:{}, a3:{} }
+console.log('\n[f / s 结构口径]');
+global.Outliner.root.length = 0;
+const fsA = new global.Group({ name: 'a', imda_type: 'composite' });
+const fsA1 = new global.Group({ name: 'a1', imda_type: 'composite' });
+const fsA2 = new global.Group({ name: 'a2', imda_type: 'composite' });
+const fsA3 = new global.Group({ name: 'a3', imda_type: 'composite' });
+const fsB1 = new global.Group({ name: 'b1', imda_type: 'composite' });
+const fsB2 = new global.Group({ name: 'b2', imda_type: 'composite' });
+global.immAddAndInit(fsB1, fsA1); global.immAddAndInit(fsB2, fsA1);
+global.immAddAndInit(fsA1, fsA); global.immAddAndInit(fsA2, fsA); global.immAddAndInit(fsA3, fsA);
+global.immAddAndInit(fsA, null);
+eq('a1 的 f = 3（与 a2/a3 同层）', api.countLayerItems(fsA), 3);
+eq('a1 的 s = 2（b1 + b2）', api.countLayerItems(fsA1), 2);
+eq('a 的 f = 1（根目录只有 a）', api.countLayerItems({ children: global.Outliner.root }), 1);
+eq('a 的 s = 3（a1+a2+a3）', api.countLayerItems(fsA), 3);
+eq('thresholdFormatVars(a1)', api.thresholdFormatVars(fsA1), { f: 3, s: 2 });
+eq('thresholdFormatVars(a)', api.thresholdFormatVars(fsA), { f: 1, s: 3 });
+
+// 普通定位点不算；复调用标签算 1
+const fsLoc = new global.Locator({ name: 'loc' });
+global.immAddAndInit(fsLoc, fsA2);
+eq('普通定位点不计数', api.countLayerItems(fsA2), 0);
+const fsCall = api.newCallTag({ name: 'call', position: [0, 0, 0], rotation: [0, 0, 0] });
+global.immAddAndInit(fsCall, fsA2);
+eq('复调用标签算 1', api.countLayerItems(fsA2), 1);
+
+// 直属 cube 合并算 1；inline 子分组递归数 cube
+const fsCube1 = new global.Cube({ name: 'c1', from: [0, 0, 0], to: [1, 1, 1] });
+const fsCube2 = new global.Cube({ name: 'c2', from: [0, 0, 0], to: [1, 1, 1] });
+global.immAddAndInit(fsCube1, fsA3); global.immAddAndInit(fsCube2, fsA3);
+eq('两个直属 cube 合并算 1', api.countLayerItems(fsA3), 1);
+const fsInline = new global.Group({ name: 'inl', imda_type: 'inline' });
+const fsInlineCube = new global.Cube({ name: 'ic', from: [0, 0, 0], to: [1, 1, 1] });
+global.immAddAndInit(fsInlineCube, fsInline);
+global.immAddAndInit(fsInline, fsA3);
+eq('inline 子分组递归数 cube（1 个 cube + 1 个合并组）', api.countLayerItems(fsA3), 2);
+eq('inline 自身按内部 cube 数', api.countLayerItems(fsInline), 1);
+
+// 导出层：外层 range_dispatch 用 f*10+i（f = 所在层元素数，含自身）
+// 注意导出的 entries 会按 threshold 升序重排，所以测试格式特意取单调递增。
+console.log('\n[f 导出层]');
+global.Outliner.root.length = 0;
+const fOuter = new global.Group({ name: 'fOuter', imda_type: 'range_dispatch', imda_property: 'custom_model_data', imda_index: 0, imda_threshold_format: 'f*10+i' });
+for (let k = 0; k < 3; k++) global.immAddAndInit(leaf('f' + k, 'ns:f' + k), fOuter);
+global.immAddAndInit(fOuter, null);
+const mF = api.createExporter().buildMapping();
+const fNode = (mF.model.models || []).find(n => n && n.type === 'minecraft:range_dispatch');
+ok('找到 fOuter', !!fNode);
+eq('根层只有它自己 → f=1', api.thresholdFormatVars(fOuter).f, 1);
+eq('f*10+i 生效', fNode && fNode.entries.map(e => e.threshold), [10, 11, 12]);
+
+// 嵌在别的分组里时 f 跟着变：inner 与 sibling 同层 → f = 2 → 20,21,22
+global.Outliner.root.length = 0;
+const fWrap = new global.Group({ name: 'wrap', imda_type: 'composite' });
+const fSibling = new global.Group({ name: 'sibling', imda_type: 'composite' });
+const fInner = new global.Group({ name: 'inner', imda_type: 'range_dispatch', imda_property: 'custom_model_data', imda_index: 0, imda_threshold_format: 'f*10+i' });
+for (let k = 0; k < 3; k++) global.immAddAndInit(leaf('g' + k, 'ns:g' + k), fInner);
+global.immAddAndInit(fInner, fWrap); global.immAddAndInit(fSibling, fWrap);
+global.immAddAndInit(fWrap, null);
+const mF2 = api.createExporter().buildMapping();
+const findInner = () => {
+	const out = [];
+	const walk = (nodes) => { for (const n of (nodes || [])) { if (!n || typeof n !== 'object') continue; if (n.type === 'minecraft:range_dispatch') out.push(n); for (const k of ['models', 'on_true', 'on_false', 'fallback']) if (n[k]) walk(Array.isArray(n[k]) ? n[k] : [n[k]]); if (n.cases) for (const c of n.cases) walk([c.model]); if (n.entries) for (const e of n.entries) walk([e.model]); } };
+	walk(mF2.model.models);
+	return out;
+};
+const innerRd = findInner()[0];
+eq('同层有 inner/sibling → f=2', api.thresholdFormatVars(fInner).f, 2);
+eq('f*10+i → 20,21,22', innerRd && innerRd.entries.map(e => e.threshold), [20, 21, 22]);
+
+// 子级回退格式也用「子分组自己」的 f / s
+console.log('\n[f / s 子级回退]');
+global.Outliner.root.length = 0;
+const fbWrap = new global.Group({ name: 'fbWrap', imda_type: 'composite' });
+const fbChild = new global.Group({ name: 'fbChild', imda_type: 'range_dispatch', imda_property: 'custom_model_data', imda_index: 0, imda_threshold_format: 'f*10+i' });
+global.immAddAndInit(leaf('x0', 'ns:x0'), fbChild);
+global.immAddAndInit(leaf('x1', 'ns:x1'), fbChild);
+global.immAddAndInit(leaf('x2', 'ns:x2'), fbChild);
+const fbSibling = new global.Group({ name: 'fbSibling', imda_type: 'composite' });
+global.immAddAndInit(fbChild, fbWrap); global.immAddAndInit(fbSibling, fbWrap);
+global.immAddAndInit(fbWrap, null);
+const mFB = api.createExporter().buildMapping();
+const fbNode = (() => { const out = []; const walk = (nodes) => { for (const n of (nodes || [])) { if (!n || typeof n !== 'object') continue; if (n.type === 'minecraft:range_dispatch') out.push(n); for (const k of ['models', 'on_true', 'on_false', 'fallback']) if (n[k]) walk(Array.isArray(n[k]) ? n[k] : [n[k]]); if (n.cases) for (const c of n.cases) walk([c.model]); if (n.entries) for (const e of n.entries) walk([e.model]); } }; walk(mFB.model.models); return out[0]; })();
+eq('子级 f=2 → 20,21,22', fbNode && fbNode.entries.map(e => e.threshold), [20, 21, 22]);
+eq('子级 s = 3（x0/x1/x2）', api.thresholdFormatVars(fbChild).s, 3);
+
 if (fail) { console.log('\n\u5931\u8d25 ' + fail + ' \u9879'); process.exit(1); }
 console.log('\n\u901a\u8fc7 ' + pass + ' / ' + (pass + fail));
