@@ -1278,6 +1278,39 @@ eq('规范化 init 含被删除的 internal', !!(global.Undo.lastInit && global.
 eq('规范化 finish 含新建 inline 分组', !!(global.Undo.lastFinish && global.Undo.lastFinish.aspects && global.Undo.lastFinish.aspects.groups && global.Undo.lastFinish.aspects.groups.some(g => g && /\[inline\]/.test(String(g.name)))), true);
 eq('规范化后 nzBad 已移除', global.Outliner.root.some(n => n === nzBad), false);
 eq('规范化后 cube 进入 inline 子分组', !!(nzRoot.children && nzRoot.children.some(g => g && /\[inline\]/.test(String(g.name)) && (g.children || []).indexOf(nzCube) >= 0)), true);
+/* ---------- 规范化：刷新序号 + 分组名称格式 ---------- */
+console.log('\n[规范化序号与名称]');
+eq('名称去多余空白', api.cleanGroupName('  bone   5  ', 'composite'), 'bone 5');
+eq('inline 分组名后缀唯一且置尾', api.cleanGroupName('bone [inline] [inline]', 'inline'), 'bone [inline]');
+eq('createUniqueName 产生的 [inline]_1 归一', api.cleanGroupName('bone [inline]_1', 'inline'), 'bone_1 [inline]');
+eq('非 inline 分组不留 [inline]', api.cleanGroupName('bone [inline]', 'composite'), 'bone');
+eq('空名兜底', api.cleanGroupName('   ', 'composite'), 'group');
+eq('特殊容器名 [sequence] 不被清洗', api.cleanGroupName('[sequence]', 'composite'), '[sequence]');
+eq('特殊容器名 [all items] 不被清洗', api.cleanGroupName('[all items]', 'composite'), '[all items]');
+
+const nnRange = new global.Group({ name: 'nnRange', imda_type: 'range_dispatch', imda_threshold_format: '5-i' });
+const nnLeafA = new global.Group({ name: '[9] leafA', imda_type: 'composite' });
+const nnLeafB = new global.Group({ name: '[9] leafB', imda_type: 'composite' });
+const nnLeafC = new global.Group({ name: '  leafC  ', imda_type: 'composite' });
+const nnInliner = new global.Group({ name: 'inl [inline] [inline]', imda_type: 'inline' });
+nnLeafA.addTo(nnRange); nnLeafB.addTo(nnRange); nnLeafC.addTo(nnRange); nnInliner.addTo(nnLeafC);
+const savedNnRoot = global.Outliner.root.splice(0, global.Outliner.root.length, nnRange);
+const savedNnAll = global.Group.all; global.Group.all = [nnRange, nnLeafA, nnLeafB, nnLeafC, nnInliner];
+const nnStats = api.normalizeGroupNumbersAndNames();
+eq('按父级 5-i 重算子分支序号', [nnLeafA.imda_threshold, nnLeafB.imda_threshold, nnLeafC.imda_threshold].join(','), '5,4,3');
+eq('名字前缀同步成 [5]/[4]/[3]', [nnLeafA.name, nnLeafB.name, nnLeafC.name].join('|'), '[5] leafA|[4] leafB|[3] leafC');
+eq('inline 名字去重且置尾', nnInliner.name, 'inl [inline]');
+eq('统计：改名的节点数', nnStats.renamed >= 4, true);
+eq('统计：重算序号的分组数', nnStats.numbered, 3);
+// 幂等：第二次跑不再有变化
+const nnStats2 = api.normalizeGroupNumbersAndNames();
+eq('规范化幂等（不再改名）', nnStats2.renamed, 0);
+eq('规范化幂等（不再改序号）', nnStats2.numbered, 0);
+// 父级不是分支容器时剥掉遗留前缀
+nnLeafC.name = '[3] leafC';
+nnLeafC.addTo(null);
+eq('挪出分支容器后剥前缀', (api.normalizeGroupNumbersAndNames().renamed > 0) && !/^\[/.test(nnLeafC.name), true);
+global.Group.all = savedNnAll; global.Outliner.root.splice(0, global.Outliner.root.length, ...savedNnRoot);
 /* ---------- 枢轴归位：只动分组 origin，绝不动方块枢轴（否则方块会被挪走） ---------- */
 console.log('\n[枢轴归位不动方块]');
 const pvRoot = new global.Group({ name: 'pvRoot', imda_type: 'composite', origin: [0, 0, 0] });

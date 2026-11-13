@@ -2,6 +2,16 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.73.17
+- **「规范化结构」新增两项效果：刷新分支序号 / 分组属性，以及规范分组名称格式。** 以前这个入口只做「删无效 internal + composite 直属 cube 收进 inline」，改完结构后分支阈值和名字前缀还是旧的（例如 `sac_slots` 的 `5-i` 格式改了，子分组仍停在 `[5][4][3][2][1]` 而 threshold 没更新）。
+  - 新增 `cleanGroupName(name, type)`：压掉首尾与连续空白；`[inline]` 标记只在 `inline` 分组上保留**一个**且固定在末尾，非 inline 分组不留该标记；`createUniqueName()` 产生的 `bone [inline]_1` 归一为 `bone_1 [inline]`；空名兜底 `group`。
+  - 新增 `normalizeGroupNumbersAndNames()`：① `stripStrayBranchPrefixes()` 去掉不属于当前父级的 `[x]` / `⚠` 前缀 → ② 逐个分组 `cleanGroupName()` → ③ `syncAllBranchLabels()` 按父级「分支编号格式」重算 `imda_threshold` 并刷新 `[x]` 前缀 → ④ 返回 `{ renamed, numbered }` 统计。**不重排**分支顺序（顺序由用户掌握）。
+  - `normalizeCompositeCubes()` 在 cube 收进 inline 之后调用它，并把「删除无效 internal / 收 inline / 刷新序号与名称」合并进**同一条**撤销记录（`Undo.finishEdit('规范化结构', …)`，aspects 含新建的 inline 分组）。
+  - 新增 `STRUCTURAL_CONTAINER_NAMES` / `isStructuralContainerName()`：`[sequence]`、`[all items]`、`[timeline]` 是结构性容器名，不是分支前缀，`stripStrayBranchPrefixes()` 与 `stripChildPrefixes()` 不再剥它们。
+  - `规范化结构…` 动作描述与确认弹窗同步列出 4 个步骤。
+- 单测：新增「规范化序号与名称」14 项（名称清洗 5 项、结构性容器名 2 项、`5-i` 重算为 5/4/3、前缀同步、inline 去重、幂等两次、挪出分支容器剥前缀），`_test_sim.js` 合计 **396 项**；其余套件 29+76+25+44+22 全通过。
+- 真机验证（`jet_rifle`，Blockbench 5.2.2）：把 `sac_slots`（格式 `5-i`）的 5 个分支名字改成 `[99] stale0..4`、threshold 清零后跑一次规范化 → 得到 `[5]/[4]/[3]/[2]/[1]` 与 threshold `5/4/3/2/1`，`renamed=5, numbered=5`；随后从快照原样还原，工程未留改动。
+
 ## 0.73.16
 - **修 0.73.15 遗留：非 IMDA 格式仍会残留空的右键菜单分隔线。** 0.73.15 只按 `id` 过滤 `imda_*`，但 `MenuSeparator` 经 Blockbench 渲染后会在 `menu.structure` 里变成 `null` 占位，过滤不掉；而 `attachGroupMenu()` 在 `update_selection` 上高频执行，导致分隔线不断累积（实测 Cube 菜单积了 26 个 `null`），最终使其它格式的方块右键菜单异常。
   - 新增 `imdaMenuSnapshots`（`WeakMap`）：首次改写前保存**干净的原生菜单结构**（同时剔除历史遗留的 `null` 与 `imda_*`）。

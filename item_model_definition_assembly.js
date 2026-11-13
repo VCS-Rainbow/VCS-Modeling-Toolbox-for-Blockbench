@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.73.16';
+const VERSION = '0.73.17';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -2323,10 +2323,18 @@ function resetTypeSpecificProps(group, newType) {
 	return type;
 }
 
+/* 结构性容器名（不是分支前缀，规范化时不许剥）
+   「生成复调用序列」「生成全物品模型表」「解析动画时间轴」都会建这种占位容器。 */
+const STRUCTURAL_CONTAINER_NAMES = ['[sequence]', '[all items]', '[timeline]'];
+function isStructuralContainerName(name) {
+	return STRUCTURAL_CONTAINER_NAMES.indexOf(String(name == null ? '' : name).trim()) >= 0;
+}
+
 /* 剥掉所有子分组的 [..] / ⚠ 前缀（父分组不再是分支容器时用） */
 function stripChildPrefixes(group) {
 	let changed = 0;
 	for (const child of (group.children || []).filter(c => isGroup(c) || isCallTag(c))) {
+		if (isStructuralContainerName(child.name)) continue;
 		const base = String(child.name || '').replace(/^\[[^\]]*\]\s*/, '').replace(/^\u26a0\s*/, '');
 		if (base !== child.name) { child.name = base; changed++; }
 		if (isGroup(child) && child.imda_auto_disabled) { child.imda_auto_disabled = false; changed++; }
@@ -2339,6 +2347,7 @@ function stripStrayBranchPrefixes() {
 	const branchTypes = ['condition', 'range_dispatch', 'select'];
 	let changed = 0;
 	const strip = (node) => {
+		if (isStructuralContainerName(node.name)) return;
 		const base = String(node.name || '').replace(/^\[[^\]]*\]\s*/, '').replace(/^\u26a0\s*/, '');
 		if (base && base !== node.name) { node.name = base; changed++; }
 		if (node.imda_auto_disabled) { node.imda_auto_disabled = false; changed++; }
@@ -2357,6 +2366,68 @@ function stripStrayBranchPrefixes() {
 	};
 	walk((typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : [], null);
 	return changed;
+}
+
+/** 规范单个分组的名字本体（分支前缀 [x] / ⚠ 由 syncBranchLabels 负责）：
+ *  - 首尾空白、连续空白压成一个空格；
+ *  - `[inline]` 标记只在 inline 分组上保留一个，且固定放在末尾
+ *    （`createUniqueName` 会产生 `bone [inline]_1` 这种，也要归一）。 */
+function cleanGroupName(name, type) {
+	const wantsInline = String(type || '').replace(/^minecraft:/, '') === 'inline';
+	let text = String(name == null ? '' : name).replace(/\s+/g, ' ').trim();
+	// 去掉所有 [inline] 标记（含 createUniqueName 产生的 `[inline]_1`），末尾的 _N 去重号保留但贴回来
+	text = text.replace(/\s*\[inline\]\s*/gi, ' ').replace(/\s+/g, ' ').trim();
+	text = text.replace(/\s+(_\d+)$/, '$1');
+	text = text || 'group';
+	return wantsInline ? (text + ' [inline]') : text;
+}
+
+/** 「规范化结构」的子步骤：按父级的分支编号格式重算 threshold（序号），
+ *  刷新名字里的 [x] 前缀，并规范分组名称格式。不做重排（顺序由用户决定）。
+ *  返回 { renamed, numbered }（分别是被改名的节点数、被改阈值的分组数）。 */
+function normalizeGroupNumbersAndNames() {
+	const root = (typeof Outliner !== 'undefined' && Outliner && Outliner.root) ? Outliner.root : [];
+	const nameBefore = new Map();
+	const numBefore = new Map();
+	const collect = (nodes) => {
+		for (const node of nodes || []) {
+			if (isGroup(node)) {
+				nameBefore.set(node, String(node.name == null ? '' : node.name));
+				numBefore.set(node, String(node.imda_threshold == null ? '' : node.imda_threshold));
+				collect(node.children);
+			} else if (isCallTag(node)) {
+				nameBefore.set(node, String(node.name == null ? '' : node.name));
+			}
+		}
+	};
+	collect(root);
+
+	// 1. 去掉不属于当前父级的分支前缀 [x] / ⚠
+	stripStrayBranchPrefixes();
+	// 2. 规范名字本体（空白、重复的 [inline]）
+	const walkNames = (nodes) => {
+		for (const node of nodes || []) {
+			if (!isGroup(node)) continue;
+			const type = String(node.imda_type || 'composite').replace(/^minecraft:/, '');
+			const next = cleanGroupName(node.name, type);
+			if (next !== node.name) node.name = next;
+			walkNames(node.children);
+		}
+	};
+	walkNames(root);
+	// 3. 按父级格式重算 threshold 并刷新 [x] 前缀
+	syncAllBranchLabels();
+
+	let renamed = 0, numbered = 0;
+	for (const [node, before] of nameBefore) {
+		const now = String(node.name == null ? '' : node.name);
+		if (now !== before) renamed++;
+		if (numBefore.has(node)) {
+			const nowNum = String(node.imda_threshold == null ? '' : node.imda_threshold);
+			if (nowNum !== numBefore.get(node)) numbered++;
+		}
+	}
+	return { renamed, numbered };
 }
 
 /* 拖拽重排分组不会触发 add_group，这里兜底：outliner 上松开鼠标/拖拽结束就跑一次同步 */
@@ -3195,8 +3266,8 @@ function removeInvalidInternalGroups(options) {
 }
 
 function normalizeCompositeCubes() {
-	// 「删除无效 internal」和「cube 收进 inline」合成同一个撤销会话，
-	// 否则一次“规范化”要按两次 Ctrl+Z 才能完全回退。
+	// 「删除无效 internal」「cube 收进 inline」「刷新序号与分组名」合成同一个撤销会话，
+	// 否则一次“规范化”要按好几次 Ctrl+Z 才能完全回退。
 	const invalidScan = scanInvalidInternalGroups();
 	const invalidSet = new Set(invalidScan.groups);
 	const insideInvalid = (node) => {
@@ -3207,7 +3278,6 @@ function normalizeCompositeCubes() {
 	const groups = (typeof Group !== 'undefined' && Group.all) ? Group.all.slice() : [];
 	const targets = groups.filter(group => group && !invalidSet.has(group) && !insideInvalid(group) && (group.imda_type === undefined || group.imda_type === '' || group.imda_type === 'composite'));
 	const removedInternal = invalidScan.groups.length;
-	if (!targets.length && !removedInternal) { Blockbench.showQuickMessage('没有 composite 分组。', 2500); return 0; }
 	let moved = 0;
 	const created = [];
 	const changed = [];
@@ -3227,18 +3297,26 @@ function normalizeCompositeCubes() {
 		created.push(inline);
 		changed.push(group);
 	}
-	try { Undo.finishEdit('规范化 composite 内联模型', { outliner: true, groups: targets.concat(created), elements: [] }); } catch (e) { /* ignore */ }
+	// 3. 按父级「分支编号格式」重算 threshold（序号）、刷新 [x] 名字前缀、规范分组名格式。
+	//    必须在 cube 收进 inline 之后跑：此时名字本体已经定型，[inline] 后缀才不会被误当分支前缀。
+	let nameStats = { renamed: 0, numbered: 0 };
+	try { nameStats = normalizeGroupNumbersAndNames(); } catch (error) { console.warn('[装配] 刷新序号/名称失败', error); }
+	try { Undo.finishEdit('规范化结构', { outliner: true, groups: groups.filter(g => g && !invalidSet.has(g)).concat(created), elements: [] }); } catch (e) { /* ignore */ }
 	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 	try { Project.saved = false; } catch (e) { /* ignore */ }
 	try { simInvalidate(); } catch (e) { /* ignore */ }
-	Blockbench.showQuickMessage('规范化完成' + (removedInternal ? ('，删除 ' + removedInternal + ' 个无效 internal 分组') : '') + '：' + changed.length + ' 个 composite，移动 ' + moved + ' 个 cube 到 ' + created.length + ' 个 inline 分组', 4000);
+	const parts = [];
+	if (removedInternal) parts.push('删除 ' + removedInternal + ' 个无效 internal 分组');
+	if (created.length) parts.push(changed.length + ' 个 composite，移动 ' + moved + ' 个 cube 到 ' + created.length + ' 个 inline 分组');
+	parts.push('刷新 ' + nameStats.renamed + ' 个分组名，重算 ' + nameStats.numbered + ' 个分支序号');
+	Blockbench.showQuickMessage('规范化完成：' + parts.join('；'), 4500);
 	return created.length;
 }
 
 function openNormalizeDialog() {
 	Blockbench.showMessageBox({
 		title: '规范化结构',
-		message: '1. 删除父级不是 internal/model 的 internal 分组；\n2. 把每个 composite 分组的直属 cube 收进一个 inline 子分组（等价于导出时的内联模型）。\n不会改变位置/旋转，可撤销。',
+		message: '1. 删除父级不是 internal/model 的 internal 分组；\n2. 把每个 composite 分组的直属 cube 收进一个 inline 子分组（等价于导出时的内联模型）；\n3. 按父级的「分支编号格式」重算各分支的 threshold（序号）并刷新名字前缀 [x]；\n4. 规范分组名称格式（多余空白、重复的 [inline] 后缀）。\n不会改变位置/旋转，也不会重排分支顺序，可一次撤销。',
 		buttons: ['取消', '规范化'], confirm: 1, cancel: 0,
 	}, (button) => { if (button === 1) { try { normalizeCompositeCubes(); } catch (error) { Blockbench.showMessageBox({ title: '规范化失败', message: String((error && error.message) || error), icon: 'error' }); } } });
 }
@@ -6879,7 +6957,7 @@ Plugin.register('item_model_definition_assembly', {
 	actions.animationTimeline = new Action('imda_animation_timeline', { name: '时间轴属性…', description: '设置该动画导出时间轴使用的 range_dispatch property 与 index', icon: 'timeline', category: 'animation', condition: () => isImdaFormat() && typeof Animation !== 'undefined' && !!Animation.selected, click: () => showAnimationTimelineDialog() });
 	actions.sequence = new Action('imda_sequence', { name: '生成复调用序列…', description: '按大纲顺序生成递增/递减复调用序列，节点类型可选 range_dispatch / composite', icon: 'format_list_numbered', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: () => openSequenceDialog() });
 	actions.convertCall = new Action('imda_convert_call', { name: '将分组转化为复调用标签…', description: '弹窗指定一个已存在的分组，把选中分组原位替换为指向它的调用标签（只保留原分组的位置与旋转，原几何删除）', icon: 'content_copy', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID) && selectedGroups().length > 0, click: () => convertSelectedGroupsToCallTags() });
-	actions.normalize = new Action('imda_normalize', { name: '规范化结构…', description: '按当前导出规范整理项目结构（当前：composite 直属 cube → inline 子分组）', icon: 'account_tree', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID), click: () => openNormalizeDialog() });
+	actions.normalize = new Action('imda_normalize', { name: '规范化结构…', description: '按当前导出规范整理项目结构：清理无效 internal、composite 直属 cube → inline 子分组、按父级编号格式重算分支序号并刷新 [x] 名字前缀、规范分组名称格式', icon: 'account_tree', category: 'tools', condition: () => (typeof Format !== 'undefined' && Format.id === FORMAT_ID), click: () => openNormalizeDialog() });
 		actions.createModel = new Action('imda_create_model', { name: '从分组创建模型…', description: '把选中分组的方块烘焙成 models/item 模型，并改为引用（自动居中）', icon: 'file_upload', category: 'tools', condition, click: () => { const group = pickTargetGroup(); if (!group) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个分组。', icon: 'info' }); return; } createModelFromGroup(group); } });
 		actions.check = new Action('imda_check', { name: '检查装配结构', description: '列出分组类型与变换诊断', icon: 'checklist', category: 'tools', condition, click: checkStructure });
 		actions.pack = new Action('imda_pick_pack', { name: '选择资源包工程路径…', description: '打开系统文件夹选择框，设为资源包工程目录', icon: 'folder_open', category: 'file', condition: () => (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID), click: pickPackPath });
@@ -6976,7 +7054,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, attachGroupMenu, cleanAllImdaMenus, attachAnimationTimelineMenu, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, syncAllBranchLabels, siblingBranchNumber, branchChildNodes, callTagBranchThreshold, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, buildSequenceChildResult, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, scanPackEntries, buildAllItemsTree, matchBlacklist, listFilesRecursive, simStepOnce, simAdvanceSlot, primeMappingCache, repairOutlinerDuplicates, applyConvertGroupsToCallTags, collectAllGroups, collectGroupSubtree, outermostSelectedGroups, normalizeCompositeCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, attachGroupMenu, cleanAllImdaMenus, attachAnimationTimelineMenu, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, syncAllBranchLabels, siblingBranchNumber, branchChildNodes, callTagBranchThreshold, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, buildSequenceChildResult, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, scanPackEntries, buildAllItemsTree, matchBlacklist, listFilesRecursive, simStepOnce, simAdvanceSlot, primeMappingCache, repairOutlinerDuplicates, applyConvertGroupsToCallTags, collectAllGroups, collectGroupSubtree, outermostSelectedGroups, normalizeCompositeCubes, normalizeGroupNumbersAndNames, cleanGroupName, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
