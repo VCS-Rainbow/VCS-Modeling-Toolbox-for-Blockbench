@@ -276,5 +276,85 @@ const fbNode = (() => { const out = []; const walk = (nodes) => { for (const n o
 eq('子级 f=2 → 20,21,22', fbNode && fbNode.entries.map(e => e.threshold), [20, 21, 22]);
 eq('子级 s = 3（x0/x1/x2）', api.thresholdFormatVars(fbChild).s, 3);
 
+/* ---------- 复调用标签：引用目标后按当前位置重算编号 ---------- */
+console.log('\n[复调用重算编号]');
+global.Outliner.root.length = 0;
+// 目标 sacpack：格式 (f-n)i，2 个子项（_empty / _full）
+const mkPack = (name) => {
+	const g = new global.Group({ name, imda_type: 'range_dispatch', imda_property: 'custom_model_data', imda_index: 1, imda_threshold_format: '(f-n)i' });
+	global.immAddAndInit(leaf(name + '_empty', 'ns:' + name + 'e'), g);
+	global.immAddAndInit(leaf(name + '_full', 'ns:' + name + 'f'), g);
+	return g;
+};
+const pack11 = mkPack('pack11');
+const pack32 = mkPack('pack32');
+const pack53 = mkPack('pack53');
+// mock 的 Group.addTo 不会自动维护 Group.all，这里手动登记（buildCallNode 按 uuid 找目标）
+global.Group.all = [pack11, pack32, pack53];
+// 一个 composite，里面 3 个复调用标签分别指向 3 个 pack
+const callHost = new global.Group({ name: 'callHost', imda_type: 'composite' });
+global.immAddAndInit(pack11, null); global.immAddAndInit(pack32, null); global.immAddAndInit(pack53, null);
+global.immAddAndInit(callHost, null);
+const mkCall = (target, name) => {
+	const c = api.newCallTag({ name, position: [0, 0, 0], rotation: [0, 0, 0] });
+	global.immAddAndInit(c, callHost);
+	c.imda_call_target = target.uuid;
+	return c;
+};
+const c1 = mkCall(pack11, '调用 pack11');
+const c2 = mkCall(pack32, '调用 pack32');
+const c3 = mkCall(pack53, '调用 pack53');
+
+const mCall = api.createExporter().buildMapping();
+const findCalls = (nodes, out) => {
+	for (const n of (nodes || [])) {
+		if (!n || typeof n !== 'object') continue;
+		if (n.type === 'minecraft:range_dispatch' && Array.isArray(n.entries)) out.push(n);
+		for (const k of ['models', 'on_true', 'on_false', 'fallback']) if (n[k]) findCalls(Array.isArray(n[k]) ? n[k] : [n[k]], out);
+		if (n.cases) for (const c of n.cases) findCalls([c.model], out);
+		if (n.entries) for (const e of n.entries) findCalls([e.model], out);
+	}
+	return out;
+};
+// pack 目标自身也会被导出成 range_dispatch（node_name = pack11…），排除掉只留复调用克隆
+const PACK_NAMES = ['pack11', 'pack32', 'pack53'];
+const onlyCalls = (nodes) => nodes.filter(n => PACK_NAMES.indexOf(String(n.node_name || '')) < 0);
+const callNodes = onlyCalls(findCalls(mCall.model.models, []));
+ok('找到 3 个复调用 range_dispatch', callNodes.length === 3, callNodes.length);
+// host 层元素数 f=3；三个标签 n=0/1/2 → (f-n)*i：i=0→0，i=1→(3-n)
+eq('调用 1 编号（f=3,n=0）→ [0,3]', callNodes[0] && callNodes[0].entries.map(e => e.threshold), [0, 3]);
+eq('调用 2 编号（f=3,n=1）→ [0,2]', callNodes[1] && callNodes[1].entries.map(e => e.threshold), [0, 2]);
+eq('调用 3 编号（f=3,n=2）→ [0,1]', callNodes[2] && callNodes[2].entries.map(e => e.threshold), [0, 1]);
+
+// 同一目标被引用两次、位置不同 → 编号也不同
+global.Outliner.root.length = 0;
+const dupHost = new global.Group({ name: 'dupHost', imda_type: 'composite' });
+const dupA = new global.Group({ name: 'dupA', imda_type: 'composite' });
+global.immAddAndInit(pack11, null);
+global.Group.all = [pack11];
+global.immAddAndInit(dupHost, null); global.immAddAndInit(dupA, null);
+const dupCall1 = api.newCallTag({ name: 'd1', position: [0, 0, 0], rotation: [0, 0, 0] }); global.immAddAndInit(dupCall1, dupHost); dupCall1.imda_call_target = pack11.uuid;
+const dupCall2 = api.newCallTag({ name: 'd2', position: [0, 0, 0], rotation: [0, 0, 0] }); global.immAddAndInit(dupCall2, dupHost); dupCall2.imda_call_target = pack11.uuid;
+const mDup = api.createExporter().buildMapping();
+const dupNodes = onlyCalls(findCalls(mDup.model.models, []));
+ok('同一目标两次引用', dupNodes.length === 2, dupNodes.length);
+eq('引用1（f=2,n=0）→ [0,2]', dupNodes[0] && dupNodes[0].entries.map(e => e.threshold), [0, 2]);
+eq('引用2（f=2,n=1）→ [0,1]', dupNodes[1] && dupNodes[1].entries.map(e => e.threshold), [0, 1]);
+
+// range_dispatch 里的复调用：n 用它在父级里的 threshold
+global.Outliner.root.length = 0;
+const rdHost = new global.Group({ name: 'rdHost', imda_type: 'range_dispatch', imda_property: 'custom_model_data', imda_index: 0, imda_threshold_format: 'i' });
+global.immAddAndInit(pack11, null);
+global.Group.all = [pack11];
+const rdCall = api.newCallTag({ name: 'rdCall', position: [0, 0, 0], rotation: [0, 0, 0] }); global.immAddAndInit(rdCall, rdHost); rdCall.imda_call_target = pack11.uuid;
+global.immAddAndInit(rdHost, null);
+const mRd = api.createExporter().buildMapping();
+// rdHost 本身也是 range_dispatch；复调用克隆是它 entries 里的 model。取 2 个 entries 的那个。
+const rdAll = findCalls(mRd.model.models, []);
+const rdNode = rdAll.find(n => Array.isArray(n.entries) && n.entries.length === 2) || rdAll[0];
+// rdHost 层元素数 f=1（根目录只有 rdHost）；n = 该调用在 rdHost 里的 threshold = 0
+// (f-n)*i → i=0→0，i=1→1
+eq('range 里调用 n=父级 threshold（0）', rdNode && rdNode.entries.map(e => e.threshold), [0, 1]);
+
 if (fail) { console.log('\n\u5931\u8d25 ' + fail + ' \u9879'); process.exit(1); }
 console.log('\n\u901a\u8fc7 ' + pass + ' / ' + (pass + fail));

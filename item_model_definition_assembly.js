@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.73.18';
+const VERSION = '0.73.19';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1077,7 +1077,9 @@ class Exporter {
 
 		const extras = ownCubes.map(cube => this.buildCubeNode(cube, hint, parent_shift)).filter(Boolean);
 		const callLocators = children.filter(isLocator);
-		const calls = callLocators.map(locator => this.buildCallNode(locator)).filter(Boolean);
+		// 复调用标签的「当前编号」：range_dispatch 里是它作为 entry 的 threshold（见下方循环）；
+		// composite / inline 里没有阈值，用它在同层 call 标签里的 0 起序号（与导出顺序一致）。
+		const calls = callLocators.map((locator, callIndex) => this.buildCallNode(locator, this.callSelfNumber(locator, group, callIndex), group)).filter(Boolean);
 		if (calls.length && type !== 'composite' && type !== 'inline' && type !== 'range_dispatch' && type !== 'select') {
 			this.warn('复调用标签只支持放在 composite / inline 分组里，已忽略 ' + calls.length + ' 个。');
 			calls.length = 0;
@@ -1167,11 +1169,11 @@ class Exporter {
 			}
 			for (const locator of callLocators) {
 				try {
-					const callNode = this.buildCallNode(locator);
-					if (!callNode) continue;
 					const rawThreshold = String((callOverridesOf(locator).threshold == null ? '' : callOverridesOf(locator).threshold)).trim();
-					const threshold = /^-?\d+(\.\d+)?$/.test(rawThreshold) ? Number(rawThreshold) : branch_index;
-					node.entries.push({ threshold: clean(threshold), model: callNode });
+					const selfNo = /^-?\d+(\.\d+)?$/.test(rawThreshold) ? Number(rawThreshold) : branch_index;
+					const callNode = this.buildCallNode(locator, selfNo, group);
+					if (!callNode) continue;
+					node.entries.push({ threshold: clean(selfNo), model: callNode });
 					branch_index++;
 				} catch (e) { /* ignore */ }
 			}
@@ -1390,15 +1392,43 @@ class Exporter {
 		return { type: 'minecraft:composite', models: [base].concat(calls) };
 	}
 
-	buildCallNode(locator) {
+	/** 复调用标签 → 占位节点。
+	 *  selfNumber = 该标签在**当前容器**里的编号（即它在父 range_dispatch 里的 threshold），
+	 *  引用目标分组后要用它重算目标 entries 的编号（否则会沿用目标原来位置算出的阈值）。
+	 *  parentGroup = 该标签当前所在的容器，用于算 f（同层元素数）。 */
+	buildCallNode(locator, selfNumber, parentGroup) {
 		const target = String((locator && locator.imda_call_target) || '').trim();
 		if (!target) return null;
 		if (target.indexOf(':') >= 0) return { type: 'minecraft:model', model: target };
 		let group = null;
 		try { if (typeof Group !== 'undefined' && Array.isArray(Group.all)) group = Group.all.find(g => g && g.uuid === target) || null; } catch (e) { /* ignore */ }
 		if (!group) { this.warn('复调用标签 “' + labelOf(locator) + '” 找不到目标分组：' + target); return null; }
-		return { type: 'minecraft:empty', __imda_call_group: group, __imda_call_name: String(locator.name || labelOf(locator)), __imda_call_pose: { position: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() }, __imda_call_overrides: callOverridesOf(locator) };
+		return {
+			type: 'minecraft:empty',
+			__imda_call_group: group,
+			__imda_call_name: String(locator.name || labelOf(locator)),
+			__imda_call_pose: { position: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() },
+			__imda_call_overrides: callOverridesOf(locator),
+			__imda_call_self_number: selfNumber,
+			__imda_call_parent: parentGroup || null,
+		};
 	}
+
+	/** 复调用标签在「当前容器」里的编号（供重算被引目标的 entries 用）：
+	 *  - 父级是 range_dispatch → 用它的 threshold（与 entry 的 threshold 一致）；
+	 *  - 否则（composite / inline / 根）→ 同层 call 标签里的 0 起序号。 */
+	callSelfNumber(locator, parentGroup, callIndex) {
+		const parentType = parentGroup ? String(parentGroup.imda_type || '').replace(/^minecraft:/, '') : '';
+		if (parentType === 'range_dispatch') {
+			const raw = String((callOverridesOf(locator).threshold == null ? '' : callOverridesOf(locator).threshold)).trim();
+			if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw);
+			const siblings = branchChildNodes(parentGroup);
+			const idx = siblings.indexOf(locator);
+			return idx >= 0 ? idx : callIndex;
+		}
+		return callIndex;
+	}
+
 
 	/** 把占位替换为目标分组的映射节点（深拷贝，保留 transformation） */
 	resolveCallTarget(placeholder) {
@@ -1412,6 +1442,10 @@ class Exporter {
 		if (!target) { this.warn('复调用目标没有可导出的映射节点，已跳过。'); return null; }
 		const clone = JSON.parse(JSON.stringify(target));
 		this.stripCallPlaceholders(clone);
+		// 目标分组原本的 entries 阈值是按「目标自己原来的位置」算的（f / n 都是旧值）。
+		// 作为复调用标签插进新容器后，f 与 n 都变了，必须按当前位置重新算一遍编号，
+		// 否则 [2] sac_slots #3 里的三个调用会沿用 [5]/[4]/[3]，而不是 [3]/[2]/[1]。
+		try { this.recomputeCallEntries(clone, group, placeholder); } catch (e) { /* ignore */ }
 		try {
 			const ov = placeholder.__imda_call_overrides || {};
 			if (ov.property) clone.property = 'minecraft:' + String(ov.property).replace(/^minecraft:/, '');
@@ -1419,12 +1453,46 @@ class Exporter {
 			for (const key of ['wobble', 'normalize', 'remaining', 'ignore_default']) if (ov[key] === 'true' || ov[key] === 'false') clone[key] = ov[key] === 'true';
 			for (const key of ['component', 'predicate', 'value', 'keybind', 'target', 'source', 'condition']) if (ov[key] !== undefined && ov[key] !== '') clone[key] = String(ov[key]);
 			if (ov.threshold_format && clone.type === 'minecraft:range_dispatch' && Array.isArray(clone.entries)) {
-				clone.entries.forEach((entry, k) => { const threshold = this.evalThreshold(ov.threshold_format, k, undefined, thresholdFormatVars(group)); if (threshold !== null) entry.threshold = clean(threshold); });
+				const callVars = this.callFormatVars(group, placeholder.__imda_call_parent);
+				clone.entries.forEach((entry, k) => { const threshold = this.evalThreshold(ov.threshold_format, k, placeholder.__imda_call_self_number, callVars); if (threshold !== null) entry.threshold = clean(threshold); });
+				this.sortEntries(clone);
 			}
 		} catch (e) { /* ignore */ }
 		const result = this.wrapCallPose(clone, group, placeholder.__imda_call_pose) || clone;
 		if (placeholder.__imda_call_name) result.node_name = placeholder.__imda_call_name;
 		return result;
+	}
+
+	/** 复调用标签的格式变量：f = 标签当前所在层的元素数，s = 被引分组自己的子项数。 */
+	callFormatVars(targetGroup, parentGroup) {
+		return {
+			f: (parentGroup && isGroup(parentGroup)) ? countLayerItems(parentGroup) : 1,
+			s: countLayerItems(targetGroup),
+		};
+	}
+
+	/** 按阈值升序稳定排序 entries（与 buildNode 里 range_dispatch 的导出排序一致）。 */
+	sortEntries(node) {
+		if (!node || !Array.isArray(node.entries)) return;
+		node.entries = node.entries
+			.map((entry, index) => ({ entry, index }))
+			.sort((a, b) => (Number(a.entry.threshold) - Number(b.entry.threshold)) || (a.index - b.index))
+			.map(pair => pair.entry);
+	}
+
+	/** 复调用标签引用目标后，按「标签当前的结构」重算被引目标 entries 的编号。 */
+	recomputeCallEntries(clone, group, placeholder) {
+		if (!clone || clone.type !== 'minecraft:range_dispatch' || !Array.isArray(clone.entries)) return;
+		const format = String(group && group.imda_threshold_format || '');
+		if (!format) return;
+		const selfNumber = placeholder ? placeholder.__imda_call_self_number : undefined;
+		const parentGroup = placeholder ? placeholder.__imda_call_parent : null;
+		const vars = this.callFormatVars(group, parentGroup);
+		clone.entries.forEach((entry, k) => {
+			const threshold = this.evalThreshold(format, k, selfNumber, vars);
+			if (threshold !== null) entry.threshold = clean(threshold);
+		});
+		this.sortEntries(clone);
 	}
 
 	/** 把 Locator 的绝对位置/旋转转换为相对目标分组的补偿 transformation */

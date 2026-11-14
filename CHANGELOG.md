@@ -2,6 +2,16 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.73.19
+- **修：复调用标签导出时不按「标签当前所在结构」重算编号，沿用了被引目标原位置的阈值。** 实测 `jet_rifle.json` 里 `[2] sac_slots #3` 下三个复调用（指向 `sacpack11/32/53`，目标格式 `(f-n)i`）输出了 `[0,5] [0,4] [0,3]`，期望 `[0,3] [0,2] [0,1]`——因为 `resolveCallTarget()` 深拷贝目标映射节点时，entries 的 threshold 是目标在原结构里用旧 `f`/`n` 算好的。
+  - `buildCallNode(locator, selfNumber, parentGroup)` 增加两个上下文参数：`selfNumber` = 标签在**当前容器**里的编号（父级是 `range_dispatch` 时取它的 threshold，否则取它在同层 call 标签里的 0 起序号）；`parentGroup` = 标签当前所在容器。
+  - 占位节点带上 `__imda_call_self_number` / `__imda_call_parent`。
+  - 新增 `Exporter.recomputeCallEntries()`：深拷贝后、按目标分组的 `imda_threshold_format` 用 `n = selfNumber`、`f = countLayerItems(parentGroup)`、`s = countLayerItems(目标分组)` 重算每一条 entry 的 threshold，并按阈值升序稳定排序（与普通 range_dispatch 一致）。
+  - 新增 `Exporter.callSelfNumber()` / `Exporter.callFormatVars()` / `Exporter.sortEntries()`；`range_dispatch` 分支里的调用也要把 threshold 传进去（之前先建节点再取阈值，顺序反了）。
+  - 复调用覆盖的 `threshold_format` 也改用标签当前上下文的 `{f,s}`。
+- 真机只读验证（`jet_rifle`，Blockbench 5.2.2）：`[1] sac_slots #4` → `[0,4][0,3][0,2][0,1]`、`[2] sac_slots #3` → `[0,3][0,2][0,1]`、`[3] sac_slots #2` → `[0,2][0,1]`、`[4] sac_slots #1` → `[0,1]`，全部符合 `(f-n)i`。
+- 单测：`_test_threshold_n.js` 从 51 项扩到 **59 项**（3 个调用按 f=3 得 `[0,3]/[0,2]/[0,1]`、同一目标两次引用按各自位置得 `[0,2]/[0,1]`、`range_dispatch` 里的调用用父级 threshold 当 n）；`_test_sim.js` 396、export 29、all_items 76、convert 25、sequence_child 44 全通过。
+
 ## 0.73.18
 - **分支编号格式新增变量 `f` 与 `s`。** 以前只有 `i`（分支序号）和 `n`（本分支在上层里的编号），没法表达「这一层一共几个」和「这个容器自己有几个子项」。
   - `f` = **格式所有者（容器）所在层级的元素数，含自身**。例：`a:{ a1:{b1,b2}, a2:{}, a3:{} }`，`a1` 的 `f = 3`（a1/a2/a3），`a` 在根目录且唯一时 `f = 1`。
