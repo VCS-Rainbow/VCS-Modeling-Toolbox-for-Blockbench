@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.73.19';
+const VERSION = '0.73.20';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -1414,9 +1414,10 @@ class Exporter {
 		};
 	}
 
-	/** 复调用标签在「当前容器」里的编号（供重算被引目标的 entries 用）：
-	 *  - 父级是 range_dispatch → 用它的 threshold（与 entry 的 threshold 一致）；
-	 *  - 否则（composite / inline / 根）→ 同层 call 标签里的 0 起序号。 */
+	/** 复调用标签在「当前容器」里的编号（供重算被引目标的 entries 用），**从 1 起**，
+	 *  与编辑器里的 `siblingBranchNumber()` / 分组子项口径完全一致：
+	 *  - 父级是 range_dispatch → 用它作为 entry 的 threshold（0 起，与 entries 对齐）；
+	 *  - 否则（composite / inline / 根）→ 同层分支子项里从上往下数的序号（1 起）。 */
 	callSelfNumber(locator, parentGroup, callIndex) {
 		const parentType = parentGroup ? String(parentGroup.imda_type || '').replace(/^minecraft:/, '') : '';
 		if (parentType === 'range_dispatch') {
@@ -1426,7 +1427,12 @@ class Exporter {
 			const idx = siblings.indexOf(locator);
 			return idx >= 0 ? idx : callIndex;
 		}
-		return callIndex;
+		if (parentGroup) {
+			const siblings = branchChildNodes(parentGroup);
+			const idx = siblings.indexOf(locator);
+			if (idx >= 0) return idx + 1;
+		}
+		return callIndex + 1;
 	}
 
 
@@ -3773,7 +3779,6 @@ function instantiateCallTags(targets) {
 				};
 				enableExportDeep(created);
 				if (reEnabled) { try { console.log('[装配] 实例化恢复导出', reEnabled, '个节点'); } catch (e) { /* ignore */ } }
-				try { syncBranchLabels(created); } catch (e) { /* ignore */ }
 				try { console.log('[装配] 实例化覆盖', locator.name || 'Locator', JSON.stringify(callOverridesOf(locator)), '→ fmt=' + String(created.imda_threshold_format || '') + ' th=' + String(created.imda_threshold)); } catch (e) { /* ignore */ }
 				if (index >= 0) { const at = siblings.indexOf(created); if (at >= 0) siblings.splice(at, 1); siblings.splice(Math.min(index, siblings.length), 0, created); }
 				createdGroups.push(created);
@@ -3784,7 +3789,15 @@ function instantiateCallTags(targets) {
 			} catch (error) { console.warn('[装配] 实例化复调用失败', error); }
 		}
 		const finishAspects = { outliner: true, groups: parentGroups.concat(createdGroups), elements: createdCubes };
-		try { if (undo) undo.finishEdit('实例化复调用标签', finishAspects); } catch (e) { console.warn('[装配] 实例化 finishEdit 失败', e); }
+		// 实例化把 call 标签换成真实分组后，父容器里各分支的「位置」才最终确定。
+		// 先按阈值重排、再刷新编号——否则每个实例化出来的分支会用「它暂时排在末尾」时的
+		// n 去算阈值（实测 [2] sac_slots #3 里 full 依次得到 4,3,2，而不是 3,2,1）。
+		for (const parent of parentGroups) {
+			try { sortBranchChildren(parent); } catch (e) { /* ignore */ }
+			try { syncBranchLabels(parent); } catch (e) { /* ignore */ }
+		}
+		for (const group of createdGroups) { try { syncBranchLabels(group); } catch (e) { /* ignore */ } }
+		try { undo && undo.finishEdit('实例化复调用标签', finishAspects); } catch (e) { console.warn('[装配] 实例化 finishEdit 失败', e); }
 		try { console.log('[装配] 实例化撤销记录', undo.history.length, undo.index, (undo.history[undo.history.length - 1] || {}).action); } catch (e) { /* ignore */ }
 		try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 		try { Project.saved = false; } catch (e) { /* ignore */ }
@@ -7188,7 +7201,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, attachGroupMenu, cleanAllImdaMenus, attachAnimationTimelineMenu, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, syncAllBranchLabels, siblingBranchNumber, branchChildNodes, callTagBranchThreshold, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, buildSequenceChildResult, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, scanPackEntries, buildAllItemsTree, matchBlacklist, listFilesRecursive, simStepOnce, simAdvanceSlot, primeMappingCache, repairOutlinerDuplicates, applyConvertGroupsToCallTags, collectAllGroups, collectGroupSubtree, outermostSelectedGroups, normalizeCompositeCubes, normalizeGroupNumbersAndNames, cleanGroupName, thresholdFormatVars, countLayerItems, countInlineCubes, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, attachGroupMenu, cleanAllImdaMenus, attachAnimationTimelineMenu, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, syncAllBranchLabels, siblingBranchNumber, branchChildNodes, callTagBranchThreshold, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, buildSequenceChildResult, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, scanPackEntries, buildAllItemsTree, matchBlacklist, listFilesRecursive, simStepOnce, simAdvanceSlot, primeMappingCache, repairOutlinerDuplicates, applyConvertGroupsToCallTags, collectAllGroups, collectGroupSubtree, outermostSelectedGroups, normalizeCompositeCubes, normalizeGroupNumbersAndNames, cleanGroupName, thresholdFormatVars, countLayerItems, countInlineCubes, instantiateCallTags, applyCallOverridesToGroup, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

@@ -2,6 +2,14 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.73.20
+- **统一 `n` 的口径为「从 1 起」，并修好实例化后的编号与导出/规范化不一致。** 0.73.19 里給复调用标签加的 `callSelfNumber()` 在 composite 下用了 0 起序号，而编辑器里的 `siblingBranchNumber()` / 导出分组子项都是 1 起，导致同一结构在「导出」「实例化」「规范化」三条路径上算出不同编号。
+  - `callSelfNumber()` 改为**与 `siblingBranchNumber()` 完全一致**：父级是 `range_dispatch` 时取 threshold（entries 范围内 0 起，与 entries 对齐）；composite/inline/根则取 `branchChildNodes(parent).indexOf(locator) + 1`（1 起）。
+  - 于是 `f=3`（3 个分支）时格式 `(f-n+1)i` → `3,2,1`，`ni` → `n×i = 1,2,3` 的第一项，跟文档里的 `slots{a,b,c} → n=1,2,3` 一致。
+  - `instantiateCallTags()`：不再在「节点还排在末尾」的中间态调 `syncBranchLabels(created)`；改为所有标签替换完、分支落位后再对每个父容器 `sortBranchChildren` + `syncBranchLabels`，并对新建分组各跑一次 `syncBranchLabels`。修掉实例化时 full 依次得到 `4,3,2` 的问题。
+- 真机只读验证（`jet_rifle`，0.73.20）：当前工程 `[3] sac_slots #3`（3 个复调用，`ni`）导出 `[0,1] [0,2] [0,3]`，与 `[4] sac_slots #4` 的 4 个分支、`[2] sac_slots #2` 的 2 个分支口径一致。
+- 单测：`_test_threshold_n.js` 从 59 项扩到 **63 项**（新增「导出 / 实例化 / 规范化 三者编号一致」：`(f-n+1)i` 下 3 个分支的 full 三条路径都得 `3,2,1`）；sim 396、export 29、all_items 76、convert 25、sequence_child 44 全通过。
+
 ## 0.73.19
 - **修：复调用标签导出时不按「标签当前所在结构」重算编号，沿用了被引目标原位置的阈值。** 实测 `jet_rifle.json` 里 `[2] sac_slots #3` 下三个复调用（指向 `sacpack11/32/53`，目标格式 `(f-n)i`）输出了 `[0,5] [0,4] [0,3]`，期望 `[0,3] [0,2] [0,1]`——因为 `resolveCallTarget()` 深拷贝目标映射节点时，entries 的 threshold 是目标在原结构里用旧 `f`/`n` 算好的。
   - `buildCallNode(locator, selfNumber, parentGroup)` 增加两个上下文参数：`selfNumber` = 标签在**当前容器**里的编号（父级是 `range_dispatch` 时取它的 threshold，否则取它在同层 call 标签里的 0 起序号）；`parentGroup` = 标签当前所在容器。

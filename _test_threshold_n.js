@@ -279,9 +279,9 @@ eq('子级 s = 3（x0/x1/x2）', api.thresholdFormatVars(fbChild).s, 3);
 /* ---------- 复调用标签：引用目标后按当前位置重算编号 ---------- */
 console.log('\n[复调用重算编号]');
 global.Outliner.root.length = 0;
-// 目标 sacpack：格式 (f-n)i，2 个子项（_empty / _full）
+// 目标 sacpack：格式 (f-n+1)i（n 从 1 起），2 个子项（_empty / _full）
 const mkPack = (name) => {
-	const g = new global.Group({ name, imda_type: 'range_dispatch', imda_property: 'custom_model_data', imda_index: 1, imda_threshold_format: '(f-n)i' });
+	const g = new global.Group({ name, imda_type: 'range_dispatch', imda_property: 'custom_model_data', imda_index: 1, imda_threshold_format: '(f-n+1)i' });
 	global.immAddAndInit(leaf(name + '_empty', 'ns:' + name + 'e'), g);
 	global.immAddAndInit(leaf(name + '_full', 'ns:' + name + 'f'), g);
 	return g;
@@ -352,9 +352,64 @@ const mRd = api.createExporter().buildMapping();
 // rdHost 本身也是 range_dispatch；复调用克隆是它 entries 里的 model。取 2 个 entries 的那个。
 const rdAll = findCalls(mRd.model.models, []);
 const rdNode = rdAll.find(n => Array.isArray(n.entries) && n.entries.length === 2) || rdAll[0];
-// rdHost 层元素数 f=1（根目录只有 rdHost）；n = 该调用在 rdHost 里的 threshold = 0
-// (f-n)*i → i=0→0，i=1→1
-eq('range 里调用 n=父级 threshold（0）', rdNode && rdNode.entries.map(e => e.threshold), [0, 1]);
+// rdHost 层元素数 f=1；n = 该调用在 rdHost 里的 threshold = 0；格式 (f-n+1)i → (1-0+1)=2
+eq('range 里调用 n=父级 threshold（0）', rdNode && rdNode.entries.map(e => e.threshold), [0, 2]);
+
+/* ---------- 实例化 / 规范化 / 导出 三者编号必须一致（(f-n+1)i 的 full 应是 3,2,1） ---------- */
+console.log('\n[实例化与导出一致]');
+global.Outliner.root.length = 0;
+const mkPack2 = (name) => {
+	const g = new global.Group({ name, imda_type: 'range_dispatch', imda_property: 'custom_model_data', imda_index: 1, imda_threshold_format: '(f-n+1)i' });
+	global.immAddAndInit(leaf('[0] empty', 'ns:' + name + 'e'), g);
+	global.immAddAndInit(leaf('[9] full', 'ns:' + name + 'f'), g);
+	return g;
+};
+const ip1 = mkPack2('ip1'), ip2 = mkPack2('ip2'), ip3 = mkPack2('ip3');
+global.Group.all = [ip1, ip2, ip3];
+const instHost = new global.Group({ name: 'instHost', imda_type: 'composite' });
+global.immAddAndInit(instHost, null);
+for (const t of [ip1, ip2, ip3]) {
+	const c = api.newCallTag({ name: 'c' + t.name, position: [0, 0, 0], rotation: [0, 0, 0] });
+	global.immAddAndInit(c, instHost);
+	c.imda_call_target = t.uuid;
+}
+const pickFull = (g) => {
+	const kids = (g.children || []).filter(c => c instanceof global.Group);
+	const f = kids.find(k => /full/.test(String(k.name || '')) && Number(k.imda_threshold) > 0);
+	const fallback = kids[kids.length - 1];
+	return Number((f || fallback || {}).imda_threshold);
+};
+// 1) 导出：host 3 个调用，f=3，n=1/2/3 → full = 3/2/1
+const mInst = api.createExporter().buildMapping();
+const instCalls = findCalls(mInst.model.models, []).filter(n => /^cip/.test(String(n.node_name || '')));
+const instFullExport = instCalls.map(n => { const arr = (n.entries || []).map(e => e.threshold); return Number(arr[arr.length - 1]); });
+console.log('  导出 full = ' + JSON.stringify(instFullExport));
+eq('导出 full = [3,2,1]', instFullExport, [3, 2, 1]);
+
+// 2) 实例化：mock 的 Group 没有 duplicate()，补一个最小实现
+global.Group.prototype.duplicate = function () {
+	const g = new global.Group({ name: this.name, imda_type: this.imda_type, imda_threshold_format: this.imda_threshold_format, imda_property: this.imda_property, imda_index: this.imda_index, origin: (this.origin || [0, 0, 0]).slice(), rotation: (this.rotation || [0, 0, 0]).slice() });
+	for (const c of (this.children || [])) {
+		if (c instanceof global.Group) { c.duplicate().addTo(g); }
+		else { const cc = new global.Cube({ name: c.name, imda_threshold: c.imda_threshold, imda_type: c.imda_type, imda_model: c.imda_model }); cc.addTo(g); }
+	}
+	return g;
+};
+const oldBox = global.Blockbench.showMessageBox;
+global.Blockbench.showMessageBox = (opts, cb) => { if (typeof cb === 'function') cb(0); };
+api.instantiateCallTags();
+global.Blockbench.showMessageBox = oldBox;
+const instGroups = (instHost.children || []).filter(c => c instanceof global.Group);
+eq('实例化后 host 下变成 3 个真实分组', instGroups.length, 3);
+const instFullLocal = instGroups.map(pickFull);
+console.log('  实例化后本地 full = ' + JSON.stringify(instFullLocal));
+eq('实例化后的 full 与导出 / 规范化一致', instFullLocal, instFullExport);
+
+// 3) 再跑「规范化结构」应保持同一结果（不改回别的编号）
+api.normalizeGroupNumbersAndNames();
+const instFullAfterNorm = instGroups.map(pickFull);
+console.log('  规范化后本地 full = ' + JSON.stringify(instFullAfterNorm));
+eq('规范化后的 full 不变', instFullAfterNorm, instFullExport);
 
 if (fail) { console.log('\n\u5931\u8d25 ' + fail + ' \u9879'); process.exit(1); }
 console.log('\n\u901a\u8fc7 ' + pass + ' / ' + (pass + fail));
