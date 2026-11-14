@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.73.20';
+const VERSION = '0.73.21';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -415,7 +415,7 @@ function newCallTag(data) {
 		return (typeof Locator !== 'undefined') ? new Locator(data) : null;
 	}
 	const {
-		name, position, rotation, ignore_inherited_scale, target, overrides,
+		name, position, rotation, ignore_inherited_scale, target, overrides, shadow,
 	} = data || {};
 	const node = new tag({
 		name: name || '调用',
@@ -425,6 +425,7 @@ function newCallTag(data) {
 	});
 	if (target != null) node.imda_call_target = String(target);
 	if (overrides != null) node.imda_call_overrides = (typeof overrides === 'string') ? overrides : JSON.stringify(overrides);
+	if (shadow) node.imda_call_shadow = true;
 	return node;
 }
 
@@ -452,7 +453,7 @@ function upgradeLegacyCallTags() {
 			const node = new tag({ name: old.name, position: (old.position || [0, 0, 0]).slice(), rotation: (old.rotation || [0, 0, 0]).slice(), ignore_inherited_scale: old.ignore_inherited_scale !== false });
 			node.uuid = old.uuid;
 			node.imda_call_target = String(old.imda_call_target || '');
-			for (const key of ['imda_call_overrides', 'imda_call_threshold', 'imda_call_property', 'imda_call_index', 'imda_call_scale', 'imda_frame', 'imda_pose']) {
+			for (const key of ['imda_call_overrides', 'imda_call_threshold', 'imda_call_property', 'imda_call_index', 'imda_call_scale', 'imda_frame', 'imda_pose', 'imda_call_shadow']) {
 				if (old[key] !== undefined) node[key] = old[key];
 			}
 			node.export = old.export !== false;
@@ -1407,7 +1408,8 @@ class Exporter {
 			type: 'minecraft:empty',
 			__imda_call_group: group,
 			__imda_call_name: String(locator.name || labelOf(locator)),
-			__imda_call_pose: { position: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() },
+			// 影子标签（位姿与源同步）在这里就替换成源的 origin/rotation，后续 wrapCallPose 用这份位姿。
+			__imda_call_pose: effectiveCallPose(locator, group),
 			__imda_call_overrides: callOverridesOf(locator),
 			__imda_call_self_number: selfNumber,
 			__imda_call_parent: parentGroup || null,
@@ -3613,8 +3615,9 @@ function generateCallSequence(options) {
 				const position = sourceGroup ? (sourceGroup.origin || [0, 0, 0]).slice() : (Array.isArray(item.position) ? item.position.slice() : [0, 0, 0]);
 				const rotation = sourceGroup ? (sourceGroup.rotation || [0, 0, 0]).slice() : (Array.isArray(item.rotation) ? item.rotation.slice() : [0, 0, 0]);
 				const targetGroup = sourceGroup || (((typeof Group !== 'undefined' && Group.all) ? Group.all : []).find(g => g && g.uuid === String(item.imda_call_target || '').trim()) || null);
-				const locator = newCallTag({ name: sourceGroup ? ('调用 ' + labelOf(sourceGroup)) : (item.name || ('调用 ' + labelOf(item))), position, rotation, ignore_inherited_scale: true });
+				const locator = newCallTag({ name: sourceGroup ? ('影印 ' + labelOf(sourceGroup)) : (item.name || ('影印 ' + labelOf(item))), position, rotation, ignore_inherited_scale: true });
 				if (!locator) continue;
+				locator.imda_call_shadow = true; // 序列生成默认产出影子标签（位姿随源分组）
 				addAndInit(locator, node);
 				generatedLocators.push(locator);
 				locator.imda_call_target = targetGroup ? targetGroup.uuid : String(item.imda_call_target || '').trim();
@@ -3671,7 +3674,7 @@ function openSequenceDialog() {
 			childRangeNormalize: { label: '子节点 normalize（归一化）', type: 'checkbox', value: true, condition: (r) => r.childProperty === 'count' || r.childProperty === 'damage' },
 			childRangePeriod: { label: '子节点 period（use_cycle）', type: 'number', value: 1, condition: (r) => r.childProperty === 'use_cycle' },
 			childRangeRemaining: { label: '子节点 remaining（use_duration）', type: 'checkbox', value: false, condition: (r) => r.childProperty === 'use_duration' },
-			info: { type: 'info', text: '容器：range_dispatch 用 property/index + 分支编号格式（或 起点 + i × 步长）算各 #分支 的 threshold；composite 时忽略这些。\n子节点：每个 #分支 子分组按「子节点类型」生成，选分支总控类型时其对应子选项才生效。满节点只放一次本体。' },
+			info: { type: 'info', text: '容器：range_dispatch 用 property/index + 分支编号格式（或 起点 + i × 步长）算各 #分支 的 threshold；composite 时忽略这些。\n子节点：每个 #分支 子分组按「子节点类型」生成，选分支总控类型时其对应子选项才生效。满节点只放一次本体。\n生成的复调用标签默认是「影子标签」（位姿与源同步），命名为「影印 <源分组名>」。' },
 		},
 		onConfirm(result) { generateCallSequence(result); },
 	}).show();
@@ -3744,20 +3747,22 @@ function instantiateCallTags(targets) {
 				const parent = locator.parent || null;
 				const siblings = parent && Array.isArray(parent.children) ? parent.children : ((typeof Outliner !== 'undefined' && Outliner && Array.isArray(Outliner.root)) ? Outliner.root : []);
 				const index = siblings.indexOf(locator);
+				// 影子标签用源分组自己的位姿，副本标签用标签自身坐标。
+				const pose = effectiveCallPose(locator, targetGroup);
 				let created = null;
 				if (targetGroup) {
 					created = (typeof targetGroup.duplicate === 'function') ? targetGroup.duplicate() : ((typeof targetGroup.clone === 'function') ? targetGroup.clone() : null);
 					if (created) {
 						const oldOrigin = Array.isArray(created.origin) ? created.origin.slice() : [0, 0, 0];
-						const nextOrigin = Array.isArray(locator.position) ? locator.position.slice() : oldOrigin;
+						const nextOrigin = pose.position.slice();
 						created.name = locator.name || (labelOf(targetGroup) + ' 实例');
 						try { translateGroupCoordinates(created, [nextOrigin[0] - oldOrigin[0], nextOrigin[1] - oldOrigin[1], nextOrigin[2] - oldOrigin[2]]); } catch (e) { /* ignore */ }
 						created.origin = nextOrigin;
-						created.rotation = Array.isArray(locator.rotation) ? locator.rotation.slice() : (created.rotation || [0, 0, 0]);
+						created.rotation = pose.rotation.slice();
 						created.selected = false;
 					}
 				} else if (target) {
-					created = new Group({ name: '实例 ' + target.split(':').pop(), imda_type: 'model', imda_model: target, origin: (locator.position || [0, 0, 0]).slice(), rotation: (locator.rotation || [0, 0, 0]).slice() });
+					created = new Group({ name: '实例 ' + target.split(':').pop(), imda_type: 'model', imda_model: target, origin: pose.position.slice(), rotation: pose.rotation.slice() });
 				}
 				if (!created) continue;
 				if (parent) created.addTo(parent); else created.addTo();
@@ -3911,6 +3916,26 @@ function callModelPrefill(target, matchedGroup) {
 	return value.indexOf(':') >= 0 ? value : '';
 }
 
+/** 影子标签：位姿与源（被引用的分组）同步，导出/实例化时忽略自身坐标。 */
+function isShadowCallTag(locator) {
+	return !!locator && locator.imda_call_shadow === true;
+}
+
+/** 复调用标签生效的位姿 { position, rotation }：
+ *  影子标签 → 用源分组的 origin / rotation；副本标签 → 用标签自身的 position / rotation。
+ *  找不到源分组时退回标签自身坐标。 */
+function effectiveCallPose(locator, targetGroup) {
+	const own = {
+		position: (Array.isArray(locator && locator.position) ? locator.position : [0, 0, 0]).map(Number),
+		rotation: (Array.isArray(locator && locator.rotation) ? locator.rotation : [0, 0, 0]).map(Number),
+	};
+	if (!isShadowCallTag(locator) || !isGroup(targetGroup)) return own;
+	return {
+		position: (Array.isArray(targetGroup.origin) ? targetGroup.origin : [0, 0, 0]).map(Number),
+		rotation: (Array.isArray(targetGroup.rotation) ? targetGroup.rotation : [0, 0, 0]).map(Number),
+	};
+}
+
 function callOverridesOf(locator) {
 	let parsed = {};
 	try { parsed = JSON.parse(String(locator && locator.imda_call_overrides || '{}')) || {}; } catch (e) { parsed = {}; }
@@ -3986,6 +4011,7 @@ function editCallTag(locator) {
 		form: {
 			target: { label: '目标分组', type: 'select', value: matchedGroup, options, description: '批量编辑时会把所有选中标签指向同一目标；导出时替换为目标分组的映射节点。' },
 			model: { label: '或模型 id（优先）', type: 'text', value: callModelPrefill(commonTarget, matchedGroup), description: '例如 namespace:item/foo；填写后忽略上面的分组选择。失效的旧 UUID 不会预填到这里。' },
+			shadow: { label: '位姿变换与源同步（影子标签）', type: 'checkbox', value: locators.every(l => isShadowCallTag(l)), description: '勾选=影子标签：导出/实例化时忽略标签自身坐标，直接用源分组的 origin/rotation。\n不勾=副本标签：使用标签自身的 position/rotation。两者都是复调用标签，元素类型相同。' },
 			...callOverrideFields(groups.find(g => g.uuid === matchedGroup) || null, first),
 		},
 		onConfirm(result) {
@@ -4006,6 +4032,7 @@ function editCallTag(locator) {
 					item.imda_call_property = overrides.property || '';
 					item.imda_call_index = overrides.index || '';
 					item.imda_call_scale = overrides.scale || '';
+					item.imda_call_shadow = !!result.shadow;
 				}
 				console.log('[装配] 编辑复调用标签', locators.length, '→', target);
 				if (target && target.indexOf(':') < 0 && typeof Group !== 'undefined' && Array.isArray(Group.all) && !Group.all.some(g => g && g.uuid === target)) {
@@ -4865,11 +4892,19 @@ function poseOfNode(node) {
 		};
 	}
 	if (isLocator(node)) {
+		let position = (Array.isArray(node.position) ? node.position : [0, 0, 0]).map(Number);
+		let rotation = (Array.isArray(node.rotation) ? node.rotation : [0, 0, 0]).map(Number);
+		// 影子标签：提取的是它实际生效的位姿（= 源分组的位姿）
+		if (isShadowCallTag(node)) {
+			let target = null;
+			try { target = ((typeof Group !== 'undefined' && Group.all) ? Group.all : []).find(g => g && g.uuid === String(node.imda_call_target || '').trim()) || null; } catch (e) { /* ignore */ }
+			if (target) { const eff = effectiveCallPose(node, target); position = eff.position; rotation = eff.rotation; }
+		}
 		return {
 			kind: 'locator',
 			label: String(node.name || ''),
-			origin: (Array.isArray(node.position) ? node.position : [0, 0, 0]).map(Number),
-			rotation: (Array.isArray(node.rotation) ? node.rotation : [0, 0, 0]).map(Number),
+			origin: position,
+			rotation,
 		};
 	}
 	return null;
@@ -4887,23 +4922,20 @@ function extractPose() {
 	return pose;
 }
 
-/** 把提取的位姿应用到所有选中的分组/复调用标签（连同子树平移，保证枢轴落到同一位置） */
+/** 把提取的位姿应用到所有选中的分组/复调用标签（连同子树平移，保证枢轴落到同一位置）。
+ *  允许跨类型：分组的位姿可套到复调用标签上，反之亦然——只搬位姿（origin/rotation），
+ *  复调用标签没有尺寸，忽略尺寸差异；分组则平移子树保持外观不变。 */
 function applyPose(pose) {
 	const source = pose || poseClipboard;
 	if (!source) { Blockbench.showQuickMessage('还没有提取过变换（先用「提取变换」）', 2800); return 0; }
 	const groups = selectedGroups();
 	const locators = selectedCallTags();
 	if (!groups.length && !locators.length) { Blockbench.showQuickMessage('先选中要应用的目标', 2600); return 0; }
-	const targets = source.kind === 'locator' ? locators : groups;
-	if (!targets.length) {
-		Blockbench.showMessageBox({ title: '目标类型不匹配', message: '提取的是' + (source.kind === 'locator' ? '复调用标签' : '分组') + '的变换，请选中同类型的目标。', icon: 'info' });
-		return 0;
-	}
 	const cubeList = [];
-	walkGroups(groups.length ? groups : [], g => { for (const c of (g.children || [])) if (isCube(c)) cubeList.push(c); });
-	try { Undo.initEdit({ groups: groups.slice(), elements: cubeList }); } catch (e) { /* ignore */ }
+	walkGroups(groups, g => { for (const c of (g.children || [])) if (isCube(c)) cubeList.push(c); });
+	try { Undo.initEdit({ groups: groups.slice(), elements: cubeList.concat(locators) }); } catch (e) { /* ignore */ }
 	let applied = 0;
-	for (const target of targets) {
+	const applyToNode = (target) => {
 		try {
 			if (isGroup(target)) {
 				const old = (Array.isArray(target.origin) ? target.origin : [0, 0, 0]).map(Number);
@@ -4912,12 +4944,14 @@ function applyPose(pose) {
 				target.origin = source.origin.slice();
 				target.rotation = source.rotation.slice();
 			} else {
+				// 复调用标签：只搬位姿，没有尺寸
 				target.position = source.origin.slice();
 				target.rotation = source.rotation.slice();
 			}
 			applied++;
 		} catch (error) { console.warn('[装配] 应用变换失败', error); }
-	}
+	};
+	for (const target of groups.concat(locators)) applyToNode(target);
 	try { Undo.finishEdit('应用变换'); } catch (e) { /* ignore */ }
 	try { Canvas.updateAll(); } catch (e) { /* ignore */ }
 	try { Project.saved = false; } catch (e) { /* ignore */ }
@@ -6601,6 +6635,7 @@ P(ModelProject, 'number', 'imda_extra_composite_layers', { label: '调试：额�
 		try { new Property(Locator, 'string', 'imda_call_index', { label: '复调用 index 覆盖', default: '', exposed: false }); } catch (e) { /* ignore */ }
 		try { new Property(Locator, 'string', 'imda_call_scale', { label: '复调用 scale 覆盖', default: '', exposed: false }); } catch (e) { /* ignore */ }
 		try { new Property(Locator, 'string', 'imda_call_overrides', { label: '复调用映射属性覆盖（JSON）', default: '', exposed: false }); } catch (e) { /* ignore */ }
+		try { new Property(Locator, 'boolean', 'imda_call_shadow', { label: '位姿变换与源同步（影子标签）', default: false, exposed: true }); } catch (e) { /* ignore */ }
 		try { new Property(Locator, 'number', 'imda_frame', { default: 0, exposed: false }); } catch (e) { /* ignore */ }
 		try { new Property(Locator, 'string', 'imda_pose', { default: '', exposed: false }); } catch (e) { /* ignore */ }
 	}
@@ -7201,7 +7236,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, attachGroupMenu, cleanAllImdaMenus, attachAnimationTimelineMenu, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, syncAllBranchLabels, siblingBranchNumber, branchChildNodes, callTagBranchThreshold, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, buildSequenceChildResult, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, scanPackEntries, buildAllItemsTree, matchBlacklist, listFilesRecursive, simStepOnce, simAdvanceSlot, primeMappingCache, repairOutlinerDuplicates, applyConvertGroupsToCallTags, collectAllGroups, collectGroupSubtree, outermostSelectedGroups, normalizeCompositeCubes, normalizeGroupNumbersAndNames, cleanGroupName, thresholdFormatVars, countLayerItems, countInlineCubes, instantiateCallTags, applyCallOverridesToGroup, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, attachGroupMenu, cleanAllImdaMenus, attachAnimationTimelineMenu, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, syncAllBranchLabels, siblingBranchNumber, branchChildNodes, callTagBranchThreshold, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, buildSequenceChildResult, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, scanPackEntries, buildAllItemsTree, matchBlacklist, listFilesRecursive, simStepOnce, simAdvanceSlot, primeMappingCache, repairOutlinerDuplicates, applyConvertGroupsToCallTags, collectAllGroups, collectGroupSubtree, outermostSelectedGroups, normalizeCompositeCubes, normalizeGroupNumbersAndNames, cleanGroupName, thresholdFormatVars, countLayerItems, countInlineCubes, instantiateCallTags, applyCallOverridesToGroup, isShadowCallTag, effectiveCallPose, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {

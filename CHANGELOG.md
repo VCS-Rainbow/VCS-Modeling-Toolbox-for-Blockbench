@@ -2,6 +2,17 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.73.21
+- **复调用标签新增「影子标签」：位姿可与源同步，而不携带自己的坐标。** 复调用标签的元素类型不变（`imda_call_tag`），只是多一个属性决定位姿来源：
+  - 新增属性 `imda_call_shadow`（复选框「位姿变换与源同步（影子标签）」）。勾选 = **影子标签**：导出 / 实例化时忽略标签自身的 position/rotation，直接用被引用分组的 origin/rotation；不勾 = **副本标签**：使用标签自身坐标。
+  - 新增 `isShadowCallTag()` / `effectiveCallPose(locator, targetGroup)`：影子标签取源分组位姿，副本标签取自身位姿（源缺失时退回自身）。
+  - `buildCallNode()` 的 `__imda_call_pose` 改用 `effectiveCallPose()`；`instantiateCallTags()` 的目标位姿同样改用 `effectiveCallPose()`（影子标签实例化后落在源分组原位）。
+  - `poseOfNode()` 对影子标签提取「实际生效位姿」（源的位姿）。
+  - `editCallTag()` 对话框新增「位姿变换与源同步」复选框（批量编辑时按是否全为影子预填）；`newCallTag({ shadow: true })`、旧标签升级也保留该字段。
+- **「生成复调用序列」默认产出影子标签**，命名由 `调用 <源>` 改为 **`影印 <源分组名>`**；对话框说明同步。
+- **「应用变换」支持跨类型**：分组位姿可套到复调用标签（只搬 position/rotation，忽略尺寸），复调用标签位姿也可套到分组（搬 origin/rotation 并平移子树保持外观）；不再要求同类型。
+- 单测：`_test_sim.js` 从 396 扩到 **405 项**（影子/副本标签判定、`effectiveCallPose`、导出 pose、序列命名、跨类型应用变换）；threshold_n 63、export 29、all_items 76、convert 25、sequence_child 44 全通过。
+
 ## 0.73.20
 - **统一 `n` 的口径为「从 1 起」，并修好实例化后的编号与导出/规范化不一致。** 0.73.19 里給复调用标签加的 `callSelfNumber()` 在 composite 下用了 0 起序号，而编辑器里的 `siblingBranchNumber()` / 导出分组子项都是 1 起，导致同一结构在「导出」「实例化」「规范化」三条路径上算出不同编号。
   - `callSelfNumber()` 改为**与 `siblingBranchNumber()` 完全一致**：父级是 `range_dispatch` 时取 threshold（entries 范围内 0 起，与 entries 对齐）；composite/inline/根则取 `branchChildNodes(parent).indexOf(locator) + 1`（1 起）。

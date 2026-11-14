@@ -1551,6 +1551,54 @@ eq('newCallTag 写入目标', tagNode && tagNode.imda_call_target, 'some-uuid');
 eq('newCallTag 写入位姿', tagNode && tagNode.position, [8, 8, 8]);
 eq('isCallTag 认得新类型', api.isCallTag(tagNode), true);
 
+/* ---------- 影子标签（位姿与源同步） / 副本标签 ---------- */
+console.log('\n[影子标签]');
+const shSrc = new global.Group({ name: 'shSrc', imda_type: 'composite', origin: [16, 8, 8], rotation: [0, 45, 0] });
+shSrc.uuid = 'sh-src-uuid';
+shSrc.imda_model = 'ns:item/shsrc';
+const shHost = new global.Group({ name: 'shHost', imda_type: 'composite', origin: [0, 0, 0] });
+shHost.addTo(); shSrc.addTo(shHost);
+global.Outliner.root.length = 0; global.Outliner.root.push(shHost);
+global.Group.all = [shHost, shSrc];
+const shCopy = api.newCallTag({ name: '副本', position: [1, 2, 3], rotation: [0, 0, 0], target: shSrc.uuid });
+shCopy.addTo(shHost);
+const shShadow = api.newCallTag({ name: '影子', position: [1, 2, 3], rotation: [0, 0, 0], target: shSrc.uuid, shadow: true });
+shShadow.addTo(shHost);
+eq('新标签默认不是影子', api.isShadowCallTag(shCopy), false);
+eq('checkbox 勾选 → 影子标签', api.isShadowCallTag(shShadow), true);
+eq('副本用自身坐标', api.effectiveCallPose(shCopy, shSrc), { position: [1, 2, 3], rotation: [0, 0, 0] });
+eq('影子用源 origin/rotation', api.effectiveCallPose(shShadow, shSrc), { position: [16, 8, 8], rotation: [0, 45, 0] });
+
+// 导出：副本标签的 pose 是自身坐标，影子标签的 pose 是源坐标
+const shExpCopy = api.createExporter().buildCallNode(shCopy, 1, shHost);
+const shExpShadow = api.createExporter().buildCallNode(shShadow, 2, shHost);
+eq('导出：副本 pose = 自身', shExpCopy && shExpCopy.__imda_call_pose, { position: [1, 2, 3], rotation: [0, 0, 0] });
+eq('导出：影子 pose = 源坐标', shExpShadow && shExpShadow.__imda_call_pose, { position: [16, 8, 8], rotation: [0, 45, 0] });
+
+// 序列生成默认产出影子标签，名字「影印 …」
+const seqProtoTag = api.newCallTag({ name: '影印 x', position: [0, 0, 0], rotation: [0, 0, 0], target: shSrc.uuid, shadow: true });
+eq('序列影子标签命名 + shadow', seqProtoTag.name === '影印 x' && api.isShadowCallTag(seqProtoTag), true);
+
+// 应用变换：跨类型（分组位姿 → 复调用标签；标签位姿 → 分组）
+const apHost = new global.Group({ name: 'apHost', imda_type: 'composite', origin: [0, 0, 0] });
+apHost.addTo();
+global.Outliner.root.length = 0; global.Outliner.root.push(apHost);
+global.Group.all = [apHost];
+const apGroup = new global.Group({ name: 'apG', imda_type: 'composite', origin: [4, 4, 4], rotation: [10, 0, 0] });
+apGroup.addTo(apHost);
+const apTag = api.newCallTag({ name: 'apTag', position: [0, 0, 0], rotation: [0, 0, 0], target: 'x' });
+apTag.addTo(apHost);
+global.Group.selected = []; global.Outliner.selected.length = 0;
+// 选中标签后，把「分组」的位姿应用到它
+apTag.selected = true; global.Outliner.selected.push(apTag);
+api.applyPose({ kind: 'group', origin: [4, 4, 4], rotation: [10, 0, 0] });
+eq('跨类型：分组位姿应用到标签（选中标签）', apTag.position, [4, 4, 4]);
+// 重置选中，选标签应用标签位姿到分组
+global.Group.selected = []; global.Outliner.selected.length = 0;
+apGroup.selected = true; global.Group.selected.push(apGroup);
+api.applyPose({ kind: 'locator', origin: [7, 7, 7], rotation: [0, 30, 0] });
+eq('跨类型：标签位姿应用到分组', apGroup.origin, [7, 7, 7]);
+
 const plainLocator = new global.Locator({ name: '普通定位点', position: [0, 0, 0], rotation: [0, 0, 0] });
 plainLocator.imda_call_target = '';
 eq('普通定位点不算复调用标签', api.isCallTag(plainLocator), false);
