@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.73.21';
+const VERSION = '0.73.22';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -770,6 +770,8 @@ class Exporter {
 		const rotation = cube.__imda_omit_rotation ? null : this.elementRotation(cube);
 		if (rotation) element.rotation = rotation;
 		if (cube.shade === false) element.shade = false;
+		const le = Math.round(num(cube.light_emission));
+		if (isFinite(le) && le > 0) element.light_emission = Math.max(0, Math.min(15, le));
 		return element;
 	}
 
@@ -820,7 +822,10 @@ class Exporter {
 		}
 		if (particle) textures.particle = particle;
 
-		const model = { textures, elements };
+		const model = {};
+		if (typeof Project !== 'undefined' && Project && Project.imda_ambientocclusion === false) model.ambientocclusion = false;
+		model.textures = textures;
+		model.elements = elements;
 		const display = this.blockDisplay ? this.desiredDisplay() : null;
 		if (display && Object.keys(display).length) model.display = JSON.parse(JSON.stringify(display));
 
@@ -4378,6 +4383,10 @@ function importModelReference(group) {
 			if (cube.faces[dirKey]) cube.faces[dirKey].enabled = true;
 		}
 		if (el.shade === false) cube.shade = false;
+		if (typeof el.light_emission !== 'undefined' && el.light_emission !== null) {
+			const le = Math.round(Number(el.light_emission));
+			if (isFinite(le)) cube.light_emission = Math.max(0, Math.min(15, le));
+		}
 		if (el.rotation) {
 			const r = el.rotation;
 			const o = Array.isArray(r.origin) ? r.origin : [0, 0, 0];
@@ -6602,6 +6611,7 @@ P(ModelProject, 'number', 'imda_extra_composite_layers', { label: '调试：额�
 	P(ModelProject, 'boolean', 'imda_oversized_in_gui', { label: 'oversized_in_gui（GUI 内允许超出槽位）', default: false });
 	P(ModelProject, 'number', 'imda_swap_animation_scale', { label: 'swap_animation_scale（切换动画速度倍率）', default: 1, min: 0, step: 0.05 });
 	P(ModelProject, 'boolean', 'imda_hide_unavailable', { label: '隐藏当前条件下不可用的分组', default: true });
+	P(ModelProject, 'boolean', 'imda_ambientocclusion', { label: '环境光遮蔽（ambientocclusion，模型根级；取消勾选则导出 false）', default: true });
 	P(ModelProject, 'string', 'imda_pack_path', { label: '资源包工程路径（pack.mcmeta 所在目录）', default: '' });
 	P(ModelProject, 'string', 'imda_mapping_cache', { default: '', exposed: false });
 	P(ModelProject, 'string', 'imda_all_items_blacklist', { label: '全物品模型表：黑名单正则（每行一个）', default: '' });

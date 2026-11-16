@@ -2,6 +2,13 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.73.22
+- **补齐元素级导出字段 `light_emission`（自己发光）与 `shade`。**
+  - 导出（`compileElement`）：元素 `light_emission` > 0 时输出（clamp 到 0–15）；`shade === false` 时输出 `"shade": false`。之前这两项都被丢弃，导致发光/阴影设置不生效。
+  - 导入（`el.light_emission` / `el.shade`）：读回 `light_emission`（0–15）与 `shade`；之前只处理 `shade` 且从不处理 `light_emission`。
+- **补齐模型根级 `ambientocclusion`**：新增项目属性「环境光遮蔽（ambientocclusion）」，默认 `true`；取消勾选则在导出的模型根对象写 `"ambientocclusion": false`。
+- 单测：`_test_sim.js` 由 405 扩到 **410 项**（新增 light_emission 输出/0 值省略/clamp、shade 输出/默认省略）。
+
 ## 0.73.21
 - **复调用标签新增「影子标签」：位姿可与源同步，而不携带自己的坐标。** 复调用标签的元素类型不变（`imda_call_tag`），只是多一个属性决定位姿来源：
   - 新增属性 `imda_call_shadow`（复选框「位姿变换与源同步（影子标签）」）。勾选 = **影子标签**：导出 / 实例化时忽略标签自身的 position/rotation，直接用被引用分组的 origin/rotation；不勾 = **副本标签**：使用标签自身坐标。

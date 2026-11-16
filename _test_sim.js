@@ -765,6 +765,26 @@ eq('手持 display scale = 0.85（对齐引用模型）', dispExporter.models[0]
 eq('不再输出 gui display', dispExporter.models[0].data.display.gui, undefined);
 eq('未设置槽位回退手持预设', dispExporter.models[0].data.display.firstperson_righthand.scale, [0.68, 0.68, 0.68]);
 
+/* ---------- 元素发光 / 阴影 ---------- */
+console.log('\n[元素发光/阴影字段]');
+{
+	const leCubes = [
+		(Object.assign(new global.Cube({ from: [0, 0, 0], to: [4, 4, 4], origin: [2, 2, 2], rotation: [0, 0, 0] }), { light_emission: 15, shade: false })),
+		(Object.assign(new global.Cube({ from: [4, 0, 0], to: [8, 4, 4], origin: [6, 2, 2], rotation: [0, 0, 0] }), { light_emission: 0 })),
+		(Object.assign(new global.Cube({ from: [8, 0, 0], to: [12, 4, 4], origin: [10, 2, 2], rotation: [0, 0, 0] }), { light_emission: 20 })),
+	];
+	leCubes.forEach(c => { c.faces = { north: { texture: 'tex-disp', uv: [0, 0, 16, 16] } }; });
+	const leExp = api.createExporter();
+	leExp.addModel(leCubes, 'leTest');
+	const leEls = leExp.models[0].data.elements;
+	eq('light_emission=15 输出', leEls[0].light_emission, 15);
+	eq('shade=false 输出', leEls[0].shade, false);
+	eq('light_emission=0 不输出', leEls[1].light_emission, undefined);
+	eq('shade 默认不输出', leEls[1].shade, undefined);
+	eq('light_emission 越界 clamp 到 15', leEls[2].light_emission, 15);
+}
+
+
 /* ---------- 右键菜单只改写 IMDA 格式 ---------- */
 console.log('\n[菜单格式隔离]');
 {
