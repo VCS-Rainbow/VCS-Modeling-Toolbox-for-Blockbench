@@ -2,6 +2,13 @@
 
 版本规则：**开发阶段主版本号保持 0（0.x.y）**——修 bug 用 patch（0.6.x），加功能用 minor（0.x.0），每次改动都 bump 并打 git tag `v<版本>`；正式发布时才升到 1.0.0。
 
+## 0.73.23
+- **引用模型节点右键新增「跳转到引用的模型进行编辑…」。**
+  - 目标解析：`ns:items/…` → `assets/<ns>/items/….json`；模型引用 `ns:path` → `assets/<ns>/models/path.json`（缺省命名空间 `minecraft`）。
+  - **优先**在资源包内找同名 `.bbmodel`（文件名去扩展名与引用末段名一致；多个同名再用文件的命名空间匹配）；命中就打开该 bbmodel，否则直接用 Blockbench 打开对应的 `.json` 文件。已打开的同路径项目由 `loadModelFile` 复用（切回原 tab）。
+  - 跳转时在当前项目写入待刷新标记 `imda_pending_refresh`；**回到该项目**（`select_project` / `finished_loading_project`）时自动执行一次「更新所有调用」（重读被引用映射 + 刷新引用/复调用节点），随后清除标记，保证只触发一次。
+- 单测：`_test_sim.js` 由 410 扩到 **424 项**（引用路径解析、同名 bbmodel 命中、跳转打开目标/打标记、待刷新只触发一次并清除）。
+
 ## 0.73.22
 - **补齐元素级导出字段 `light_emission`（自己发光）与 `shade`。**
   - 导出（`compileElement`）：元素 `light_emission` > 0 时输出（clamp 到 0–15）；`shade === false` 时输出 `"shade": false`。之前这两项都被丢弃，导致发光/阴影设置不生效。

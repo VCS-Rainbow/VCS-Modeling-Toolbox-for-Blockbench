@@ -132,6 +132,28 @@ global.Blockbench = {
 	showQuickMessage() { }, showMessageBox() { }, on() { }, writeFile() { }, pickDirectory() { return null; },
 };
 
+/* 跳转测试用：假文件系统 + 捕获 loadModelFile */
+global.__FAKE_FS__ = { files: {}, dirs: {} }; // files: abs->content ; dirs: dirAbs->[{name,isDir}]
+global.requireNativeModule = (mod, opts) => {
+	if (mod === 'path') return require('path').posix; // 用 posix 简化断言
+	if (mod === 'fs') {
+		const p = require('path').posix;
+		return {
+			existsSync: (abs) => Object.prototype.hasOwnProperty.call(global.__FAKE_FS__.files, abs) || Object.prototype.hasOwnProperty.call(global.__FAKE_FS__.dirs, abs),
+			readFileSync: (abs) => { if (!(abs in global.__FAKE_FS__.files)) throw new Error('ENOENT ' + abs); return global.__FAKE_FS__.files[abs]; },
+			readdirSync: (dir) => {
+				const entries = global.__FAKE_FS__.dirs[dir] || [];
+				return entries.map(e => ({ name: e.name, isDirectory: () => !!e.isDir }));
+			},
+			statSync: (abs) => ({ isDirectory: () => Object.prototype.hasOwnProperty.call(global.__FAKE_FS__.dirs, abs) }),
+			join: p.join,
+		};
+	}
+	return null;
+};
+global.__LOADED__ = [];
+global.loadModelFile = (file) => { global.__LOADED__.push(file); };
+
 /* 测试钩子必须在 require 之前挂好 */
 global.__IMM_TEST__ = {};
 require(PLUGIN);
@@ -1704,6 +1726,80 @@ eq('反向：标签本身也被选中', global.Outliner.selected.indexOf(rsAncho
 global.Outliner.root.length = 0;
 global.Outliner.selected.length = 0;
 global.Group.multi_selected = [];
-/* ---------- 汇总 ---------- */
+
+/* ---------- 引用跳转 / 待刷新标记 ---------- */
+console.log('\n[引用跳转/待刷新]');
+{
+	const p = require('path').posix;
+	const root = '/pack';
+	global.Project.imda_pack_path = root;
+	global.__FAKE_FS__.files = {}; global.__FAKE_FS__.dirs = {}; global.__LOADED__.length = 0;
+	const addFile = (rel, content) => { global.__FAKE_FS__.files[p.join(root, rel)] = content; };
+	const addDir = (rel, entries) => { global.__FAKE_FS__.dirs[p.join(root, rel)] = entries; };
+
+	// referenceTargetFile：items 与 model 两类
+	eq('items 引用 → assets/ns/items/x.json', api.referenceTargetFile(p, root, 'sqsp:items/inker/jet_rifle'), '/pack/assets/sqsp/items/inker/jet_rifle.json');
+	eq('模型引用 → assets/ns/models/x.json', api.referenceTargetFile(p, root, 'sqsp:item/jet_rifle/body'), '/pack/assets/sqsp/models/item/jet_rifle/body.json');
+	eq('缺省命名空间 → minecraft', api.referenceTargetFile(p, root, 'item/apple'), '/pack/assets/minecraft/models/item/apple.json');
+
+	// 无 bbmodel 时：findPackBbmodelFor 返回 null
+	eq('无同名 bbmodel 返回 null', api.findPackBbmodelFor({ readFileSync: () => '' }, p, root, 'sqsp:item/thing'), null);
+
+	// 有同名 bbmodel：findPackBbmodelFor 命中
+	addDir('', [{ name: 'proj', isDir: true }]);
+	addDir('proj', [{ name: 'body.bbmodel', isDir: false }]);
+	addFile('proj/body.bbmodel', JSON.stringify({ meta: { imda_namespace: 'sqsp:item/x' } }));
+	const fakeFs = {
+		existsSync: (a) => (a in global.__FAKE_FS__.files) || (a in global.__FAKE_FS__.dirs),
+		readFileSync: (a) => { if (!(a in global.__FAKE_FS__.files)) throw new Error('ENOENT ' + a); return global.__FAKE_FS__.files[a]; },
+		readdirSync: (d) => (global.__FAKE_FS__.dirs[d] || []).map(e => ({ name: e.name, isDirectory: () => !!e.isDir })),
+		statSync: (a) => ({ isDirectory: () => (a in global.__FAKE_FS__.dirs) }),
+	};
+	const hit = api.findPackBbmodelFor(fakeFs, p, root, 'sqsp:item/body');
+	eq('同名 bbmodel 命中', !!hit && /body\.bbmodel$/.test(hit.abs), true);
+
+	// 标记读写
+	api.clearPendingRefresh();
+	eq('初始无标记', api.getPendingRefresh(), null);
+	api.setPendingRefresh('sqsp:item/body');
+	const pend = api.getPendingRefresh();
+	eq('设置后标记存在且含 ref', !!pend && pend.ref === 'sqsp:item/body', true);
+
+	// jumpToReference：有 bbmodel 时打开 bbmodel，并打标记
+	global.__LOADED__.length = 0;
+	api.clearPendingRefresh();
+	addDir('', [{ name: 'proj', isDir: true }]);
+	const jg = new global.Group({ name: 'ref', imda_type: 'model', imda_model: 'sqsp:item/body' });
+	const beforeBox = global.Blockbench.showMessageBox;
+	let boxed = 0; global.Blockbench.showMessageBox = () => { boxed++; };
+	api.jumpToReference(jg);
+	global.Blockbench.showMessageBox = beforeBox;
+	eq('跳转已调用 loadModelFile', global.__LOADED__.length, 1);
+	eq('跳到的是 bbmodel', /body\.bbmodel$/.test((global.__LOADED__[0] || {}).path || ''), true);
+	eq('跳转后写入待刷新标记', !!api.getPendingRefresh(), true);
+
+	// 无 bbmodel 时：跳到对应 json 文件
+	global.__FAKE_FS__.dirs = {}; // 清掉 bbmodel 目录
+	addFile('assets/sqsp/items/inker/jet_rifle.json', '{"model":{}}');
+	global.__LOADED__.length = 0;
+	const jg2 = new global.Group({ name: 'ref2', imda_type: 'model', imda_model: 'sqsp:items/inker/jet_rifle' });
+	api.jumpToReference(jg2);
+	eq('无 bbmodel 时跳到 items json', /assets\/sqsp\/items\/inker\/jet_rifle\.json$/.test((global.__LOADED__[0] || {}).path || ''), true);
+
+	// runPendingRefreshIfAny：有标记→触发一次并清除；再次调用→不触发
+	api.setPendingRefresh('sqsp:items/inker/jet_rifle');
+	const beforeRefresh = global.Blockbench.showQuickMessage;
+	let quick = 0; global.Blockbench.showQuickMessage = () => { quick++; };
+	global.Blockbench.showMessageBox = () => {};
+	const ran1 = api.runPendingRefreshIfAny();
+	const ran2 = api.runPendingRefreshIfAny();
+	global.Blockbench.showQuickMessage = beforeRefresh;
+	global.Blockbench.showMessageBox = beforeBox;
+	eq('首次返回触发刷新', ran1, true);
+	eq('第二次不再触发', ran2, false);
+	eq('标记已清除', api.getPendingRefresh(), null);
+	global.Project.imda_pack_path = '';
+}
+
 console.log('\n通过 ' + pass + ' / ' + (pass + fail) + (fail ? ('，失败 ' + fail) : ''));
 process.exit(fail ? 1 : 0);

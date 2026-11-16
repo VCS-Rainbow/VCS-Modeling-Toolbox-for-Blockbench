@@ -18,7 +18,7 @@
 'use strict';
 
 const FORMAT_ID = 'item_model_definition_assembly';
-const VERSION = '0.73.22';
+const VERSION = '0.73.23';
 const FACE_KEYS = ['north', 'east', 'south', 'west', 'up', 'down'];
 const UNIT = 16;
 const CENTER = UNIT / 2;
@@ -5003,6 +5003,126 @@ function pickModelFileForGroup(group) {
 	} catch (e) { console.warn('[装配] 选择文件失败', e); }
 }
 
+/* ============================== 跳到引用模型编辑 ============================== */
+/** 跳转待刷新标记：记录到项目里；回到该项目时触发一次「更新所有调用」后清除。
+ *  形如 { at: 时间戳, ref: 引用字符串 } 的 JSON 字符串，空串表示无标记。 */
+function setPendingRefresh(ref) {
+	try { setProjectValue('imda_pending_refresh', JSON.stringify({ at: Date.now(), ref: String(ref || '') })); } catch (e) { /* ignore */ }
+}
+function getPendingRefresh() {
+	try {
+		const raw = String(projectValue('imda_pending_refresh', '') || '');
+		if (!raw) return null;
+		const obj = JSON.parse(raw);
+		return (obj && typeof obj === 'object') ? obj : null;
+	} catch (e) { return null; }
+}
+function clearPendingRefresh() {
+	try { setProjectValue('imda_pending_refresh', ''); } catch (e) { /* ignore */ }
+}
+
+/** 把引用字符串解析成磁盘上的目标文件绝对路径。
+ *  items 引用（ns:items/路径）→ assets/<ns>/items/路径.json
+ *  模型引用（ns:路径 / 带 minecraft: 前缀）→ assets/<ns>/models/路径.json（缺省 ns=minecraft） */
+function referenceTargetFile(pathmod, root, reference) {
+	const text = String(reference == null ? '' : reference).trim();
+	if (!text) return null;
+	const mapping = parseMappingReference(text);
+	if (mapping) return pathmod.join(root, 'assets', mapping.ns, 'items', mapping.path + '.json');
+	return modelPathOf(pathmod, root, text);
+}
+
+/** 在资源包里找与引用名称匹配的 .bbmodel。
+ *  规则：文件名（去扩展名）与引用末段名称一致；若有多个候选，再用文件的命名空间与引用命名空间比对。
+ *  返回 { abs, path } 或 null。 */
+function findPackBbmodelFor(fsmod, pathmod, root, reference) {
+	const text = String(reference == null ? '' : reference).trim();
+	if (!text) return null;
+	const bare = text.replace(/:items\//i, ':').replace(/^minecraft:/i, '');
+	const parts = bare.split(':');
+	const refNs = parts.length > 1 ? parts[0].toLowerCase() : 'minecraft';
+	const refPath = parts.length > 1 ? parts[1] : parts[0];
+	const refName = String(refPath).split('/').pop().toLowerCase();
+	if (!refName) return null;
+	let files = [];
+	try { files = listFilesRecursive(fsmod, pathmod, root, /\.bbmodel$/i) || []; } catch (e) { return null; }
+	const candidates = [];
+	for (const rel of files) {
+		const base = String(rel).replace(/\\/g, '/').split('/').pop().replace(/\.bbmodel$/i, '');
+		if (base.toLowerCase() === refName) candidates.push({ rel, abs: pathmod.join(root, rel) });
+	}
+	if (!candidates.length) return null;
+	if (candidates.length === 1) return candidates[0];
+	// 多个同名：优先匹配命名空间（读文件里的项目 imda_namespace / model_identifier / namespace）
+	const nsPick = candidates.find(c => {
+		try {
+			const data = JSON.parse(fsmod.readFileSync(c.abs, 'utf8'));
+			const meta = (data && data.meta) || {};
+			const ns = String(meta.imda_namespace || meta.model_identifier || meta.namespace || '').split(/[:/]/)[0].toLowerCase();
+			return ns && ns === refNs;
+		} catch (e) { return false; }
+	});
+	return nsPick || candidates[0];
+}
+
+/** 用 Blockbench 打开某个磁盘文件（.bbmodel / .json，交由 Codecs 按内容分发）。
+ *  已打开的同路径项目会被复用（loadModelFile 内部逻辑）。 */
+function openFileInBlockbench(pathmod, fsmod, abs) {
+	try {
+		if (typeof loadModelFile !== 'function') { Blockbench.showMessageBox({ title: '无法打开', message: '当前 Blockbench 不支持 loadModelFile。', icon: 'warning' }); return false; }
+		if (!fsmod.existsSync(abs)) { Blockbench.showMessageBox({ title: '文件不存在', message: abs, icon: 'warning' }); return false; }
+		const content = fsmod.readFileSync(abs, 'utf8');
+		loadModelFile({ path: abs, content: content });
+		return true;
+	} catch (e) {
+		console.warn('[装配] 打开文件失败', e);
+		Blockbench.showMessageBox({ title: '打开失败', message: String((e && e.message) || e) + '\n' + abs, icon: 'warning' });
+		return false;
+	}
+}
+
+/** 右键引用节点：跳到被引用的模型进行编辑；同时在当前项目里打一个待刷新标记，
+ *  回到本项目时自动执行一次「更新所有调用」。 */
+function jumpToReference(group) {
+	if (!group) { Blockbench.showMessageBox({ title: '请先选中分组', message: '先在 outliner 里选中一个引用模型分组。', icon: 'info' }); return; }
+	const reference = String(group.imda_model || '').trim();
+	if (!reference) { Blockbench.showMessageBox({ title: '没有引用模型', message: '该分组没有填写 imda_model（引用模型）。', icon: 'info' }); return; }
+	const pathmod = getPath();
+	const root = String(projectValue('imda_pack_path', '') || '').trim();
+	if (!pathmod) { Blockbench.showMessageBox({ title: '需要桌面版', message: '跳转需要桌面版 Blockbench 的文件系统权限。', icon: 'warning' }); return; }
+	if (!root) { Blockbench.showMessageBox({ title: '未设置资源包路径', message: '请先在项目设置里填写「资源包工程路径」（pack.mcmeta 所在目录）。', icon: 'info' }); return; }
+	const fsmod = getScopedFs(root);
+	if (!fsmod) { Blockbench.showMessageBox({ title: '无法访问资源包', message: '需要授权该资源包目录。', icon: 'warning' }); return; }
+
+	// 目标：优先资源包内同名 .bbmodel，其次直接打开引用对应的 .json 文件
+	const bb = findPackBbmodelFor(fsmod, pathmod, root, reference);
+	const abs = bb ? bb.abs : referenceTargetFile(pathmod, root, reference);
+	if (!abs) { Blockbench.showMessageBox({ title: '无法解析引用', message: reference, icon: 'warning' }); return; }
+	if (!fsmod.existsSync(abs)) {
+		Blockbench.showMessageBox({ title: '目标文件不存在', message: abs + '\n\n（引用：' + reference + '）', icon: 'warning' });
+		return;
+	}
+
+	// 打标记：回到本项目时刷新一次
+	setPendingRefresh(reference);
+	try { console.log('[装配] 跳转到引用：', reference, '→', abs, bb ? '(bbmodel)' : '(文件)'); } catch (e) { /* ignore */ }
+	if (openFileInBlockbench(pathmod, fsmod, abs)) {
+		Blockbench.showQuickMessage('已跳转：' + reference + '（返回本项目将自动更新引用）', 3500);
+	}
+}
+
+/** 回到项目事件里调用：若当前项目带待刷新标记，执行一次「更新所有调用」并清除标记。 */
+function runPendingRefreshIfAny() {
+	const pending = getPendingRefresh();
+	if (!pending) return false;
+	clearPendingRefresh();
+	try {
+		Blockbench.showQuickMessage('检测到引用跳转标记，正在更新所有调用…', 2500);
+	} catch (e) { /* ignore */ }
+	try { refreshAllCalls(); } catch (e) { console.warn('[装配] 待刷新触发失败', e); }
+	return true;
+}
+
 /* ============================== 更新所有调用 ============================== */
 /** 刷新所有复调用标签与外部物品映射引用：清缓存、重解析、重排分支名并汇总问题 */
 function refreshAllCalls() {
@@ -6613,6 +6733,7 @@ P(ModelProject, 'number', 'imda_extra_composite_layers', { label: '调试：额�
 	P(ModelProject, 'boolean', 'imda_hide_unavailable', { label: '隐藏当前条件下不可用的分组', default: true });
 	P(ModelProject, 'boolean', 'imda_ambientocclusion', { label: '环境光遮蔽（ambientocclusion，模型根级；取消勾选则导出 false）', default: true });
 	P(ModelProject, 'string', 'imda_pack_path', { label: '资源包工程路径（pack.mcmeta 所在目录）', default: '' });
+	P(ModelProject, 'string', 'imda_pending_refresh', { default: '', exposed: false });
 	P(ModelProject, 'string', 'imda_mapping_cache', { default: '', exposed: false });
 	P(ModelProject, 'string', 'imda_all_items_blacklist', { label: '全物品模型表：黑名单正则（每行一个）', default: '' });
 	P(ModelProject, 'string', 'imda_pack_version', {
@@ -6934,6 +7055,7 @@ function attachGroupMenu() {
 				menuActions.props = menuVariant(actions.props, 'imda_menu_props', () => isImdaFormat() && !!pickTargetGroup());
 				menuActions.pickModel = menuVariant(actions.pickModelFile, 'imda_menu_pick_model', () => isImdaFormat() && targetGroupTypeIn(['model']));
 				menuActions.importModel = menuVariant(actions.import, 'imda_menu_import_model', () => isImdaFormat() && targetGroupTypeIn(['model']));
+				menuActions.jumpReference = menuVariant(actions.jumpReference, 'imda_menu_jump_reference', () => isImdaFormat() && targetGroupTypeIn(['model']) && !!String((pickTargetGroup() || {}).imda_model || '').trim());
 				menuActions.createModel = menuVariant(actions.createModel, 'imda_menu_create_model', () => isImdaFormat() && targetGroupTypeIn(['composite', 'inline']));
 				menuActions.call = menuVariant(actions.call, 'imda_menu_call', () => isImdaFormat() && targetGroupTypeIn(['composite', 'inline']));
 				menuActions.convertCall = menuVariant(actions.convertCall, 'imda_menu_convert_call', () => isImdaFormat() && selectedGroups().length > 0);
@@ -6942,7 +7064,7 @@ function attachGroupMenu() {
 				menuActions.applyPose = menuVariant(actions.applyPose, 'imda_menu_apply_pose', () => isImdaFormat() && !!pickTargetGroup());
 				addSeparator(menu);
 				// 顺序：结构动作 → 位姿 → 枢轴 → 属性（属性固定在最下面）
-				[menuActions.createModel, menuActions.pickModel, menuActions.importModel,
+				[menuActions.createModel, menuActions.pickModel, menuActions.importModel, menuActions.jumpReference,
 					menuActions.call, menuActions.convertCall, null, menuActions.extractPose, menuActions.applyPose,
 					null, menuActions.pivot, null, menuActions.props].forEach(item => { if (item) menu.addAction(item); else addSeparator(menu); });
 				menuAttached = true;
@@ -7158,6 +7280,7 @@ Plugin.register('item_model_definition_assembly', {
 		actions.pivotRestore = new Action('imda_restore_pivot', { name: '从记录重建枢轴点…', description: '按「枢轴归位」保存的局部偏移，把分组/方块枢轴移回原来的位置', icon: 'restore', category: 'tools', condition, click: restorePivotFromRecordDialog });
 		actions.pivotFromSource = new Action('imda_pivot_from_source', { name: '参考源文件重建枢轴点…', description: '读取源模型几何中心相对原点的偏移，按当前旋转换算为局部坐标，移动分组枢轴和复调用标签并保持外观', icon: 'my_location', category: 'tools', condition, click: rebuildPivotFromSourceDialog });
 		actions.props = new Action('imda_group_props', { name: '编辑分组映射属性…', description: '映射类型 / 引用模型 / property 等', icon: 'tune', category: 'tools', condition, click: editGroupProps });
+	actions.jumpReference = new Action('imda_jump_reference', { name: '跳转到引用的模型进行编辑…', description: '优先打开资源包内同名 .bbmodel；否则打开引用对应的 .json 文件。跳转后返回本项目会自动更新一次引用。', icon: 'open_in_new', category: 'tools', condition: () => isImdaFormat() && targetGroupTypeIn(['model']), click: () => jumpToReference(pickTargetGroup()) });
 		actions.boxToggle = new Action('imda_box_toggle', { name: '开关：框选方块时改选所属分组', description: '切换“一次选中多个方块时自动改为选中其父分组”', icon: 'select_all', category: 'tools', click: () => { if (!immBoxSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !boxGroupsEnabled(); setBoxSelectGroups(next); try { if (typeof immBoxSetting.save === 'function') immBoxSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('框选方块改选所属分组：' + (next ? '开' : '关') + (typeof Format !== 'undefined' && Format && Format.id === FORMAT_ID ? '（装配格式内强制开启）' : ''), 2600); } });
 		actions.batchToggle = new Action('imda_batch_toggle', { name: '开关：批量选组时取消元素选择', description: '切换“同时选中多个分组时自动取消方块/定位点选择”', icon: 'select_all', category: 'tools', click: () => { if (!immBatchSetting) { Blockbench.showQuickMessage('当前 Blockbench 不支持该设置', 2500); return; } const next = !batchGroupsOnlyEnabled(); setBatchGroupsOnly(next); try { if (typeof immBatchSetting.save === 'function') immBatchSetting.save(); } catch (e) { /* ignore */ } Blockbench.showQuickMessage('批量选择时取消单个元素：' + (next ? '开' : '关'), 2200); } });
 		actions.editCall = new Action('imda_edit_call', { name: '编辑复调用标签…', description: '修改选中的复调用标签指向的分组或模型 id', icon: 'edit', category: 'tools', condition: () => !!pickTargetLocator(), click: () => { const locator = pickTargetLocator(); if (!locator) { Blockbench.showMessageBox({ title: '请先选中复调用标签', message: '在 outliner 里选中一个复调用标签。', icon: 'info' }); return; } editCallTag(locator); } });
@@ -7233,6 +7356,14 @@ Plugin.register('item_model_definition_assembly', {
 		for (const event of ['select_project', 'finished_loading_project']) {
 			try { Blockbench.on(event, ensurePackVersion); } catch (e) { /* ignore */ }
 		}
+		// 引用跳转标记：回到带标记的项目时，自动「更新所有调用」一次后清除标记。
+		for (const event of ['select_project', 'finished_loading_project']) {
+			try {
+				Blockbench.on(event, () => {
+					try { setTimeout(() => { try { runPendingRefreshIfAny(); } catch (e) { /* ignore */ } }, 60); } catch (e) { /* ignore */ }
+				});
+			} catch (e) { /* ignore */ }
+		}
 		for (const event of ['select_project', 'finished_loading_project']) {
 			try {
 				Blockbench.on(event, () => {
@@ -7246,7 +7377,7 @@ Plugin.register('item_model_definition_assembly', {
 		}
 		try {
 			if (typeof globalThis !== 'undefined' && globalThis.__IMM_TEST__) {
-				globalThis.__IMM_TEST__.api = { VERSION, attachGroupMenu, cleanAllImdaMenus, attachAnimationTimelineMenu, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, syncAllBranchLabels, siblingBranchNumber, branchChildNodes, callTagBranchThreshold, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, buildSequenceChildResult, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, scanPackEntries, buildAllItemsTree, matchBlacklist, listFilesRecursive, simStepOnce, simAdvanceSlot, primeMappingCache, repairOutlinerDuplicates, applyConvertGroupsToCallTags, collectAllGroups, collectGroupSubtree, outermostSelectedGroups, normalizeCompositeCubes, normalizeGroupNumbersAndNames, cleanGroupName, thresholdFormatVars, countLayerItems, countInlineCubes, instantiateCallTags, applyCallOverridesToGroup, isShadowCallTag, effectiveCallPose, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
+				globalThis.__IMM_TEST__.api = { VERSION, attachGroupMenu, cleanAllImdaMenus, attachAnimationTimelineMenu, PACK_VERSIONS, DEFAULT_PACK_VERSION, packMcmetaData, packFormatLabel, packMcmetaFormat, ensurePackVersion, simValue, simEvaluate, simTick, simInvalidate, stripStrayBranchPrefixes, fixGroupPivot, averagePoints, cooldownThresholds, moveGroupPivot, restoreGroupPivotFromRecord, restoreCubePivotFromRecord, sourceModelGeometryCenter, collectInputUsage, modelElementsHaveTintIndex, guardLockedSelection, guardBatchSelection, guardBoxSelection, setBoxSelectGroups, setBatchGroupsOnly, centerCubePivot, simApplyGroupVisual, simRestoreView, simSetViewMode, simApplyTints, simRestoreTints, simTintColorOf, assignGroupMapProps, createExporter, sampleTimelinePoses, parseNamespaceSetting, formatMapping, removeInvalidInternalGroups, selectionGroupForCube, tintGroupOf, migrateLegacyAll, migrateLegacyNode, callOverridesOf, applyCallOverridesToGroup, expandCallTagSiblings, sortBranchChildren, syncBranchLabels, syncAllBranchLabels, siblingBranchNumber, branchChildNodes, callTagBranchThreshold, applyPivotFix, parseMappingReference, referenceFromPickedPath, loadMappingDefinition, clearMappingCache, referenceTargetFile, findPackBbmodelFor, jumpToReference, setPendingRefresh, getPendingRefresh, clearPendingRefresh, runPendingRefreshIfAny, poseOfNode, extractPose, applyPose, refreshAllCalls, callSelectedGroup, bakeTimelineToCallTags, instantiateCallTags, callModelPrefill, orderedSelectedGroups, orderedSequenceItems, sequenceCounts, sequenceFormatValue, generateCallSequence, buildSequenceChildResult, simPoseIsSame, simLightUpCallTargets, simEnsureCallInstance, simDropCallInstance, simDropAllCallInstances, getSimTempCalls: () => simTempCalls, ensureCallTagType, newCallTag, upgradeLegacyCallTags, getCallTag: () => CallTag, CALL_TAG_TYPE, isLocator, isCallTagType, isCallTag, isCallLike, outlinerFlatOrder, outlinerRangeSelectTo, installOutlinerRangeSelect, uninstallOutlinerRangeSelect, getRangeSelectState: () => outlinerRangeSelect, scanPackEntries, buildAllItemsTree, matchBlacklist, listFilesRecursive, simStepOnce, simAdvanceSlot, primeMappingCache, repairOutlinerDuplicates, applyConvertGroupsToCallTags, collectAllGroups, collectGroupSubtree, outermostSelectedGroups, normalizeCompositeCubes, normalizeGroupNumbersAndNames, cleanGroupName, thresholdFormatVars, countLayerItems, countInlineCubes, instantiateCallTags, applyCallOverridesToGroup, isShadowCallTag, effectiveCallPose, pivotContentPoints, rotateAroundQuat, readQuaternion, simViewEntries, getSimState: () => sim, buildSimPanel, getSimUi: () => sim_ui, getSimPanel: () => sim_panel };
 			}
 		} catch (hookError) { /* ignore */ }
 			} catch (error) {
